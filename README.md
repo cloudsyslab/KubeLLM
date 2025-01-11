@@ -34,4 +34,4 @@ KubeLLM is an AI agent that manages your kubernetes clusters all on its own. Kub
 ---
 
 ### Instructions to Run Tests 📝
-(Coming soon in a future update)
+* (Coming soon in a future update) *
