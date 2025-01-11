@@ -4,7 +4,7 @@ KubeLLM is an AI agent that manages your kubernetes clusters all on its own. Kub
 
 ---
 
-### Author/Contact Information.📞
+### Author/Contact Information 📞
 - Dr. Palden Lama - palden.lama@utsa.edu
 - William Clifford - william.clifford@utsa.edu
 - Aaron Perez - aaron.perez@utsa.edu
