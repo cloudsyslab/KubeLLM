@@ -1,4 +1,4 @@
-# kubellm 🤖
+# kubeLLm 🤖
 
 KubeLLM is an AI agent that manages your kubernetes clusters all on its own. KubeLLM takes in ONE formatted prompt and it will solve it using various state of the art techniques to not just figure the issue, but also resolve it within your enviornment.
 
@@ -35,3 +35,10 @@ KubeLLM is an AI agent that manages your kubernetes clusters all on its own. Kub
 
 ### Instructions to Run Tests 📝
 *(Coming soon in a future update)*
+
+---
+
+### Agents 🕵️‍♀️
+Currently our approach uses two agents, one for knowledge and one that actions the steps given by the knowledge agent. Currently the knowledge agent uses a Retrieval-Augmented Generation (RAG) technique to storing the knoweldge which primarily consists of Kubernetes documentation.
+
+* Our approach is currently being based off this model here [Clickable Link](https://learnk8s.io/troubleshooting-deployments)
