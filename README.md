@@ -19,7 +19,7 @@ KubeLLM is an AI agent that manages your kubernetes clusters all on its own. Kub
 ### Known Issues ⚠️
 1. Improve AI to answer correctly consistantly
 2. Allow for a timeout after a time limit set by us. Sometimes the AI will go on forever without fixing the issue.
-3. Have a Development enviornment and Production enviornment, so the debug AI can make changes to the enviornment without any further issues developing. It would also be nice to have a snapshot before running KubeLLM in order to revert if it failed.
+3. Have a Development environment and Production enviornment, so the debug AI can make changes to the enviornment without any further issues developing. It would also be nice to have a snapshot before running KubeLLM in order to revert if it failed.
 
 ---
 
@@ -34,7 +34,10 @@ KubeLLM is an AI agent that manages your kubernetes clusters all on its own. Kub
 ---
 
 ### Instructions to Run Tests 📝
-*(Coming soon in a future update)*
+Simply navigate to the kube_test.py file in debug_assistant_latest folder and run the test.
+```
+  python3 kube_test.py
+```
 
 ---
 
