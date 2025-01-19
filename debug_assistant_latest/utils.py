@@ -10,6 +10,7 @@ import json
 import sys
 import os
 import subprocess
+import timeout_decorator
 
 from rag_api import (
     BASE_URL,
@@ -32,12 +33,17 @@ def read_yaml_file_as_string(file_path):
     except Exception as e:
         return f"Error reading the file: {e}"
 
-def readTheJSONConfigFile():
+def readTheJSONConfigFile(configFile):
     """ Read the provided config JSON file within the arguments when the script is called """
     parsedConfig = None
     try:
-        with open(sys.argv[1],"r") as config_file:
-            parsedConfig = json.loads(config_file.read())
+        if configFile:
+            with open(configFile,"r") as config_file:
+                parsedConfig = json.loads(config_file.read())
+        else:
+            with open(sys.argv[1],"r") as config_file:
+                parsedConfig = json.loads(config_file.read())
+
     except Exception as e:
         print("Failed to open config file, please make sure you input a valid path in the arguments when invoking the python script")
         print(e)
@@ -77,5 +83,22 @@ def traverseRelevantFiles(config, relevantFileType, prompt):
         prompt = f"{prompt} The file " +" "+ config["test-directory"] +" "+ dep +" "+ f" describes a {relevantFileType}. This is the file contents: {contents}."
 
     return prompt
+
+def printFinishMessage():
+    """ Print a finish message, may need to add basic analytics """
+    print("=================================================")
+    print("                   FINISHED                      ")
+    print("=================================================")
+
+
+def withTimeout(default_value):
+    def decorator(func):
+        def wrapper(*args, **kwargs):
+            try:
+                return func(*args, **kwargs)
+            except timeout_decorator.TimeoutError:
+                return default_value
+        return wrapper
+    return decorator
 
     
