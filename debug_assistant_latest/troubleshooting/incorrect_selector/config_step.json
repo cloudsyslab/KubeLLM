@@ -5,7 +5,9 @@
         "clear-knowledge": true,
         "new-run": true,
         "init-agent": true,
-        "knowledge": []
+        "knowledge": [
+            "https://learnk8s.io/troubleshooting-deployments"
+        ]
     },
     "debug-agent": {
         "llm-source": "Ollama",
@@ -17,7 +19,6 @@
             "If you believe you have met the goal, declare that you have solved the user's issue, and end that statement with this token: <|SOLVED|>.",
             "If the steps do not solve the issue, or if you need more information, declare that you cannot solve the issue, and end that statement with this token: <|FAILED|>.",
             "Do not use live feed flags when checking the logs such as 'kubectl logs -f'",
-            "Do not use commands that open up editors like 'kubectl edit'",
             "If you do not conclude on an answer or a code then try again please."
         ],
         "api-key": "",
@@ -25,35 +26,37 @@
             "If a command invocation is successful but gives no stdout nor stderr, then that is because that invocation resulted in no output to stdout or stderr.",
             "If a command contains a placeholder name surrounded in angle brackets such as <pod_name>, for example, then **do not** run that command as-is. First run a `kubectl get` command to find a real name to replace the placeholder name, then run the suggested command with the replaced name of the resource. For example, if you see `kubectl logs <pod_name> -n example_namespace`, first run `kubectl get pods -n example_namespace` and use the name of the first pod you see.",
             "Do not use live feed flags when checking the logs such as 'kubectl logs -f'",
-            "Do not use commands that open up editors like 'kubectl edit'",
             "If you do not conclude on an answer or a code then try again please."
-
         ]
     },
     "knowledge-prompt": {
-        "problem-desc": "When I describe the pod on my cluster, it shows the Ready condition for the pod as False.",
-        "system-prompt": "Give specific commands to fix this issue. If modifying file contents is necessary, use the sed command to achieve this. If providing a file path, make sure to keep the full file path. Also please make any evaluations using the describe whenever needed.",
+        "problem-desc": "When I describe the service associated with the pod on my kubernetes cluster, it shows no endpoints listed.",
+        "system-prompt": "Give specific commands to fix this issue. If modifying file contents is necessary, use the sed command to achieve this. If providing a file path, make sure to keep the full file path.",
         "additional-directions": ""
     },
     "debug-prompt": {
-        "additional-directions": "If the readiness_failure.yaml file is updated, make sure to delete and reapply the readiness_failure.yaml deployment. Give full exact instructions on how to perform the deployment deletion and reapplication steps."
+        "additional-directions": "If any deployment files are modified, reapply the deployment to the cluster."
     },
     "relevant-files":{
         "deployment": [
-            "readiness_failure.yaml"
+            "incorrect_selector.yaml"
         ],
         "application": [
-            
+            "server.py"
         ],
         "service": [
-
+            "app_service.yaml"
         ],
         "dockerfile": false
     },
     "setup-commands": [
-        "kubectl apply -f /home/mario/KubeLLM_latest/KubeLLM-main/debug_assistant_latest/troubleshooting/readiness_failure/readiness_failure.yaml"
+        "docker build -t kube-incorrect-selector-app /home/mario/KubeLLM_latest/KubeLLM-main/debug_assistant_latest/troubleshooting/incorrect_selector/",
+        "docker tag kube-incorrect-selector-app marioutsa/kube-incorrect-selector-app",
+        "docker run -d -p 8765:8765 --name incorrect_selector_app marioutsa/kube-incorrect-selector-app",
+        "kubectl apply -f /home/mario/KubeLLM_latest/KubeLLM-main/debug_assistant_latest/troubleshooting/incorrect_selector/incorrect_selector.yaml",
+        "kubectl apply -f /home/mario/KubeLLM_latest/KubeLLM-main/debug_assistant_latest/troubleshooting/incorrect_selector/app_service.yaml"
     ],
-    "test-name": "readiness_failure",
-    "test-directory": "/home/mario/KubeLLM_latest/KubeLLM-main/debug_assistant_latest/troubleshooting/readiness_failure/",
-    "yaml-file-name": "readiness_failure.yaml"
+    "test-name": "incorrect_selector",
+    "test-directory": "/home/mario/KubeLLM_latest/KubeLLM-main/debug_assistant_latest/troubleshooting/incorrect_selector/",
+    "yaml-file-name": "incorrect_selector.yaml"
 }

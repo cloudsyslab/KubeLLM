@@ -5,7 +5,10 @@
         "clear-knowledge": true,
         "new-run": true,
         "init-agent": true,
-        "knowledge": []
+        "knowledge": [
+            "https://learnk8s.io/troubleshooting-deployments",
+            "https://pythonbasics.org/webserver/"
+        ]
     },
     "debug-agent": {
         "llm-source": "Ollama",
@@ -27,33 +30,35 @@
             "Do not use live feed flags when checking the logs such as 'kubectl logs -f'",
             "Do not use commands that open up editors like 'kubectl edit'",
             "If you do not conclude on an answer or a code then try again please."
-
         ]
     },
     "knowledge-prompt": {
-        "problem-desc": "When I describe the pod on my cluster, it shows the Ready condition for the pod as False.",
+        "problem-desc": "The pod on my Kubernetes cluster cannot be accessed by making a curl request. Any requests made to the application running in this pod result in a timeout.",
         "system-prompt": "Give specific commands to fix this issue. If modifying file contents is necessary, use the sed command to achieve this. If providing a file path, make sure to keep the full file path. Also please make any evaluations using the describe whenever needed.",
         "additional-directions": ""
     },
     "debug-prompt": {
-        "additional-directions": "If the readiness_failure.yaml file is updated, make sure to delete and reapply the readiness_failure.yaml deployment. Give full exact instructions on how to perform the deployment deletion and reapplication steps."
+        "additional-directions": "If any deployment files are modified, reapply the deployment to the cluster."
     },
     "relevant-files":{
         "deployment": [
-            "readiness_failure.yaml"
+            "wrong_interface.yaml"
         ],
         "application": [
-            
+            "server.py"
         ],
         "service": [
 
         ],
-        "dockerfile": false
+        "dockerfile": true
     },
     "setup-commands": [
-        "kubectl apply -f /home/mario/KubeLLM_latest/KubeLLM-main/debug_assistant_latest/troubleshooting/readiness_failure/readiness_failure.yaml"
+        "docker build -t kube-wrong-interface-app /home/mario/KubeLLM_latest/KubeLLM-main/debug_assistant_latest/troubleshooting/wrong_interface/",
+        "docker tag kube-wrong-interface-app marioutsa/kube-wrong-interface-app",
+        "docker run -d -p 8765:8765 --name wrong_interface_app marioutsa/kube-wrong-interface-app",
+        "kubectl apply -f /home/mario/KubeLLM_latest/KubeLLM-main/debug_assistant_latest/troubleshooting/wrong_interface/wrong_interface.yaml"
     ],
-    "test-name": "readiness_failure",
-    "test-directory": "/home/mario/KubeLLM_latest/KubeLLM-main/debug_assistant_latest/troubleshooting/readiness_failure/",
-    "yaml-file-name": "readiness_failure.yaml"
+    "test-name": "wrong_interface",
+    "test-directory": "/home/mario/KubeLLM_latest/KubeLLM-main/debug_assistant_latest/troubleshooting/wrong_interface/",
+    "yaml-file-name": "wrong_interface.yaml"
 }

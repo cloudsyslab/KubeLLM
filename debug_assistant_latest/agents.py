@@ -1,5 +1,5 @@
 from phi.assistant import Assistant
-from phi.agent import Agent as StepAgent
+from phi.agent import Agent as llmAgent
 from phi.llm.openai import OpenAIChat
 from phi.llm.ollama import Ollama
 from phi.tools.shell import ShellTools
@@ -14,6 +14,9 @@ import subprocess
 from utils import traverseRelevantFiles, identifyLLM, withTimeout
 import re
 import timeout_decorator
+from better_shell import BetterShellTools
+from phi.model.openai import OpenAIChat
+from phi.model.ollama import Ollama
 
 from rag_api import (
     BASE_URL,
@@ -60,8 +63,8 @@ class AgentAPI(Agent):
             if self.agentProperties["new-run"]:
                 new_run_response = start_new_run()
                 print("New Run Response:", new_run_response)
-
-            initialize_response = initialize_assistant(self.agentProperties["model"], self.agentProperties["embedder"])
+            
+            initialize_response = initialize_assistant(self.agentProperties["model"], self.agentProperties["embedder"] )
             print("Initialize Response:", initialize_response)
 
             if self.agentProperties["clear-knowledge"]:
@@ -92,7 +95,7 @@ class AgentAPI(Agent):
         """ Ask the formatted prepared question to the knowledge (API) agent """
         try:
             self.response = ask_question(self.prompt)
-            print("RAG assistant Response:", self.response)
+            #print("RAG assistant Response:", self.response)
         except Exception as e:
             print(f"Error asking question to knowledge agent: {e}")
             sys.exit()
@@ -108,11 +111,10 @@ class AgentDebug(Agent):
         """ Prepare the debug assistant based on the config file """
         try:
             
-            model = identifyLLM(self.agentProperties)
-            
-            self.agent = Assistant(
+            model = Ollama(id="llama3.3")
+            self.agent = llmAgent(
                 model=model,
-                tools=[ShellTools()], 
+                tools=[BetterShellTools()], 
                 debug_mode=True,
                 instructions=[x for x in self.agentProperties["instructions"]],
                 show_tool_calls=True,
@@ -141,24 +143,20 @@ class AgentDebug(Agent):
     def askQuestion(self):
         """ Ask the formatted prepared question to the debug agent """
         try:
-            
-
             prompt = f'Perform the action suggested here: \n{self.agentAPIResponse}\n'
             prompt += f"\nThe relevant configuration file is located in this path: {self.config['test-directory']+self.config['yaml-file-name']}\n"
             prompt += "You can update these files if necessary. If any files are updated, make sure to delete and reapply the configuration file.\n"
-
-            response = "".join(self.agent.run(prompt))
+            prompt += "Do not use live feed flags when checking the logs such as 'kubectl logs -f'"
+            response = self.agent.run(prompt)
+            response = response.content
 
             if "<|ERROR|>" in response or "<|FAILED|>" in response:
                 self.debugStatus = False
-                return False
             elif "<|SOLVED|>" in response:
                 self.debugStatus = True
-                return True
             else:
                 self.debugStatus = False
-                return False
-
+            return
         except Exception as e:
             print(f"Error asking question to debug agent: {e}")
             sys.exit()
@@ -173,10 +171,11 @@ class AgentDebugStepByStep(Agent):
     def prepareAgent(self):
         """ Prepare the debug assistant based on the config file """
         try:
-            model = identifyLLM(self.agentProperties)
-            self.agent = Assistant(
+            model = Ollama(id="llama3.3")
+            #OpenAIChat(id="gpt-4o")
+            self.agent = llmAgent(
                 model=model,
-                tools=[ShellTools()], 
+                tools=[BetterShellTools()], 
                 debug_mode=True,
                 show_tool_calls=True,
                 markdown=True,
@@ -222,27 +221,28 @@ class AgentDebugStepByStep(Agent):
     @withTimeout(False)
     def executeProblemSteps(self):
         """ Once we have formed all of the steps based on the knowledge agent, then we can start to execute each step one by one """
-        try:            
+        try:
             numSteps = len(self.steps)
             for i, step in enumerate(self.steps, start=1):
-                
                 prompt = f'Perform the action suggested here: \n{step}\n'
+                prompt += f'If you struggle within one of the steps try to figure out the solution until you see the pod running fine with kubectl describe.'
                 prompt += f"\nThe relevant configuration file is located in this path: {self.config['test-directory']+self.config['yaml-file-name']}\n"
                 prompt += "You can update these files if necessary. If any files are updated, make sure to delete and reapply the configuration file.\n"
+                prompt += "If you need to update a pod then use kubectl replace --force [POD_NAME]"
                 prompt += f"\nThis is step {i} out of {numSteps}."
+                prompt += "Do not use live feed flags when checking the logs such as 'kubectl logs -f'"
                 
-                response = "".join(self.agent.run(prompt))
+                response = self.agent.run(prompt)
+                response = response.content
+
 
                 if "<|ERROR|>" in response or "<|FAILED|>" in response:
                     self.debugStatus = False
-                    return False
                 elif "<|SOLVED|>" in response:
                     self.debugStatus = True
-                    return True
                 else:
                     self.debugStatus = False
-                    return False
-
+                    
         except Exception as e:
             print(f"Failed to execute problem steps : {e}")
             sys.exit()
