@@ -100,7 +100,6 @@ async def add_url(url: str = Form(...)):
     """Add a URL to the knowledge base."""
     if session_state.rag_assistant is None:
         raise HTTPException(status_code=400, detail="Agent not initialized")
-    
     scraper = WebsiteReader(max_links=2, max_depth=1)
     web_documents: List[Document] = scraper.read(url)
     if web_documents:

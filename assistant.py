@@ -12,7 +12,7 @@ from phi.embedder.openai import OpenAIEmbedder
 from better_shell import BetterShellTools
 from statement import Model
 
-db_url = "postgresql+psycopg://ai:ai@localhost:7642/ai"
+db_url = "postgresql+psycopg://ai:ai@localhost:5532/ai"
 
 description = "You are an AI called 'RAGit'. You provide instructions that a user should take to solve issues with their Kubernetes configurations."
 task = "Provide the user with instructions and shell commands to solve the user's problem."
@@ -51,15 +51,15 @@ def get_rag_agent(
 ) -> Agent:
     """Get a Local RAG Agent."""
 
-    llm = model.to_model();
-    embedder, embeddings_model_clean = model.to_embedder();
+    llm = model.to_model()
+    embedder, embeddings_model_clean = model.to_embedder()
 
     if use_rag:
         # Define the knowledge base
         knowledge = AgentKnowledge(
             vector_db=PgVector(
                 db_url=db_url,
-                table_name=f"local_rag_documents_{embeddings_model_clean}",
+                table_name=f"ai.local_rag_documents_{embeddings_model_clean}",
                 embedder=embedder,
                 search_type=SearchType.hybrid
             ),
@@ -77,7 +77,7 @@ def get_rag_agent(
             use_default_user_message=True,
             add_context=False,
             add_context_instructions=True,
-            storage=PgAgentStorage(table_name="local_rag_agent", db_url=db_url),
+            storage=PgAgentStorage(table_name="ai.local_rag_agent", db_url=db_url),
             #tools=[BetterShellTools()],
             show_tool_calls=False,
             #read_chat_history=True,
@@ -97,7 +97,7 @@ def get_rag_agent(
             run_id=run_id,
             user_id=user_id,
             model=llm,
-            storage=PgAgentStorage(table_name="local_agent", db_url=db_url),
+            storage=PgAgentStorage(table_name="ai.local_agent", db_url=db_url),
             tools=[BetterShellTools()],
             description=description,
             task=task,
@@ -137,7 +137,7 @@ def get_rag_assistant(
     knowledge = AgentKnowledge(
         vector_db=PgVector(
             db_url=db_url,
-            table_name=f"local_rag_documents_{embeddings_model_clean}",
+            table_name=f"ai.local_rag_documents_{embeddings_model_clean}",
             embedder=embedder,
             search_type=SearchType.hybrid
         ),
@@ -157,7 +157,7 @@ def get_rag_assistant(
         use_default_user_message=True,
         add_context=True,
         add_context_instructions=True,
-        storage=PgAgentStorage(table_name="local_rag_assistant", db_url=db_url),
+        storage=PgAgentStorage(table_name="ai.local_rag_assistant", db_url=db_url),
         tools=[BetterShellTools()],
         show_tool_calls=False,
         #read_chat_history=True,
@@ -169,7 +169,7 @@ def get_rag_assistant(
             "Carefully read the information the user provided.",
             "Run diagnostic commands yourself, then use the output to further help you provide the user with actionable instructions for their issue.",
             "Enumerate your steps, and start from \"1.\". Each step should include a bash script of what the user should do in a step by step basis. For example: \"1. Check the logs. 2. Delete the deployment.\""
-
+            "Do not use live feed flags when checking the logs such as 'kubectl logs -f'",
             # OLD PROMPTS
             #"When a user asks a question, you will be provided with information about the question.",
             #"Carefully read this information and provide a clear and concise instruction to the user.",
@@ -186,6 +186,7 @@ def get_rag_assistant(
             "Assume a moderate level of technical expertise on the part of the user (e.g., they're familiar with basic Linux commands and concepts).",
             "Don't worry too much about formatting or syntax; focus on getting the right information across.",
             "When writing out your commands, use the real name of the Kubernetes resource instead of placeholder names. For example, if your command is `kubectl get pods -n <namespace>`, run `kubectl get namespaces` first to get available namespaces.",
+            "Do not use live feed flags when checking the logs such as 'kubectl logs -f'"
         ],
         prevent_hallucinations=True,
         markdown=True,
