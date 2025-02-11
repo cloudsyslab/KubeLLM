@@ -4,6 +4,7 @@ from phi.llm.ollama import Ollama
 from phi.tools.shell import ShellTools
 from phi.tools.duckduckgo import DuckDuckGo
 from phi.llm.ollama import OllamaTools
+
 import requests
 import rag_api
 import json
@@ -54,7 +55,7 @@ def setUpEnvironment(config):
     """ Setup the enviornment using the set up commands specified in the config"""
     try:
         for command in config.get("setup-commands", []):
-            subprocess.run(command)
+            subprocess.run(command, shell=True, check=True)
     except Exception as e:
         print(f"Error running setup command: {e}")
 
@@ -62,9 +63,9 @@ def identifyLLM(debugAgent):
     """ Identify the LLM model that was specified in the config and setup accordingly """
     model = None
     if debugAgent["llm-source"].lower() == "ollama":    
-        model = OllamaTools(model=debugAgent["model"])
+        model = Ollama(id="llama3.1:70b")
     elif debugAgent["llm-source"].lower() == "openai":
-        model = OpenAIChat(id=debugAgent["model"])
+        model = OpenAIChat(id="gpt-4o")
         if debugAgent["api-key"] == "":
             print("No API key provided for OpenAI agent")
             sys.exit()
@@ -77,10 +78,10 @@ def traverseRelevantFiles(config, relevantFileType, prompt):
     if relevantFileType != "dockerfile":
         for dep in config["relevant-files"][relevantFileType]:
             contents = open(config["test-directory"] + dep, "r").read()
-            prompt = f"{prompt} The file " +" "+ config["test-directory"] +" "+ dep +" "+ f" describes a {relevantFileType}. This is the file contents: {contents}."
+            prompt = f"{prompt} The file " +" "+ config["test-directory"] +""+ dep +" "+ f" describes a {relevantFileType}. This is the file contents: {contents}."
     elif relevantFileType == "dockerfile" and config["relevant-files"][relevantFileType]:
         contents = open(config["test-directory"] + 'Dockerfile', "r").read()
-        prompt = f"{prompt} The file " +" "+ config["test-directory"] +" "+ dep +" "+ f" describes a {relevantFileType}. This is the file contents: {contents}."
+        prompt = f"{prompt} The file " +" "+ config["test-directory"] +"Dockerfile"+" "+ f" describes a {relevantFileType}. This is the file contents: {contents}."
 
     return prompt
 
