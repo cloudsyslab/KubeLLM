@@ -1,6 +1,7 @@
 from phi.assistant import Assistant
 from phi.agent import Agent as llmAgent
 from phi.llm.openai import OpenAIChat
+from phi.model.google import Gemini
 from phi.llm.ollama import Ollama
 from phi.tools.shell import ShellTools
 from phi.tools.duckduckgo import DuckDuckGo
@@ -17,6 +18,17 @@ import timeout_decorator
 from better_shell import BetterShellTools
 from phi.model.openai import OpenAIChat
 from phi.model.ollama import Ollama
+
+
+
+from phi.agent import AgentKnowledge
+from phi.vectordb.pgvector import PgVector, SearchType
+from phi.storage.agent.postgres import PgAgentStorage
+from phi.knowledge.website import WebsiteKnowledgeBase
+
+
+
+
 
 from rag_api import (
     BASE_URL,
@@ -111,7 +123,7 @@ class AgentDebug(Agent):
         """ Prepare the debug assistant based on the config file """
         try:
             
-            model = Ollama(id="llama3.3")
+            model = OpenAIChat(id="o3-mini")
             self.agent = llmAgent(
                 model=model,
                 tools=[BetterShellTools()], 
@@ -171,8 +183,11 @@ class AgentDebugStepByStep(Agent):
     def prepareAgent(self):
         """ Prepare the debug assistant based on the config file """
         try:
-            model = Ollama(id="llama3.3")
+            model = OpenAIChat(id="o3-mini")
+            #Ollama(id="llama3.3")
             #OpenAIChat(id="gpt-4o")
+            #Gemini(id="gemini-1.5-flash")
+
             self.agent = llmAgent(
                 model=model,
                 tools=[BetterShellTools()], 
@@ -247,6 +262,95 @@ class AgentDebugStepByStep(Agent):
             print(f"Failed to execute problem steps : {e}")
             sys.exit()
 
+class SingleAgent(Agent):
+    def __init__(self, agentType, config):
+        super().__init__(agentType, config)
+        self.knowledgeResponse = None
+        self.debugStatus = None
+
+    def prepareAgent(self):
+        """ Prepare the debug assistant based on the config file """
+        try:
+            
+            model = Gemini(id="gemini-1.5-flash")
+            #Ollama(id="llama3.3")
+            #OpenAIChat(id="o3-mini")
+            #Gemini(id="gemini-1.5-flash")
+            
+            knowledge_base = WebsiteKnowledgeBase(
+                urls=self.config["api-agent"].get("knowledge", []),
+                # Number of links to follow from the seed URLs
+                max_links=10,
+                # Table name: ai.website_documents
+                vector_db=PgVector(
+                    table_name="ai.local_rag_documents_singleAgent",
+                    db_url="postgresql+psycopg://ai:ai@localhost:5532/ai",
+                ),
+            )
 
 
+            additionalInstructions = ["Carefully read the information the user provided.", 
+                                      "Run diagnostic commands yourself, then use the output to further help you.", 
+                                      "Do not use live feed flags when checking the logs such as 'kubectl logs -f'"]
+            
+            
+            additionalGuidelines = [ "You will run the commands as Instructed! Please feel free to change it if necessary and if it makes sense to! You will solve the issue and run the commands!", 
+                                    "When writing out your commands, use the real name of the Kubernetes resource instead of placeholder names. For example, if your command is `kubectl get pods -n <namespace>`, run `kubectl get namespaces` first to get available namespaces.", 
+                                    "Do not use live feed flags when checking the logs such as 'kubectl logs -f'", 
+                                    "When executing the shell commands please feel free to figure out whether or not it the command worked."]
 
+            self.agent = llmAgent(
+                model=model,
+                tools=[BetterShellTools()], 
+                debug_mode=True,
+                instructions=[x for x in self.config["debug-agent"]["instructions"]] + additionalInstructions,
+                show_tool_calls=True,
+                read_chat_history=True,
+                # tool_call_limit=1
+                markdown=True,
+                guidelines=[x for x in self.config["debug-agent"]["guidelines"]] + additionalGuidelines,
+                knowledge=knowledge_base,
+                search_knowledge=True,
+                prevent_hallucinations=True,
+                description="You are an AI called 'RAGit'. You come up with commands and execute them step by step in order to fix kubernetes issues.",
+                task="Proivde the automated assistance in fixing kubernetes issues by executing commands that are relevant to the problem.",
+            )
+        except Exception as e:
+            print(f"Error preparing debug agent: {e}")
+            sys.exit()
+
+    def preparePrompt(self):
+        """ Prepare the debug agent prompt """
+        try:
+            for relevantFileType in ["deployment", "application", "service", "dockerfile"]:
+                self.prompt = traverseRelevantFiles(self.config, relevantFileType, self.prompt)
+
+            self.prompt = f"{self.prompt} " +" "+ self.config["debug-prompt"]["additional-directions"]
+        
+            self.prompt += f'Perform the actions that seem to be the most applicable in the current step'
+            self.prompt += f"\nThe relevant configuration file is located in this path: {self.config['test-directory']+self.config['yaml-file-name']}\n"
+            self.prompt += "You can update these files if necessary. If any files are updated, make sure to delete and reapply the configuration file.\n"
+            self.prompt += "Do not use live feed flags when checking the logs such as 'kubectl logs -f'"
+            self.prompt += "Do not use commands that would open an editor like 'kubectl edit'"
+            self.prompt += "You will run the commands as Instructed! Please feel free to change it if necessary and if it makes sense to! You will solve the issue and run the commands!"
+            
+        except Exception as e:
+            print(f"Error creating debug agent prompt: {e}")
+            sys.exit()
+
+
+    def askQuestion(self):
+        """ Ask the formatted prepared question to the knowledge (API) agent """
+        try:
+            response = self.agent.run(self.prompt)
+            response = response.content
+
+            if "<|SOLVED|>" in response:
+                self.debugStatus = True
+            elif "<|ERROR|>" in response or "<|FAILED|>" in response:
+                self.debugStatus = False
+            return
+            
+        except Exception as e:
+            print(f"Error asking question to knowledge agent: {e}")
+            sys.exit()

@@ -1,4 +1,4 @@
-from main import allStepsAtOnce, stepByStep
+from main import allStepsAtOnce, stepByStep, singleAgentApproach
 import matplotlib.pyplot as plt
 import pandas as pd
 import numpy as np
@@ -120,6 +120,8 @@ def selectTestFunc(testName):
         return allStepsAtOnce
     elif testName == "stepByStep":
         return stepByStep
+    elif testName == "singleAgent":
+        return singleAgentApproach
     else:
         return None
 
@@ -134,36 +136,47 @@ def runSingleTest(testFunc, configFile):
 
 def run():
     """ main runner function which is responsilbe for setting up and running all tests """
-    numTests = 10
-    testName = "stepByStep"
-    testFunc = selectTestFunc(testName)
-    testEnvName = "incorrect_selector"
+    numTests = 3
+    #testName = "allStepsAtOnce"
+    #testEnvName = "incorrect_selector"
+    results = {}
+
+    for testName in ["singleAgent"]:#["allStepsAtOnce", "stepByStep"]:
+        testFunc = selectTestFunc(testName)
+        results[testName] = {}
+
+        for testEnvName in ["wrong_port"]:#["incorrect_selector", "port_mismatch", "readiness_failure", "wrong_interface", "wrong_port"]:
+
+            configFile = f"/home/mario/KubeLLM_latest/KubeLLM-main/debug_assistant_latest/troubleshooting/{testEnvName}/config_step.json"
+            
+            #Set up backups
+            backupEnviornment(testEnvName)
+
+            allTestResults = {}
+            if testFunc:
+                for testNumber in range(numTests):
+                    print(f"Running Test Number : {testNumber}")
+                    testResults = runSingleTest(testFunc, configFile)
+                    allTestResults[testNumber] = testResults
+
+                    #Delete test yaml and replace with the backup
+                    try:
+                        tearDownEnviornment(testEnvName)
+                    except:
+                        pass
+
+                allTestResultsDF = pd.DataFrame(allTestResults).T
+                
+                #print("Finished All Tests!")
+                #print(allTestResultsDF)
+
+                results[testName][testEnvName] = allTestResultsDF.to_dict()
+            else:
+                print(f"Could not find test : {testName}")
 
 
-    configFile = f"/home/mario/KubeLLM_latest/KubeLLM-main/debug_assistant_latest/troubleshooting/{testEnvName}/config_step.json"
-    
-    #Set up backups
-    backupEnviornment(testEnvName)
-
-    allTestResults = {}
-    if testFunc:
-        for testNumber in range(numTests):
-            print(f"Running Test Number : {testNumber}")
-            testResults = runSingleTest(testFunc, configFile)
-            allTestResults[testNumber] = testResults
-
-            #Delete test yaml and replace with the backup
-            try:
-                tearDownEnviornment(testEnvName)
-            except:
-                pass
-
-        allTestResultsDF = pd.DataFrame(allTestResults).T
-        
-        print("Finished All Tests!")
-        print(allTestResultsDF)
-    else:
-        print(f"Could not find test : {testName}")
+    print("Finised All Tests")
+    print(results)
 
 
 if __name__ == "__main__":
