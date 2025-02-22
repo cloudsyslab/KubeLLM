@@ -1,4 +1,4 @@
-from agents import AgentAPI, AgentDebug, AgentDebugStepByStep
+from agents import AgentAPI, AgentDebug, AgentDebugStepByStep, SingleAgent
 from utils import readTheJSONConfigFile, setUpEnvironment, printFinishMessage
 
 
@@ -60,11 +60,34 @@ def stepByStep( configFile = None ):
     return debugAgent.debugStatus
 
 
+def singleAgentApproach( configFile = None ):
+    """
+        This function will run a single agent which will do the
+        reasoning on top of the actioning
+    """
+    #read config to initilize enviornment
+    config = readTheJSONConfigFile( configFile = configFile)
+    setUpEnvironment(config)
+    #initilize needed LLMs
+    agent = SingleAgent("single-agent", config)
+    #set up the LLMs
+    agent.setupAgent()
+
+    #Run the LLMs as needed
+    agent.askQuestion()
+    #agent.knowledgeResponse
+    #agent.takeAction()
+
+    return agent.debugStatus
+
+
 def run( debugType ):
     if debugType == "allStepsAtOnce":
         allStepsAtOnce()
     elif debugType == "stepByStep":
         stepByStep()
+    elif debugType == "singleAgent":
+        singleAgentApproach()
     return
 
 if __name__ == "__main__":
