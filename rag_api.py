@@ -9,7 +9,7 @@ def initialize_assistant(llm_model: str, embeddings_model: str):
     """
     response = requests.post(f"{BASE_URL}/initialize/", data={
         "llm_model": llm_model, 
-        "embeddings_model": embeddings_model
+        "embeddings_model": embeddings_model,
     })
     return response.json()
 
