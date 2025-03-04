@@ -27,9 +27,6 @@ from phi.storage.agent.postgres import PgAgentStorage
 from phi.knowledge.website import WebsiteKnowledgeBase
 
 
-
-
-
 from rag_api import (
     BASE_URL,
     initialize_assistant,
@@ -123,7 +120,7 @@ class AgentDebug(Agent):
         """ Prepare the debug assistant based on the config file """
         try:
             
-            model = OpenAIChat(id="o3-mini")
+            model = OpenAIChat(id="gpt-4o")
             self.agent = llmAgent(
                 model=model,
                 tools=[BetterShellTools()], 
@@ -133,7 +130,9 @@ class AgentDebug(Agent):
                 read_chat_history=True,
                 # tool_call_limit=1
                 markdown=True,
-                guidelines=[x for x in self.agentProperties["guidelines"]]
+                guidelines=[x for x in self.agentProperties["guidelines"]],
+                add_history_to_messages=True,
+                num_history_responses=3
             )
         except Exception as e:
             print(f"Error preparing debug agent: {e}")
@@ -183,7 +182,8 @@ class AgentDebugStepByStep(Agent):
     def prepareAgent(self):
         """ Prepare the debug assistant based on the config file """
         try:
-            model = OpenAIChat(id="o3-mini")
+            model = OpenAIChat(id="gpt-4o")
+            #OpenAIChat(id="o3-mini")
             #Ollama(id="llama3.3")
             #OpenAIChat(id="gpt-4o")
             #Gemini(id="gemini-1.5-flash")
@@ -195,7 +195,9 @@ class AgentDebugStepByStep(Agent):
                 show_tool_calls=True,
                 markdown=True,
                 instructions=[x for x in self.agentProperties["instructions"]],
-                guidelines=[x for x in self.agentProperties["guidelines"]]
+                guidelines=[x for x in self.agentProperties["guidelines"]],
+                add_history_to_messages=True,
+                num_history_responses=3
             )
         except Exception as e:
             print(f"Error preparing debug agent: {e}")
@@ -246,7 +248,7 @@ class AgentDebugStepByStep(Agent):
                 prompt += "If you need to update a pod then use kubectl replace --force [POD_NAME]"
                 prompt += f"\nThis is step {i} out of {numSteps}."
                 prompt += "Do not use live feed flags when checking the logs such as 'kubectl logs -f'"
-                
+
                 response = self.agent.run(prompt)
                 response = response.content
 
@@ -272,7 +274,8 @@ class SingleAgent(Agent):
         """ Prepare the debug assistant based on the config file """
         try:
             
-            model = Gemini(id="gemini-1.5-flash")
+            model = OpenAIChat(id="gpt-4o")
+            #OpenAIChat(id="gpt-4o")
             #Ollama(id="llama3.3")
             #OpenAIChat(id="o3-mini")
             #Gemini(id="gemini-1.5-flash")
@@ -291,13 +294,19 @@ class SingleAgent(Agent):
 
             additionalInstructions = ["Carefully read the information the user provided.", 
                                       "Run diagnostic commands yourself, then use the output to further help you.", 
-                                      "Do not use live feed flags when checking the logs such as 'kubectl logs -f'"]
+                                      "Do not use live feed flags when checking the logs such as 'kubectl logs -f'",
+                                      "Do not use commands that would open an editor like 'kubectl edit'",
+                                      "DO NOT BY ANY MEANS USE kubectl edit"
+                                    ]
             
             
             additionalGuidelines = [ "You will run the commands as Instructed! Please feel free to change it if necessary and if it makes sense to! You will solve the issue and run the commands!", 
                                     "When writing out your commands, use the real name of the Kubernetes resource instead of placeholder names. For example, if your command is `kubectl get pods -n <namespace>`, run `kubectl get namespaces` first to get available namespaces.", 
                                     "Do not use live feed flags when checking the logs such as 'kubectl logs -f'", 
-                                    "When executing the shell commands please feel free to figure out whether or not it the command worked."]
+                                    "When executing the shell commands please feel free to figure out whether or not it the command worked.",
+                                    "Do not use commands that would open an editor like 'kubectl edit'",
+                                    "DO NOT BY ANY MEANS USE kubectl edit"
+                                    ]
 
             self.agent = llmAgent(
                 model=model,
@@ -306,7 +315,7 @@ class SingleAgent(Agent):
                 instructions=[x for x in self.config["debug-agent"]["instructions"]] + additionalInstructions,
                 show_tool_calls=True,
                 read_chat_history=True,
-                # tool_call_limit=1
+                #tool_call_limit=1,
                 markdown=True,
                 guidelines=[x for x in self.config["debug-agent"]["guidelines"]] + additionalGuidelines,
                 knowledge=knowledge_base,
@@ -314,6 +323,8 @@ class SingleAgent(Agent):
                 prevent_hallucinations=True,
                 description="You are an AI called 'RAGit'. You come up with commands and execute them step by step in order to fix kubernetes issues.",
                 task="Proivde the automated assistance in fixing kubernetes issues by executing commands that are relevant to the problem.",
+                add_history_to_messages=True,
+                num_history_responses=3
             )
         except Exception as e:
             print(f"Error preparing debug agent: {e}")
@@ -333,7 +344,7 @@ class SingleAgent(Agent):
             self.prompt += "Do not use live feed flags when checking the logs such as 'kubectl logs -f'"
             self.prompt += "Do not use commands that would open an editor like 'kubectl edit'"
             self.prompt += "You will run the commands as Instructed! Please feel free to change it if necessary and if it makes sense to! You will solve the issue and run the commands!"
-            
+            self.prompt += "DO NOT BY ANY MEANS USE kubectl edit"
         except Exception as e:
             print(f"Error creating debug agent prompt: {e}")
             sys.exit()

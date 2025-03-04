@@ -6,6 +6,7 @@ import time
 import shutil
 import os
 import subprocess
+import datetime
 
 def backupEnviornment(testEnvName):
     if testEnvName == "wrong_interface":
@@ -134,18 +135,25 @@ def runSingleTest(testFunc, configFile):
 
     return {"TimeTaken":totalTime,"Result":result}
 
+def appendResultsToLog(testTechnique, testName, model, results):
+
+    todaysDate = datetime.date.today()
+    with open("/home/mario/KubeLLM_latest/KubeLLM-main/debug_assistant_latest/result_logs/result_logs_agents_rag_memory.txt", "a") as file:
+        file.write(f"({todaysDate}) : Model - {model}, Technique - {testTechnique}, Test Name - {testName} \n\nResult: {results} \n\n------------------------------------------------------------------ \n")
+
+
 def run():
     """ main runner function which is responsilbe for setting up and running all tests """
-    numTests = 3
+    numTests = 20
     #testName = "allStepsAtOnce"
     #testEnvName = "incorrect_selector"
     results = {}
-
-    for testName in ["singleAgent"]:#["allStepsAtOnce", "stepByStep"]:
+    model = "GPT-4o"
+    for testName in ["allStepsAtOnce", "stepByStep", "singleAgent"]:
         testFunc = selectTestFunc(testName)
         results[testName] = {}
 
-        for testEnvName in ["wrong_port"]:#["incorrect_selector", "port_mismatch", "readiness_failure", "wrong_interface", "wrong_port"]:
+        for testEnvName in ["incorrect_selector", "port_mismatch", "readiness_failure", "wrong_interface", "wrong_port"]:
 
             configFile = f"/home/mario/KubeLLM_latest/KubeLLM-main/debug_assistant_latest/troubleshooting/{testEnvName}/config_step.json"
             
@@ -158,7 +166,6 @@ def run():
                     print(f"Running Test Number : {testNumber}")
                     testResults = runSingleTest(testFunc, configFile)
                     allTestResults[testNumber] = testResults
-
                     #Delete test yaml and replace with the backup
                     try:
                         tearDownEnviornment(testEnvName)
@@ -166,7 +173,8 @@ def run():
                         pass
 
                 allTestResultsDF = pd.DataFrame(allTestResults).T
-                
+                appendResultsToLog(testName, testEnvName, model, allTestResults)
+
                 #print("Finished All Tests!")
                 #print(allTestResultsDF)
 
