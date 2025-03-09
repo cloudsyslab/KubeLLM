@@ -8,27 +8,30 @@ import os
 import subprocess
 import datetime
 
+filepath = os.path.expanduser("~") + "/KubeLLM/debug_assistant_latest/troubleshooting"
+print (filepath)
+
 def backupEnviornment(testEnvName):
     if testEnvName == "wrong_interface":
-        shutil.copyfile(f"/home/mario/KubeLLM_latest/KubeLLM-main/debug_assistant_latest/troubleshooting/{testEnvName}/server.py", f"/home/mario/KubeLLM_latest/KubeLLM-main/debug_assistant_latest/troubleshooting/{testEnvName}/backup_server.py")
-        shutil.copyfile(f"/home/mario/KubeLLM_latest/KubeLLM-main/debug_assistant_latest/troubleshooting/{testEnvName}/{testEnvName}.yaml", f"/home/mario/KubeLLM_latest/KubeLLM-main/debug_assistant_latest/troubleshooting/{testEnvName}/backup_yaml.yaml")
-        shutil.copyfile(f"/home/mario/KubeLLM_latest/KubeLLM-main/debug_assistant_latest/troubleshooting/{testEnvName}/Dockerfile", f"/home/mario/KubeLLM_latest/KubeLLM-main/debug_assistant_latest/troubleshooting/{testEnvName}/backup_Dockerfile")
+        shutil.copyfile(f"{filepath}/{testEnvName}/server.py", f"{filepath}/{testEnvName}/backup_server.py")
+        shutil.copyfile(f"{filepath}/{testEnvName}/{testEnvName}.yaml", f"{filepath}/{testEnvName}/backup_yaml.yaml")
+        shutil.copyfile(f"{filepath}/{testEnvName}/Dockerfile", f"{filepath}/{testEnvName}/backup_Dockerfile")
     elif testEnvName == "readiness_failure":
-        shutil.copyfile(f"/home/mario/KubeLLM_latest/KubeLLM-main/debug_assistant_latest/troubleshooting/{testEnvName}/{testEnvName}.yaml", f"/home/mario/KubeLLM_latest/KubeLLM-main/debug_assistant_latest/troubleshooting/{testEnvName}/backup_yaml.yaml")
+        shutil.copyfile(f"{filepath}/{testEnvName}/{testEnvName}.yaml", f"{filepath}/{testEnvName}/backup_yaml.yaml")
     elif testEnvName == "wrong_port":
-        shutil.copyfile(f"/home/mario/KubeLLM_latest/KubeLLM-main/debug_assistant_latest/troubleshooting/{testEnvName}/server.py", f"/home/mario/KubeLLM_latest/KubeLLM-main/debug_assistant_latest/troubleshooting/{testEnvName}/backup_server.py")
-        shutil.copyfile(f"/home/mario/KubeLLM_latest/KubeLLM-main/debug_assistant_latest/troubleshooting/{testEnvName}/{testEnvName}.yaml", f"/home/mario/KubeLLM_latest/KubeLLM-main/debug_assistant_latest/troubleshooting/{testEnvName}/backup_yaml.yaml")
-        shutil.copyfile(f"/home/mario/KubeLLM_latest/KubeLLM-main/debug_assistant_latest/troubleshooting/{testEnvName}/Dockerfile", f"/home/mario/KubeLLM_latest/KubeLLM-main/debug_assistant_latest/troubleshooting/{testEnvName}/backup_Dockerfile")
+        shutil.copyfile(f"{filepath}/{testEnvName}/server.py", f"{filepath}/{testEnvName}/backup_server.py")
+        shutil.copyfile(f"{filepath}/{testEnvName}/{testEnvName}.yaml", f"{filepath}/{testEnvName}/backup_yaml.yaml")
+        shutil.copyfile(f"{filepath}/{testEnvName}/Dockerfile", f"{filepath}/{testEnvName}/backup_Dockerfile")
     elif testEnvName == "port_mismatch":
-        shutil.copyfile(f"/home/mario/KubeLLM_latest/KubeLLM-main/debug_assistant_latest/troubleshooting/{testEnvName}/server.py", f"/home/mario/KubeLLM_latest/KubeLLM-main/debug_assistant_latest/troubleshooting/{testEnvName}/backup_server.py")
-        shutil.copyfile(f"/home/mario/KubeLLM_latest/KubeLLM-main/debug_assistant_latest/troubleshooting/{testEnvName}/{testEnvName}.yaml", f"/home/mario/KubeLLM_latest/KubeLLM-main/debug_assistant_latest/troubleshooting/{testEnvName}/backup_yaml.yaml")
-        shutil.copyfile(f"/home/mario/KubeLLM_latest/KubeLLM-main/debug_assistant_latest/troubleshooting/{testEnvName}/Dockerfile", f"/home/mario/KubeLLM_latest/KubeLLM-main/debug_assistant_latest/troubleshooting/{testEnvName}/backup_Dockerfile")
-        shutil.copyfile(f"/home/mario/KubeLLM_latest/KubeLLM-main/debug_assistant_latest/troubleshooting/{testEnvName}/app_service.yaml", f"/home/mario/KubeLLM_latest/KubeLLM-main/debug_assistant_latest/troubleshooting/{testEnvName}/backup_app_service.yaml")
+        shutil.copyfile(f"{filepath}/{testEnvName}/server.py", f"{filepath}/{testEnvName}/backup_server.py")
+        shutil.copyfile(f"{filepath}/{testEnvName}/{testEnvName}.yaml", f"{filepath}/{testEnvName}/backup_yaml.yaml")
+        shutil.copyfile(f"{filepath}/{testEnvName}/Dockerfile", f"{filepath}/{testEnvName}/backup_Dockerfile")
+        shutil.copyfile(f"{filepath}/{testEnvName}/app_service.yaml", f"{filepath}/{testEnvName}/backup_app_service.yaml")
     elif testEnvName == "incorrect_selector":
-        shutil.copyfile(f"/home/mario/KubeLLM_latest/KubeLLM-main/debug_assistant_latest/troubleshooting/{testEnvName}/server.py", f"/home/mario/KubeLLM_latest/KubeLLM-main/debug_assistant_latest/troubleshooting/{testEnvName}/backup_server.py")
-        shutil.copyfile(f"/home/mario/KubeLLM_latest/KubeLLM-main/debug_assistant_latest/troubleshooting/{testEnvName}/{testEnvName}.yaml", f"/home/mario/KubeLLM_latest/KubeLLM-main/debug_assistant_latest/troubleshooting/{testEnvName}/backup_yaml.yaml")
-        shutil.copyfile(f"/home/mario/KubeLLM_latest/KubeLLM-main/debug_assistant_latest/troubleshooting/{testEnvName}/Dockerfile", f"/home/mario/KubeLLM_latest/KubeLLM-main/debug_assistant_latest/troubleshooting/{testEnvName}/backup_Dockerfile")
-        shutil.copyfile(f"/home/mario/KubeLLM_latest/KubeLLM-main/debug_assistant_latest/troubleshooting/{testEnvName}/app_service.yaml", f"/home/mario/KubeLLM_latest/KubeLLM-main/debug_assistant_latest/troubleshooting/{testEnvName}/backup_app_service.yaml")
+        shutil.copyfile(f"{filepath}/{testEnvName}/server.py", f"{filepath}/{testEnvName}/backup_server.py")
+        shutil.copyfile(f"{filepath}/{testEnvName}/{testEnvName}.yaml", f"{filepath}/{testEnvName}/backup_yaml.yaml")
+        shutil.copyfile(f"{filepath}/{testEnvName}/Dockerfile", f"{filepath}/{testEnvName}/backup_Dockerfile")
+        shutil.copyfile(f"{filepath}/{testEnvName}/app_service.yaml", f"{filepath}/{testEnvName}/backup_app_service.yaml")
 
 
 
@@ -45,19 +48,19 @@ def tearDownEnviornment(testEnvName):
         subprocess.run("docker rmi -f marioutsa/kube-wrong-interface-app", shell=True, check=True)
         subprocess.run("docker rmi -f kube-wrong-interface-app", shell=True, check=True)
 
-        os.remove(f"/home/mario/KubeLLM_latest/KubeLLM-main/debug_assistant_latest/troubleshooting/{testEnvName}/{testEnvName}.yaml")
-        os.remove(f"/home/mario/KubeLLM_latest/KubeLLM-main/debug_assistant_latest/troubleshooting/{testEnvName}/server.py")
-        os.remove(f"/home/mario/KubeLLM_latest/KubeLLM-main/debug_assistant_latest/troubleshooting/{testEnvName}/Dockerfile")
+        os.remove(f"{filepath}/{testEnvName}/{testEnvName}.yaml")
+        os.remove(f"{filepath}/{testEnvName}/server.py")
+        os.remove(f"{filepath}/{testEnvName}/Dockerfile")
 
-        shutil.copyfile(f"/home/mario/KubeLLM_latest/KubeLLM-main/debug_assistant_latest/troubleshooting/{testEnvName}/backup_yaml.yaml", f"/home/mario/KubeLLM_latest/KubeLLM-main/debug_assistant_latest/troubleshooting/{testEnvName}/{testEnvName}.yaml")        
-        shutil.copyfile(f"/home/mario/KubeLLM_latest/KubeLLM-main/debug_assistant_latest/troubleshooting/{testEnvName}/backup_server.py", f"/home/mario/KubeLLM_latest/KubeLLM-main/debug_assistant_latest/troubleshooting/{testEnvName}/server.py")        
-        shutil.copyfile(f"/home/mario/KubeLLM_latest/KubeLLM-main/debug_assistant_latest/troubleshooting/{testEnvName}/backup_Dockerfile", f"/home/mario/KubeLLM_latest/KubeLLM-main/debug_assistant_latest/troubleshooting/{testEnvName}/Dockerfile")        
+        shutil.copyfile(f"{filepath}/{testEnvName}/backup_yaml.yaml", f"{filepath}/{testEnvName}/{testEnvName}.yaml")        
+        shutil.copyfile(f"{filepath}/{testEnvName}/backup_server.py", f"{filepath}/{testEnvName}/server.py")        
+        shutil.copyfile(f"{filepath}/{testEnvName}/backup_Dockerfile", f"{filepath}/{testEnvName}/Dockerfile")        
 
         subprocess.run(f"kubectl delete -f ./troubleshooting/{testEnvName}/{testEnvName}.yaml", shell=True, check=True)
 
     elif testEnvName == "readiness_failure":
-        os.remove(f"/home/mario/KubeLLM_latest/KubeLLM-main/debug_assistant_latest/troubleshooting/{testEnvName}/{testEnvName}.yaml")
-        shutil.copyfile(f"/home/mario/KubeLLM_latest/KubeLLM-main/debug_assistant_latest/troubleshooting/{testEnvName}/backup_yaml.yaml", f"/home/mario/KubeLLM_latest/KubeLLM-main/debug_assistant_latest/troubleshooting/{testEnvName}/{testEnvName}.yaml")        
+        os.remove(f"{filepath}/{testEnvName}/{testEnvName}.yaml")
+        shutil.copyfile(f"{filepath}/{testEnvName}/backup_yaml.yaml", f"{filepath}/{testEnvName}/{testEnvName}.yaml")        
         subprocess.run(f"kubectl delete -f ./troubleshooting/{testEnvName}/{testEnvName}.yaml", shell=True, check=True)
 
     elif testEnvName == "wrong_port":
@@ -66,13 +69,13 @@ def tearDownEnviornment(testEnvName):
         subprocess.run("docker rmi -f marioutsa/kube-wrong-port-app", shell=True, check=True)
         subprocess.run("docker rmi -f kube-wrong-port-app", shell=True, check=True)
 
-        os.remove(f"/home/mario/KubeLLM_latest/KubeLLM-main/debug_assistant_latest/troubleshooting/{testEnvName}/{testEnvName}.yaml")
-        os.remove(f"/home/mario/KubeLLM_latest/KubeLLM-main/debug_assistant_latest/troubleshooting/{testEnvName}/server.py")
-        os.remove(f"/home/mario/KubeLLM_latest/KubeLLM-main/debug_assistant_latest/troubleshooting/{testEnvName}/Dockerfile")
+        os.remove(f"{filepath}/{testEnvName}/{testEnvName}.yaml")
+        os.remove(f"{filepath}/{testEnvName}/server.py")
+        os.remove(f"{filepath}/{testEnvName}/Dockerfile")
 
-        shutil.copyfile(f"/home/mario/KubeLLM_latest/KubeLLM-main/debug_assistant_latest/troubleshooting/{testEnvName}/backup_yaml.yaml", f"/home/mario/KubeLLM_latest/KubeLLM-main/debug_assistant_latest/troubleshooting/{testEnvName}/{testEnvName}.yaml")        
-        shutil.copyfile(f"/home/mario/KubeLLM_latest/KubeLLM-main/debug_assistant_latest/troubleshooting/{testEnvName}/backup_server.py", f"/home/mario/KubeLLM_latest/KubeLLM-main/debug_assistant_latest/troubleshooting/{testEnvName}/server.py")        
-        shutil.copyfile(f"/home/mario/KubeLLM_latest/KubeLLM-main/debug_assistant_latest/troubleshooting/{testEnvName}/backup_Dockerfile", f"/home/mario/KubeLLM_latest/KubeLLM-main/debug_assistant_latest/troubleshooting/{testEnvName}/Dockerfile")        
+        shutil.copyfile(f"{filepath}/{testEnvName}/backup_yaml.yaml", f"{filepath}/{testEnvName}/{testEnvName}.yaml")        
+        shutil.copyfile(f"{filepath}/{testEnvName}/backup_server.py", f"{filepath}/{testEnvName}/server.py")        
+        shutil.copyfile(f"{filepath}/{testEnvName}/backup_Dockerfile", f"{filepath}/{testEnvName}/Dockerfile")        
 
         subprocess.run(f"kubectl delete -f ./troubleshooting/{testEnvName}/{testEnvName}.yaml", shell=True, check=True)
     elif testEnvName == "port_mismatch":
@@ -81,15 +84,15 @@ def tearDownEnviornment(testEnvName):
         subprocess.run("docker rmi -f marioutsa/kube-port-mismatch-app", shell=True, check=True)
         subprocess.run("docker rmi -f kube-port-mismatch-app", shell=True, check=True)
 
-        os.remove(f"/home/mario/KubeLLM_latest/KubeLLM-main/debug_assistant_latest/troubleshooting/{testEnvName}/{testEnvName}.yaml")
-        os.remove(f"/home/mario/KubeLLM_latest/KubeLLM-main/debug_assistant_latest/troubleshooting/{testEnvName}/app_service.yaml")
-        os.remove(f"/home/mario/KubeLLM_latest/KubeLLM-main/debug_assistant_latest/troubleshooting/{testEnvName}/server.py")
-        os.remove(f"/home/mario/KubeLLM_latest/KubeLLM-main/debug_assistant_latest/troubleshooting/{testEnvName}/Dockerfile")
+        os.remove(f"{filepath}/{testEnvName}/{testEnvName}.yaml")
+        os.remove(f"{filepath}/{testEnvName}/app_service.yaml")
+        os.remove(f"{filepath}/{testEnvName}/server.py")
+        os.remove(f"{filepath}/{testEnvName}/Dockerfile")
 
-        shutil.copyfile(f"/home/mario/KubeLLM_latest/KubeLLM-main/debug_assistant_latest/troubleshooting/{testEnvName}/backup_yaml.yaml", f"/home/mario/KubeLLM_latest/KubeLLM-main/debug_assistant_latest/troubleshooting/{testEnvName}/{testEnvName}.yaml")   
-        shutil.copyfile(f"/home/mario/KubeLLM_latest/KubeLLM-main/debug_assistant_latest/troubleshooting/{testEnvName}/backup_app_service.yaml", f"/home/mario/KubeLLM_latest/KubeLLM-main/debug_assistant_latest/troubleshooting/{testEnvName}/app_service.yaml")     
-        shutil.copyfile(f"/home/mario/KubeLLM_latest/KubeLLM-main/debug_assistant_latest/troubleshooting/{testEnvName}/backup_server.py", f"/home/mario/KubeLLM_latest/KubeLLM-main/debug_assistant_latest/troubleshooting/{testEnvName}/server.py")        
-        shutil.copyfile(f"/home/mario/KubeLLM_latest/KubeLLM-main/debug_assistant_latest/troubleshooting/{testEnvName}/backup_Dockerfile", f"/home/mario/KubeLLM_latest/KubeLLM-main/debug_assistant_latest/troubleshooting/{testEnvName}/Dockerfile")        
+        shutil.copyfile(f"{filepath}/{testEnvName}/backup_yaml.yaml", f"{filepath}/{testEnvName}/{testEnvName}.yaml")   
+        shutil.copyfile(f"{filepath}/{testEnvName}/backup_app_service.yaml", f"{filepath}/{testEnvName}/app_service.yaml")     
+        shutil.copyfile(f"{filepath}/{testEnvName}/backup_server.py", f"{filepath}/{testEnvName}/server.py")        
+        shutil.copyfile(f"{filepath}/{testEnvName}/backup_Dockerfile", f"{filepath}/{testEnvName}/Dockerfile")        
 
         subprocess.run(f"kubectl delete -f ./troubleshooting/{testEnvName}/{testEnvName}.yaml", shell=True, check=True)
         subprocess.run(f"kubectl delete -f ./troubleshooting/{testEnvName}/app_service.yaml", shell=True, check=True)
@@ -101,15 +104,15 @@ def tearDownEnviornment(testEnvName):
         subprocess.run("docker rmi -f marioutsa/kube-incorrect-selector-app", shell=True, check=True)
         subprocess.run("docker rmi -f kube-incorrect-selector-app", shell=True, check=True)
 
-        os.remove(f"/home/mario/KubeLLM_latest/KubeLLM-main/debug_assistant_latest/troubleshooting/{testEnvName}/{testEnvName}.yaml")
-        os.remove(f"/home/mario/KubeLLM_latest/KubeLLM-main/debug_assistant_latest/troubleshooting/{testEnvName}/app_service.yaml")
-        os.remove(f"/home/mario/KubeLLM_latest/KubeLLM-main/debug_assistant_latest/troubleshooting/{testEnvName}/server.py")
-        os.remove(f"/home/mario/KubeLLM_latest/KubeLLM-main/debug_assistant_latest/troubleshooting/{testEnvName}/Dockerfile")
+        os.remove(f"{filepath}/{testEnvName}/{testEnvName}.yaml")
+        os.remove(f"{filepath}/{testEnvName}/app_service.yaml")
+        os.remove(f"{filepath}/{testEnvName}/server.py")
+        os.remove(f"{filepath}/{testEnvName}/Dockerfile")
 
-        shutil.copyfile(f"/home/mario/KubeLLM_latest/KubeLLM-main/debug_assistant_latest/troubleshooting/{testEnvName}/backup_yaml.yaml", f"/home/mario/KubeLLM_latest/KubeLLM-main/debug_assistant_latest/troubleshooting/{testEnvName}/{testEnvName}.yaml")   
-        shutil.copyfile(f"/home/mario/KubeLLM_latest/KubeLLM-main/debug_assistant_latest/troubleshooting/{testEnvName}/backup_app_service.yaml", f"/home/mario/KubeLLM_latest/KubeLLM-main/debug_assistant_latest/troubleshooting/{testEnvName}/app_service.yaml")     
-        shutil.copyfile(f"/home/mario/KubeLLM_latest/KubeLLM-main/debug_assistant_latest/troubleshooting/{testEnvName}/backup_server.py", f"/home/mario/KubeLLM_latest/KubeLLM-main/debug_assistant_latest/troubleshooting/{testEnvName}/server.py")        
-        shutil.copyfile(f"/home/mario/KubeLLM_latest/KubeLLM-main/debug_assistant_latest/troubleshooting/{testEnvName}/backup_Dockerfile", f"/home/mario/KubeLLM_latest/KubeLLM-main/debug_assistant_latest/troubleshooting/{testEnvName}/Dockerfile")        
+        shutil.copyfile(f"{filepath}/{testEnvName}/backup_yaml.yaml", f"{filepath}/{testEnvName}/{testEnvName}.yaml")   
+        shutil.copyfile(f"{filepath}/{testEnvName}/backup_app_service.yaml", f"{filepath}/{testEnvName}/app_service.yaml")     
+        shutil.copyfile(f"{filepath}/{testEnvName}/backup_server.py", f"{filepath}/{testEnvName}/server.py")        
+        shutil.copyfile(f"{filepath}/{testEnvName}/backup_Dockerfile", f"{filepath}/{testEnvName}/Dockerfile")        
 
         subprocess.run(f"kubectl delete -f ./troubleshooting/{testEnvName}/{testEnvName}.yaml", shell=True, check=True)
         subprocess.run(f"kubectl delete -f ./troubleshooting/{testEnvName}/app_service.yaml", shell=True, check=True)
@@ -155,7 +158,7 @@ def run():
 
         for testEnvName in ["incorrect_selector", "port_mismatch", "readiness_failure", "wrong_interface", "wrong_port"]:
 
-            configFile = f"/home/mario/KubeLLM_latest/KubeLLM-main/debug_assistant_latest/troubleshooting/{testEnvName}/config_step.json"
+            configFile = f"{filepath}/{testEnvName}/config_step.json"
             
             #Set up backups
             backupEnviornment(testEnvName)
