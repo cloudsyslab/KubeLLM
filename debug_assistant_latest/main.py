@@ -1,6 +1,6 @@
 from agents import AgentAPI, AgentDebug, AgentDebugStepByStep, SingleAgent
 from utils import readTheJSONConfigFile, setUpEnvironment, printFinishMessage
-
+import sys, os
 
 def allStepsAtOnce(configFile = None):
     """
@@ -81,17 +81,25 @@ def singleAgentApproach( configFile = None ):
     return agent.debugStatus
 
 
-def run( debugType ):
+def run( debugType, configFile ):
     if debugType == "allStepsAtOnce":
-        allStepsAtOnce()
+        allStepsAtOnce(configFile)
     elif debugType == "stepByStep":
-        stepByStep()
+        stepByStep(configFile)
     elif debugType == "singleAgent":
-        singleAgentApproach()
+        singleAgentApproach(configFile)
     return
 
 if __name__ == "__main__":
-    run("allStepsAtOnce")
+    if (len(sys.argv) < 2):
+        print ('config file not provided')
+        sys.exit(1)
+
+    configFile = sys.argv[1]
+    if os.path.exists(configFile):
+        run("allStepsAtOnce", configFile)
+    else:
+        print (f'{configFile} does not exist')
 
 
 
