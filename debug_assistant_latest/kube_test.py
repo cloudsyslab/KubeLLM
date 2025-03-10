@@ -7,8 +7,9 @@ import shutil
 import os
 import subprocess
 import datetime
+from pathlib import Path
 
-filepath = os.path.expanduser("~") + "/KubeLLM/debug_assistant_latest/troubleshooting"
+filepath = Path("~").expanduser() / "KubeLLM/debug_assistant_latest/troubleshooting"
 print (filepath)
 
 def backupEnviornment(testEnvName):
@@ -141,25 +142,32 @@ def runSingleTest(testFunc, configFile):
 def appendResultsToLog(testTechnique, testName, model, results):
 
     todaysDate = datetime.date.today()
-    with open("/home/mario/KubeLLM_latest/KubeLLM-main/debug_assistant_latest/result_logs/result_logs_agents_rag_memory.txt", "a") as file:
+    file_path = Path("~").expanduser() / "KubeLLM/debug_assistant_latest/result_logs/result_logs_agents_rag_memory.txt"
+    print (f"Logging into {file_path}")
+    # Ensure the parent directory exists
+    file_path.parent.mkdir(parents=True, exist_ok=True)
+
+    # Open the file in append mode and write some text
+    with file_path.open("a") as file:
         file.write(f"({todaysDate}) : Model - {model}, Technique - {testTechnique}, Test Name - {testName} \n\nResult: {results} \n\n------------------------------------------------------------------ \n")
 
 
 def run():
     """ main runner function which is responsilbe for setting up and running all tests """
-    numTests = 20
+    numTests = 3
     #testName = "allStepsAtOnce"
     #testEnvName = "incorrect_selector"
     results = {}
     model = "GPT-4o"
-    for testName in ["allStepsAtOnce", "stepByStep", "singleAgent"]:
+    for testName in ["allStepsAtOnce"]:
         testFunc = selectTestFunc(testName)
         results[testName] = {}
 
-        for testEnvName in ["incorrect_selector", "port_mismatch", "readiness_failure", "wrong_interface", "wrong_port"]:
+        #for testName in ["incorrect_selector", "port_mismatch", "readiness_failure", "wrong_interface", "wrong_port"]:
+        for testEnvName in ["incorrect_selector"]:
 
             configFile = f"{filepath}/{testEnvName}/config_step.json"
-            
+            print (f'starting environment {testEnvName}')       
             #Set up backups
             backupEnviornment(testEnvName)
 
@@ -173,7 +181,7 @@ def run():
                     try:
                         tearDownEnviornment(testEnvName)
                     except:
-                        pass
+                        break
 
                 allTestResultsDF = pd.DataFrame(allTestResults).T
                 appendResultsToLog(testName, testEnvName, model, allTestResults)

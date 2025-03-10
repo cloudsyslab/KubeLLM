@@ -12,6 +12,7 @@ import sys
 import os
 import subprocess
 import timeout_decorator
+from pathlib import Path
 
 from rag_api import (
     BASE_URL,
@@ -66,23 +67,26 @@ def identifyLLM(debugAgent):
         model = Ollama(id="llama3.1:70b")
     elif debugAgent["llm-source"].lower() == "openai":
         model = OpenAIChat(id="gpt-4o")
-        if debugAgent["api-key"] == "":
-            print("No API key provided for OpenAI agent")
+        api_key = os.getenv("OPENAI_API_KEY")  # Returns None if not set
+        if api_key is None:
+            print("Error: OPENAI_API_KEY is not set!")
             sys.exit()
-        os.environ["OPENAI_API_KEY"] = debugAgent["api-key"]
+        #os.environ["OPENAI_API_KEY"] = debugAgent["api-key"]
 
     return model
 
 def traverseRelevantFiles(config, relevantFileType, prompt):
     """ Traverse all the relevant file type that is passed """
+    file_path = Path(config["test-directory"]).expanduser()
+
     if relevantFileType != "dockerfile":
         for dep in config["relevant-files"][relevantFileType]:
-            contents = open(config["test-directory"] + dep, "r").read()
-            prompt = f"{prompt} The file " +" "+ config["test-directory"] +""+ dep +" "+ f" describes a {relevantFileType}. This is the file contents: {contents}."
+            contents = open(file_path / dep, "r").read()
+            prompt = f"{prompt} The file " +" "+ str(file_path) +"/"+ dep +" "+ f" describes a {relevantFileType}. This is the file contents: {contents}."
     elif relevantFileType == "dockerfile" and config["relevant-files"][relevantFileType]:
-        contents = open(config["test-directory"] + 'Dockerfile', "r").read()
-        prompt = f"{prompt} The file " +" "+ config["test-directory"] +"Dockerfile"+" "+ f" describes a {relevantFileType}. This is the file contents: {contents}."
-
+        contents = open(file_path / 'Dockerfile', "r").read()
+        prompt = f"{prompt} The file " +" "+ str(file_path) + "/" + "Dockerfile"+" "+ f" describes a {relevantFileType}. This is the file contents: {contents}."
+    print (f"DEBUG: {prompt}")
     return prompt
 
 def printFinishMessage():

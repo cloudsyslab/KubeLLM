@@ -1,6 +1,7 @@
 from typing import Optional
 from phi.agent import Agent
 from phi.agent import AgentKnowledge
+from phi.knowledge.website import WebsiteKnowledgeBase
 from phi.llm.ollama import OllamaTools
 from phi.model.ollama import Ollama
 from phi.embedder.ollama import OllamaEmbedder
@@ -145,6 +146,7 @@ def get_rag_assistant(
         num_documents=3,
     )
 
+
     return Agent(
         name="local_rag_assistant",
         run_id=run_id,
@@ -160,7 +162,7 @@ def get_rag_assistant(
         storage=PgAgentStorage(table_name="ai.local_rag_assistant", db_url=db_url),
         tools=[BetterShellTools()],
         show_tool_calls=False,
-        #read_chat_history=True,
+        read_chat_history=True,
         search_knowledge=True,
         description="You are an AI called 'RAGit'. You provide instructions that a user should take to solve issues with their Kubernetes configurations.",
         task="Provide the user with instructions and shell commands to solve the user's problem.",
