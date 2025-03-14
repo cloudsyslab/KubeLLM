@@ -154,17 +154,16 @@ def appendResultsToLog(testTechnique, testName, model, results):
 
 def run():
     """ main runner function which is responsilbe for setting up and running all tests """
-    numTests = 3
+    numTests = 20
     #testName = "allStepsAtOnce"
     #testEnvName = "incorrect_selector"
     results = {}
     model = "GPT-4o"
-    for testName in ["allStepsAtOnce"]:
+    for testName in ["allStepsAtOnce",""]:
         testFunc = selectTestFunc(testName)
         results[testName] = {}
 
-        #for testName in ["incorrect_selector", "port_mismatch", "readiness_failure", "wrong_interface", "wrong_port"]:
-        for testEnvName in ["incorrect_selector"]:
+        for testEnvName in ["incorrect_selector", "port_mismatch", "readiness_failure", "wrong_interface", "wrong_port"]:
 
             configFile = f"{filepath}/{testEnvName}/config_step.json"
             print (f'starting environment {testEnvName}')       
