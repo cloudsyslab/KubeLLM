@@ -1,6 +1,6 @@
 # kubeLLM 🤖
 
-KubeLLM is an AI agent that manages your kubernetes clusters all on its own. KubeLLM takes in ONE formatted prompt and it will solve it using various state of the art techniques to not just figure the issue, but also resolve it within your enviornment.
+KubeLLM is an LLM-based multi-agent framework that manages your kubernetes clusters all on its own. KubeLLM takes in ONE formatted prompt and it will automatically diagnose and apply fixes to Kubernetes configuration issues. 
 
 ---
 
