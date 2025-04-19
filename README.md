@@ -17,14 +17,6 @@ KubeLLM is an AI agent that manages your kubernetes clusters all on its own. Kub
 
 ---
 
-### Known Issues ⚠️
-1. Improve AI to answer correctly consistantly
-2. ~~Allow for a timeout after a time limit set by us. Sometimes the AI will go on forever without fixing the issue.~~
-3. Have a Development environment and Production enviornment, so the debug AI can make changes to the enviornment without any further issues developing. It would also be nice to have a snapshot before running KubeLLM in order to revert if it failed.
-4. For some reason the error  - "Error: [Errno 2] No such file or directory" comes out when executing commands. This needs to be looked into **ASAP**
-
----
-
 ### Instructions to Run 🏃💨
 1. Simply download the files onto the GPU server once given access. From there you will traverse down to the location of your KubeLLM folder.
 2. Once in the KubeLLM folder start by running the **./start_apiserver.sh**.
