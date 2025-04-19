@@ -18,9 +18,8 @@ KubeLLM is an LLM-based multi-agent framework that manages your kubernetes clust
 ---
 
 ### Instructions to Run 🏃💨
-1. Simply download the files onto the GPU server once given access. From there you will traverse down to the location of your KubeLLM folder.
-2. Once in the KubeLLM folder start by running the **./start_apiserver.sh**.
-3. Once you have the API Agent running in the background or another terminal, change directory to debug_assistant_latest.
+1. Navigate to the KubeLLM directory and start the Knowledge Agent with RAG capability by running the **./start_apiserver.sh**.
+3. Once you have the Knowledge Agent running in the background or another terminal, change directory to debug_assistant_latest.
 4. Optional: if you need to run a single test case only
    ***python3 main.py ~/KubeLLM/debug_assistant_latest/troubleshooting/TEST_CASE_TO_RUN/config.json.***
 6. You may need to update config to contain the right paths. *(Note : This will be updated in a future update)*
@@ -37,6 +36,6 @@ Simply navigate to the kube_test.py file in debug_assistant_latest folder and ru
 ---
 
 ### Agents 🕵️‍♀️
-Currently our approach uses two agents, one for knowledge and one that actions the steps given by the knowledge agent. Currently the knowledge agent uses a Retrieval-Augmented Generation (RAG) technique to storing the knoweldge which primarily consists of Kubernetes documentation.
+Currently our approach uses two agents, one for knowledge and one that takes corrective actions recommended by the knowledge agent. The knowledge agent uses a pgvector database and Retrieval-Augmented Generation (RAG) technique to store and retrieve relevant knowledge, which primarily consists of Kubernetes documentation.
 
 * Our approach is currently based off this graph here [Kubernetes Troubleshooting Graph](https://learnk8s.io/troubleshooting-deployments)
