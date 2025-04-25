@@ -120,19 +120,28 @@ class AgentDebug(Agent):
         """ Prepare the debug assistant based on the config file """
         try:
             
-            model = OpenAIChat(id="gpt-4o")
+            model_name = self.agentProperties["model"]
+            if any(token in model_name for token in ['gpt', 'o3', 'o4', 'o1']):
+                model = OpenAIChat(id=model_name)
+            elif 'llama' in model_name:
+                model = Ollama(id=model_name)
+            elif 'gemini' in model_name:
+                model = Gemini(id=model_name)
+            else:
+                raise Exception("Invalid model name provided.")
+
             self.agent = llmAgent(
                 model=model,
                 tools=[BetterShellTools()], 
                 debug_mode=True,
                 instructions=[x for x in self.agentProperties["instructions"]],
                 show_tool_calls=True,
-                read_chat_history=True,
+                #read_chat_history=True,
                 # tool_call_limit=1
                 markdown=True,
-                guidelines=[x for x in self.agentProperties["guidelines"]],
-                add_history_to_messages=True,
-                num_history_responses=3
+                guidelines=[x for x in self.agentProperties["guidelines"]]
+                #add_history_to_messages=True,
+                #num_history_responses=3
             )
         except Exception as e:
             print(f"Error preparing debug agent: {e}")
@@ -182,11 +191,22 @@ class AgentDebugStepByStep(Agent):
     def prepareAgent(self):
         """ Prepare the debug assistant based on the config file """
         try:
-            model = OpenAIChat(id="gpt-4o")
+
+            model_name = self.agentProperties["model"]
+            if any(token in model_name for token in ['gpt', 'o3', 'o4', 'o1']):
+                model = OpenAIChat(id=model_name)
+            elif 'llama' in model_name:
+                model = Ollama(id=model_name)
+            elif 'gemini' in model_name:
+                model = Gemini(id=model_name)
+            else:
+                raise Exception("Invalid model name provided.")
+            
+            #model = Gemini(id="gemini-1.5-flash")
+            #OpenAIChat(id="gpt-4o")
             #OpenAIChat(id="o3-mini")
             #Ollama(id="llama3.3")
             #OpenAIChat(id="gpt-4o")
-            #Gemini(id="gemini-1.5-flash")
 
             self.agent = llmAgent(
                 model=model,
@@ -195,9 +215,9 @@ class AgentDebugStepByStep(Agent):
                 show_tool_calls=True,
                 markdown=True,
                 instructions=[x for x in self.agentProperties["instructions"]],
-                guidelines=[x for x in self.agentProperties["guidelines"]],
-                add_history_to_messages=True,
-                num_history_responses=3
+                guidelines=[x for x in self.agentProperties["guidelines"]]
+                #add_history_to_messages=True,
+                #num_history_responses=3
             )
         except Exception as e:
             print(f"Error preparing debug agent: {e}")
@@ -274,7 +294,8 @@ class SingleAgent(Agent):
         """ Prepare the debug assistant based on the config file """
         try:
             
-            model = OpenAIChat(id="gpt-4o")
+            model = OpenAIChat(id="o3-mini")
+            #OpenAIChat(id="gpt-4o")
             #OpenAIChat(id="gpt-4o")
             #Ollama(id="llama3.3")
             #OpenAIChat(id="o3-mini")
@@ -314,7 +335,7 @@ class SingleAgent(Agent):
                 debug_mode=True,
                 instructions=[x for x in self.config["debug-agent"]["instructions"]] + additionalInstructions,
                 show_tool_calls=True,
-                read_chat_history=True,
+                #read_chat_history=True,
                 #tool_call_limit=1,
                 markdown=True,
                 guidelines=[x for x in self.config["debug-agent"]["guidelines"]] + additionalGuidelines,
@@ -322,9 +343,9 @@ class SingleAgent(Agent):
                 search_knowledge=True,
                 prevent_hallucinations=True,
                 description="You are an AI called 'RAGit'. You come up with commands and execute them step by step in order to fix kubernetes issues.",
-                task="Proivde the automated assistance in fixing kubernetes issues by executing commands that are relevant to the problem.",
-                add_history_to_messages=True,
-                num_history_responses=3
+                task="Proivde the automated assistance in fixing kubernetes issues by executing commands that are relevant to the problem."
+                #add_history_to_messages=True,
+                #num_history_responses=3
             )
         except Exception as e:
             print(f"Error preparing debug agent: {e}")

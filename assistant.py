@@ -119,8 +119,7 @@ def get_rag_assistant(
 ) -> Agent:
     """Get a Local RAG Agent."""
 
-    
-    if 'gpt' in llm_model:
+    if any(token in llm_model for token in ['gpt', 'o3', 'o4', 'o1']):
         llm = OpenAIChat(id=llm_model)
         embedder = OpenAIEmbedder()
         embeddings_model_clean = 'openai'
@@ -162,7 +161,7 @@ def get_rag_assistant(
         storage=PgAgentStorage(table_name="ai.local_rag_assistant", db_url=db_url),
         tools=[BetterShellTools()],
         show_tool_calls=False,
-        read_chat_history=True,
+        #read_chat_history=True,
         search_knowledge=True,
         description="You are an AI called 'RAGit'. You provide instructions that a user should take to solve issues with their Kubernetes configurations.",
         task="Provide the user with instructions and shell commands to solve the user's problem.",

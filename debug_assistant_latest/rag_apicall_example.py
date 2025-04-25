@@ -11,7 +11,7 @@ from rag_api import (
 )
 
 # Initialize the assistant
-initialize_response = initialize_assistant("gpt-4o", "nomic-embed-text")
+initialize_response = initialize_assistant("o3-mini", "nomic-embed-text")
 print("Initialize Response:", initialize_response)
 
 # Ask a question
@@ -21,10 +21,6 @@ print("Question Response:", question_response)
 # Add a URL to the knowledge base
 add_url_response = add_url("https://learnk8s.io/troubleshooting-deployments")
 print("Add URL Response:", add_url_response)
-
-# Upload a PDF
-upload_pdf_response = upload_pdf("your_file.pdf")
-print("Upload PDF Response:", upload_pdf_response)
 
 # Clear the knowledge base
 clear_kb_response = clear_knowledge_base()
