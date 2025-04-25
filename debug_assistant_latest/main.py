@@ -98,6 +98,8 @@ if __name__ == "__main__":
     configFile = sys.argv[1]
     if os.path.exists(configFile):
         run("allStepsAtOnce", configFile)
+        #run("singleAgent", configFile)
+        #run("stepByStep", configFile)
     else:
         print (f'{configFile} does not exist')
 

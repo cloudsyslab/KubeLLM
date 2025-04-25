@@ -11,7 +11,7 @@ from rag_api import (
 )
 
 # Initialize the assistant
-initialize_response = initialize_assistant("gpt-4o", "nomic-embed-text")
+initialize_response = initialize_assistant("o3-mini", "nomic-embed-text")
 print("Initialize Response:", initialize_response)
 
 # Ask a question
