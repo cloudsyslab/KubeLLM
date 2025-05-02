@@ -7,7 +7,7 @@ Case Setup:
 
 Replication Steps:
 1. Deploy the image created from the included Dockerfile to the Kubernetes cluster using the following command `kubectl apply -f path_to_directory/wrong_port.yaml`
-2. Attempt to make an http GET request to the application at the IP address associated with the pod and on the port the application is running on. This can be done using the BASH command `curl podIP:port`
+2. Attempt to make an http GET request to the application at the IP address associated with the pod and on the port the application is running on. This can be done using the BASH command `curl serverIP:port`
 3. The GET request should result in a timeout as the incorrect container port is being exposed.
 
 Solution Steps:

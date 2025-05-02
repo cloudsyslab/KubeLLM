@@ -3,6 +3,5 @@ import socketserver
 
 Handler = http.server.SimpleHTTPRequestHandler
 
-with socketserver.TCPServer(("", 8765), Handler) as httpd:
-    print(f"Serving on port {8765}")
+with socketserver.TCPServer(("0.0.0.0", 8000), Handler) as httpd:
     httpd.serve_forever()

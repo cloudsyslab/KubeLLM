@@ -4,12 +4,13 @@ RUN apt-get update && \
     apt-get install -y \
         python3 \
         python3-pip \
-        python3-venv
+        python3-venv \
+        inotify-tools  # Install inotify-tools for file change detection
 
 WORKDIR /app
 
 COPY server.py /app
 
-EXPOSE 8000
+EXPOSE 8765
 
 CMD ["python3", "server.py"]
