@@ -12,6 +12,7 @@ import sys
 import os
 import subprocess
 import timeout_decorator
+from pathlib import Path
 
 from rag_api import (
     BASE_URL,
@@ -66,23 +67,26 @@ def identifyLLM(debugAgent):
         model = Ollama(id="llama3.1:70b")
     elif debugAgent["llm-source"].lower() == "openai":
         model = OpenAIChat(id="gpt-4o")
-        if debugAgent["api-key"] == "":
-            print("No API key provided for OpenAI agent")
+        api_key = os.getenv("OPENAI_API_KEY")  # Returns None if not set
+        if api_key is None:
+            print("Error: OPENAI_API_KEY is not set!")
             sys.exit()
-        os.environ["OPENAI_API_KEY"] = debugAgent["api-key"]
+        #os.environ["OPENAI_API_KEY"] = debugAgent["api-key"]
 
     return model
 
 def traverseRelevantFiles(config, relevantFileType, prompt):
     """ Traverse all the relevant file type that is passed """
+    file_path = Path(config["test-directory"]).expanduser()
+
     if relevantFileType != "dockerfile":
         for dep in config["relevant-files"][relevantFileType]:
-            contents = open(config["test-directory"] + dep, "r").read()
-            prompt = f"{prompt} The file " +" "+ config["test-directory"] +""+ dep +" "+ f" describes a {relevantFileType}. This is the file contents: {contents}."
+            contents = open(file_path / dep, "r").read()
+            prompt = f"{prompt} The file " +" "+ str(file_path) +"/"+ dep +" "+ f" describes a {relevantFileType}. This is the file contents: {contents}."
     elif relevantFileType == "dockerfile" and config["relevant-files"][relevantFileType]:
-        contents = open(config["test-directory"] + 'Dockerfile', "r").read()
-        prompt = f"{prompt} The file " +" "+ config["test-directory"] +"Dockerfile"+" "+ f" describes a {relevantFileType}. This is the file contents: {contents}."
-
+        contents = open(file_path / 'Dockerfile', "r").read()
+        prompt = f"{prompt} The file " +" "+ str(file_path) + "/" + "Dockerfile"+" "+ f" describes a {relevantFileType}. This is the file contents: {contents}."
+    print (f"DEBUG: {prompt}")
     return prompt
 
 def printFinishMessage():
@@ -102,57 +106,4 @@ def withTimeout(default_value):
         return wrapper
     return decorator
 
-
-import errno
-import os
-import signal
-import functools
-
-class TimeoutError(Exception):
-    pass
-
-def timeout(seconds=10, error_message=os.strerror(errno.ETIME)):
-    def decorator(func):
-        def _handle_timeout(signum, frame):
-            raise TimeoutError(error_message)
-
-        @functools.wraps(func)
-        def wrapper(*args, **kwargs):
-            signal.signal(signal.SIGALRM, _handle_timeout)
-            signal.alarm(seconds)
-            try:
-                result = func(*args, **kwargs)
-            finally:
-                signal.alarm(0)
-            return result
-
-        return wrapper
-
-    return decorator
-
     
-
-class InMemoryMemory:
-    def __init__(self):
-        self.memory = {}
-
-    def add(self, key, value):
-        """Add or update memory."""
-        self.memory[key] = value
-
-    def get(self, key, default=None):
-        """Retrieve memory by key."""
-        return self.memory.get(key, default)
-
-    def delete(self, key):
-        """Delete a key from memory."""
-        if key in self.memory:
-            del self.memory[key]
-
-    def clear(self):
-        """Wipe the memory."""
-        self.memory.clear()
-
-    def to_prompt_string(self):
-        """Convert memory into a string format for prompt injection."""
-        return "\n".join(f"{k}: {v}" for k, v in self.memory.items())

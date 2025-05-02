@@ -1,8 +1,7 @@
-from agents import AgentAPI, AgentDebug, AgentDebugStepByStep, SingleAgent, AgentDebugConversational
-from utils import readTheJSONConfigFile, setUpEnvironment, printFinishMessage, timeout
-import time
+from agents import AgentAPI, AgentDebug, AgentDebugStepByStep, SingleAgent
+from utils import readTheJSONConfigFile, setUpEnvironment, printFinishMessage
+import sys, os
 
-@timeout(1000)
 def allStepsAtOnce(configFile = None):
     """
         This function will run the knowledge agent and debug agent. 
@@ -29,9 +28,8 @@ def allStepsAtOnce(configFile = None):
 
     printFinishMessage()
 
-    return debugAgent.debugStatus, debugAgent.reason
+    return debugAgent.debugStatus
 
-@timeout(1000)
 def stepByStep( configFile = None ):
     """
         This function will run the knowledge and debug agent. 
@@ -59,9 +57,9 @@ def stepByStep( configFile = None ):
     debugAgent.executeProblemSteps()
     printFinishMessage()
 
-    return debugAgent.debugStatus, debugAgent.reason
+    return debugAgent.debugStatus
 
-@timeout(1000)
+
 def singleAgentApproach( configFile = None ):
     """
         This function will run a single agent which will do the
@@ -80,63 +78,30 @@ def singleAgentApproach( configFile = None ):
     #agent.knowledgeResponse
     #agent.takeAction()
 
-    return agent.debugStatus, agent.reason
-
-@timeout(1000)
-def conversationAgentApproach( configFile = None ):
-    """
-        A conversation will be had between the knowledge and action
-        agent, where each step will be ran through once and the output
-        of that step will then be passed to the knoweldge agent to get the next best action
-        until the agent is has solved it our has tried too many times.
-    """
-    #read config to initilize enviornment
-    config = readTheJSONConfigFile( configFile = configFile)
-    setUpEnvironment(config)
-    #initilize needed LLMs
-    apiAgent = AgentAPI("api-agent" , config)
-    debugAgent = AgentDebugConversational("debug-agent" , config)
-    #set up the LLMs
-    apiAgent.setupAgent()
-    debugAgent.setupAgent()
-
-    #Run the LLMs as needed
-    apiAgent.askQuestion()
-    debugAgent.agentAPIResponse = apiAgent.response
-    debugAgent.formProblemSolvingSteps()
-    
-    debugAgent.executeProblemSteps()
-
-    steps = 0
-    while (steps < 20) and debugAgent.debugStatus != True:
-        tmpPrompt = apiAgent.prompt
-        apiAgent.prompt += debugAgent.agentResponseAfterStep
-        apiAgent.askQuestion()
-        apiAgent.prompt = tmpPrompt
-        debugAgent.agentAPIResponse = apiAgent.response
-        debugAgent.formProblemSolvingSteps()
-        debugAgent.executeProblemSteps()
-
-        steps += 1
-
-    printFinishMessage()
-
-    return debugAgent.debugStatus, debugAgent.reason
+    return agent.debugStatus
 
 
-def run( debugType ):
+def run( debugType, configFile ):
     if debugType == "allStepsAtOnce":
-        allStepsAtOnce()
+        allStepsAtOnce(configFile)
     elif debugType == "stepByStep":
-        stepByStep()
+        stepByStep(configFile)
     elif debugType == "singleAgent":
-        singleAgentApproach()
-    elif debugType == "conversationalAgent":
-        conversationAgentApproach()
+        singleAgentApproach(configFile)
     return
 
 if __name__ == "__main__":
-    run("allStepsAtOnce")
+    if (len(sys.argv) < 2):
+        print ('config file not provided')
+        sys.exit(1)
+
+    configFile = sys.argv[1]
+    if os.path.exists(configFile):
+        run("allStepsAtOnce", configFile)
+        #run("singleAgent", configFile)
+        #run("stepByStep", configFile)
+    else:
+        print (f'{configFile} does not exist')
 
 
 
