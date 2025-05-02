@@ -1,0 +1,22 @@
+apiVersion: v1
+kind: Pod
+metadata:
+  name: kube-volume-mount
+spec:
+  initContainers:
+  - name: init-log-dir
+    image: ubuntu:20.04
+    command: ["sh", "-c", "mkdir -p /data/logs && chmod -R 777 /data/logs"]
+    volumeMounts:
+    - name: log-storage
+      mountPath: /data/logs
+  containers:
+  - name: kube-volume-mount
+    image: marioutsa/kube-volume-mount-app:latest
+    command: ["sh", "-c", "python3 server.py"]
+    volumeMounts:
+    - name: log-storage
+      mountPath: /data/logs
+  volumes:
+  - name: log-storage
+    emptyDir: {}

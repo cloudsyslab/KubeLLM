@@ -1,6 +1,6 @@
 {
     "api-agent": {
-        "model": "o3-mini",
+        "model": "llama3.1:70b",
         "embedder": "nomic-embed-text",
         "clear-knowledge": true,
         "new-run": true,
@@ -10,8 +10,8 @@
         ]
     },
     "debug-agent": {
-        "llm-source": "openai",
-        "model": "gemini-1.5-flash",
+        "llm-source": "Ollama",
+        "model": "llama3.1:70b",
         "instructions": [
             "If all and only all commands fail to execute, declare that there was an error in trying to solve the issue, and end that statement with this token: <|ERROR|>.",
             "You have solved this issue when this goal is met: The status of all pods say 'RUNNING'",
@@ -19,7 +19,8 @@
             "If you believe you have met the goal, declare that you have solved the user's issue, and end that statement with this token: <|SOLVED|>.",
             "If the steps do not solve the issue, or if you need more information, declare that you cannot solve the issue, and end that statement with this token: <|FAILED|>.",
             "Do not use live feed flags when checking the logs such as 'kubectl logs -f'",
-            "If you do not conclude on an answer or a code then try again please."
+            "If you do not conclude on an answer or a code then try again please.",
+            "If you are unable to resolve the issue and you end the statement with <|ERROR|> or <|FAILED|>, please tell why you encountered the issue and what command caused it. Pease put the details for the issue within <|REASON|> <|/REASON|> "
         ],
         "api-key": "",
         "guidelines": [
@@ -27,11 +28,10 @@
             "If a command contains a placeholder name surrounded in angle brackets such as <pod_name>, for example, then **do not** run that command as-is. First run a `kubectl get` command to find a real name to replace the placeholder name, then run the suggested command with the replaced name of the resource. For example, if you see `kubectl logs <pod_name> -n example_namespace`, first run `kubectl get pods -n example_namespace` and use the name of the first pod you see.",
             "Do not use live feed flags when checking the logs such as 'kubectl logs -f'",
             "If you do not conclude on an answer or a code then try again please."
-
         ]
     },
     "knowledge-prompt": {
-        "problem-desc": "When I try to access my kubernetes application, I got this error :Connecting to 192.168.49.2:80... connected. HTTP request sent, awaiting response... 502 Bad Gateway.",
+        "problem-desc": "When I try to access my kubernetes application, I got this error :Connecting to 192.168.49.2:80... connected. HTTP request sent, awaiting response... 502 Bad Gateway. correct_app.yaml and app_service.yaml were recently changed",
         "system-prompt": "Give specific commands to fix this issue. If modifying file contents is necessary, use the sed command to achieve this. If providing a file path, make sure to keep the full file path.",
         "additional-directions": ""
     },
@@ -51,13 +51,13 @@
         "dockerfile": true
     },
     "setup-commands": [
-        "docker build -t kube-port-mismatch-app ~/KubeLLM/debug_assistant_latest/troubleshooting/port_mismatch/",
+        "docker build -t kube-port-mismatch-app /home/mario/KubeLLM_latest/KubeLLM-main/debug_assistant_latest/troubleshooting/port_mismatch/",
         "docker tag kube-port-mismatch-app marioutsa/kube-port-mismatch-app",
         "docker run -d -p 8765:8765 --name port_mismatch_app marioutsa/kube-port-mismatch-app",
-        "kubectl apply -f ~/KubeLLM/debug_assistant_latest/troubleshooting/port_mismatch/port_mismatch.yaml",
-        "kubectl apply -f ~/KubeLLM/debug_assistant_latest/troubleshooting/port_mismatch/app_service.yaml"
+        "kubectl apply -f /home/mario/KubeLLM_latest/KubeLLM-main/debug_assistant_latest/troubleshooting/port_mismatch/port_mismatch.yaml",
+        "kubectl apply -f /home/mario/KubeLLM_latest/KubeLLM-main/debug_assistant_latest/troubleshooting/port_mismatch/app_service.yaml"
     ],
     "test-name": "port_mismatch",
-    "test-directory": "~/KubeLLM/debug_assistant_latest/troubleshooting/port_mismatch/",
+    "test-directory": "/home/mario/KubeLLM_latest/KubeLLM-main/debug_assistant_latest/troubleshooting/port_mismatch/",
     "yaml-file-name": "port_mismatch.yaml"
 }
