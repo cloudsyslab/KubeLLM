@@ -1,0 +1,65 @@
+{
+    "api-agent": {
+        "model": "llama3.1:70b",
+        "embedder": "nomic-embed-text",
+        "clear-knowledge": true,
+        "new-run": true,
+        "init-agent": true,
+        "knowledge": [
+            "https://learnk8s.io/troubleshooting-deployments",
+            "https://pythonbasics.org/webserver/"
+        ]
+    },
+    "debug-agent": {
+        "llm-source": "Ollama",
+        "model": "llama3.1:70b",
+        "instructions": [
+            "If all and only all commands fail to execute, declare that there was an error in trying to solve the issue, and end that statement with this token: <|ERROR|>.",
+            "You have solved this issue when this goal is met: The status of all pods say 'RUNNING'",
+            "After every step, check to see if you have met the goal",
+            "If you believe you have met the goal, declare that you have solved the user's issue, and end that statement with this token: <|SOLVED|>.",
+            "If the steps do not solve the issue, or if you need more information, declare that you cannot solve the issue, and end that statement with this token: <|FAILED|>.",
+            "Do not use live feed flags when checking the logs such as 'kubectl logs -f'",
+            "If you do not conclude on an answer or a code then try again please.",
+            "Do not use commands like vim or vi",
+            "If you are unable to resolve the issue and you end the statement with <|ERROR|> or <|FAILED|>, please tell why you encountered the issue and what command caused it. Pease put the details for the issue within <|REASON|> <|/REASON|> "
+        ],
+        "api-key": "",
+        "guidelines": [
+            "If a command invocation is successful but gives no stdout nor stderr, then that is because that invocation resulted in no output to stdout or stderr.",
+            "If a command contains a placeholder name surrounded in angle brackets such as <pod_name>, for example, then **do not** run that command as-is. First run a `kubectl get` command to find a real name to replace the placeholder name, then run the suggested command with the replaced name of the resource. For example, if you see `kubectl logs <pod_name> -n example_namespace`, first run `kubectl get pods -n example_namespace` and use the name of the first pod you see.",
+            "Do not use live feed flags when checking the logs such as 'kubectl logs -f'",
+            "If you do not conclude on an answer or a code then try again please.",
+            "Do not use commands like vim or vi"
+        ]
+    },
+    "knowledge-prompt": {
+        "problem-desc": "The pod on my Kubernetes cluster logs show No such file or directory: '/data/logs'.",
+        "system-prompt": "Give specific commands to fix this issue. If modifying file contents is necessary, use the sed command to achieve this. If providing a file path, make sure to keep the full file path.",
+        "additional-directions": ""
+    },
+    "debug-prompt": {
+        "additional-directions": "If any deployment files are modified, reapply the deployment to the cluster."
+    },
+    "relevant-files":{
+        "deployment": [
+            "volume_mount.yaml"
+        ],
+        "application": [
+            "server.py"
+        ],
+        "service": [
+
+        ],
+        "dockerfile": true
+    },
+    "setup-commands": [
+        "docker build -t kube-volume-mount-app /home/mario/KubeLLM_latest/KubeLLM-main/debug_assistant_latest/troubleshooting/volume_mount/",
+        "docker tag kube-volume-mount-app marioutsa/kube-volume-mount-app",
+        "docker run -d -p 8765:8765 --name volume_mount_app marioutsa/kube-volume-mount-app",
+        "kubectl apply -f /home/mario/KubeLLM_latest/KubeLLM-main/debug_assistant_latest/troubleshooting/volume_mount/volume_mount.yaml"
+    ],
+    "test-name": "volume_mount",
+    "test-directory": "/home/mario/KubeLLM_latest/KubeLLM-main/debug_assistant_latest/troubleshooting/volume_mount/",
+    "yaml-file-name": "volume_mount.yaml"
+}
