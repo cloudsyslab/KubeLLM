@@ -86,7 +86,6 @@ class AgentAPI(Agent):
             
         except Exception as e:
             print(f"Error preparing knowledge agent (API Agent): {e}")
-            sys.exit()
 
     def preparePrompt(self):
         """ Prepare the knowledge prompt according to the config file """
@@ -98,7 +97,6 @@ class AgentAPI(Agent):
 
         except Exception as e:
             print(f"Error creating knowledge (API) agent prompt: {e}")
-            sys.exit()
 
     def askQuestion(self):
         """ Ask the formatted prepared question to the knowledge (API) agent """
@@ -107,7 +105,6 @@ class AgentAPI(Agent):
             #print("RAG assistant Response:", self.response)
         except Exception as e:
             print(f"Error asking question to knowledge agent: {e}")
-            sys.exit()
 
 
 class AgentDebug(Agent):
@@ -115,37 +112,32 @@ class AgentDebug(Agent):
         super().__init__(agentType, config)
         self.agentAPIResponse = None
         self.debugStatus = None
+        self.reason = None
 
     def prepareAgent(self):
         """ Prepare the debug assistant based on the config file """
         try:
             
-            model_name = self.agentProperties["model"]
-            if any(token in model_name for token in ['gpt', 'o3', 'o4', 'o1']):
-                model = OpenAIChat(id=model_name)
-            elif 'llama' in model_name:
-                model = Ollama(id=model_name)
-            elif 'gemini' in model_name:
-                model = Gemini(id=model_name)
-            else:
-                raise Exception("Invalid model name provided.")
-
+            model = Gemini(id="gemini-1.5-flash")
+            #OpenAIChat(id="gpt-4o")
+            #Ollama(id="llama3.3")
+            #Gemini(id="gemini-1.5-flash")
+            #OpenAIChat(id="o3-mini")
             self.agent = llmAgent(
                 model=model,
                 tools=[BetterShellTools()], 
                 debug_mode=True,
                 instructions=[x for x in self.agentProperties["instructions"]],
                 show_tool_calls=True,
-                #read_chat_history=True,
+                read_chat_history=True,
                 # tool_call_limit=1
                 markdown=True,
-                guidelines=[x for x in self.agentProperties["guidelines"]]
-                #add_history_to_messages=True,
-                #num_history_responses=3
+                guidelines=[x for x in self.agentProperties["guidelines"]],
+                add_history_to_messages=True,
+                num_history_responses=3
             )
         except Exception as e:
             print(f"Error preparing debug agent: {e}")
-            sys.exit()
 
     def preparePrompt(self):
         """ Prepare the debug agent prompt """
@@ -156,19 +148,23 @@ class AgentDebug(Agent):
             self.prompt = f"{self.prompt} Take the actions provided here: {str(self.agentAPIResponse)}. " +" "+ self.config["debug-prompt"]["additional-directions"]
         except Exception as e:
             print(f"Error creating debug agent prompt: {e}")
-            sys.exit()
+            
 
     @timeout_decorator.timeout(480)
     @withTimeout(False)
     def askQuestion(self):
         """ Ask the formatted prepared question to the debug agent """
         try:
-            prompt = f'Perform the action suggested here: \n{self.agentAPIResponse}\n'
+            prompt = f'Perform the actions suggested here: \n{self.agentAPIResponse}\n'
             prompt += f"\nThe relevant configuration file is located in this path: {self.config['test-directory']+self.config['yaml-file-name']}\n"
             prompt += "You can update these files if necessary. If any files are updated, make sure to delete and reapply the configuration file.\n"
             prompt += "Do not use live feed flags when checking the logs such as 'kubectl logs -f'"
+
+
             response = self.agent.run(prompt)
             response = response.content
+
+            response = response.replace("\n", "")
 
             if "<|ERROR|>" in response or "<|FAILED|>" in response:
                 self.debugStatus = False
@@ -176,10 +172,17 @@ class AgentDebug(Agent):
                 self.debugStatus = True
             else:
                 self.debugStatus = False
+
+
+            if "<|REASON|>" in response:
+                reason = re.findall('<\|REASON\|>(.*)<\|\/REASON\|>', response)
+                self.reason = reason[0]
             return
+
+
+
         except Exception as e:
             print(f"Error asking question to debug agent: {e}")
-            sys.exit()
 
 
 class AgentDebugStepByStep(Agent):
@@ -187,26 +190,16 @@ class AgentDebugStepByStep(Agent):
         super().__init__(agentType, config)
         self.agentAPIResponse = None
         self.debugStatus = None
+        self.reason = None
 
     def prepareAgent(self):
         """ Prepare the debug assistant based on the config file """
         try:
-
-            model_name = self.agentProperties["model"]
-            if any(token in model_name for token in ['gpt', 'o3', 'o4', 'o1']):
-                model = OpenAIChat(id=model_name)
-            elif 'llama' in model_name:
-                model = Ollama(id=model_name)
-            elif 'gemini' in model_name:
-                model = Gemini(id=model_name)
-            else:
-                raise Exception("Invalid model name provided.")
-            
-            #model = Gemini(id="gemini-1.5-flash")
-            #OpenAIChat(id="gpt-4o")
+            model = Gemini(id="gemini-1.5-flash")
             #OpenAIChat(id="o3-mini")
             #Ollama(id="llama3.3")
             #OpenAIChat(id="gpt-4o")
+            #Gemini(id="gemini-1.5-flash")
 
             self.agent = llmAgent(
                 model=model,
@@ -215,13 +208,12 @@ class AgentDebugStepByStep(Agent):
                 show_tool_calls=True,
                 markdown=True,
                 instructions=[x for x in self.agentProperties["instructions"]],
-                guidelines=[x for x in self.agentProperties["guidelines"]]
+                guidelines=[x for x in self.agentProperties["guidelines"]],
                 #add_history_to_messages=True,
                 #num_history_responses=3
             )
         except Exception as e:
             print(f"Error preparing debug agent: {e}")
-            sys.exit()
 
     def preparePrompt(self):
         """ Prepare the debug agent prompt """
@@ -236,7 +228,6 @@ class AgentDebugStepByStep(Agent):
 
         except Exception as e:
             print(f"Error creating debug agent prompt: {e}")
-            sys.exit()
 
     def formProblemSolvingSteps(self):
         """ From the resonse generate a list of steps that the debug agent will execute one by one """
@@ -244,15 +235,16 @@ class AgentDebugStepByStep(Agent):
 
         try:    
             knowledgeAIRespnseString = str(self.agentAPIResponse)
+            knowledgeAIRespnseString = knowledgeAIRespnseString.replace("\n", "")
 
-            bashCommands = re.findall(r"``bash\\n(.*?)\\n```", knowledgeAIRespnseString, re.DOTALL)
+            bashCommands = re.findall(r"```bash\\n   (.*?)\\n   ```", knowledgeAIRespnseString, re.DOTALL)
             bashCommandsList = [cmd.strip() for cmd in bashCommands]
-            
+            print(bashCommands)
+            print(bashCommandsList)
             self.steps = bashCommandsList
 
         except Exception as e:
             print(f"Failed to generate steps to problem: {e}")
-            sys.exit()
 
     @timeout_decorator.timeout(480)
     @withTimeout(False)
@@ -271,6 +263,7 @@ class AgentDebugStepByStep(Agent):
 
                 response = self.agent.run(prompt)
                 response = response.content
+                response = response.replace("\n", "")
 
 
                 if "<|ERROR|>" in response or "<|FAILED|>" in response:
@@ -279,23 +272,26 @@ class AgentDebugStepByStep(Agent):
                     self.debugStatus = True
                 else:
                     self.debugStatus = False
+
+                if "<|REASON|>" in response:
+                    reason = re.findall('<\|REASON\|>(.*)<\|\/REASON\|>', response)
+                    self.reason += reason[0]
                     
         except Exception as e:
             print(f"Failed to execute problem steps : {e}")
-            sys.exit()
 
 class SingleAgent(Agent):
     def __init__(self, agentType, config):
         super().__init__(agentType, config)
         self.knowledgeResponse = None
         self.debugStatus = None
+        self.reason = None
 
     def prepareAgent(self):
         """ Prepare the debug assistant based on the config file """
         try:
             
-            model = OpenAIChat(id="o3-mini")
-            #OpenAIChat(id="gpt-4o")
+            model = Gemini(id="gemini-1.5-flash")
             #OpenAIChat(id="gpt-4o")
             #Ollama(id="llama3.3")
             #OpenAIChat(id="o3-mini")
@@ -311,7 +307,6 @@ class SingleAgent(Agent):
                     db_url="postgresql+psycopg://ai:ai@localhost:5532/ai",
                 ),
             )
-
 
             additionalInstructions = ["Carefully read the information the user provided.", 
                                       "Run diagnostic commands yourself, then use the output to further help you.", 
@@ -335,7 +330,7 @@ class SingleAgent(Agent):
                 debug_mode=True,
                 instructions=[x for x in self.config["debug-agent"]["instructions"]] + additionalInstructions,
                 show_tool_calls=True,
-                #read_chat_history=True,
+                read_chat_history=True,
                 #tool_call_limit=1,
                 markdown=True,
                 guidelines=[x for x in self.config["debug-agent"]["guidelines"]] + additionalGuidelines,
@@ -343,13 +338,12 @@ class SingleAgent(Agent):
                 search_knowledge=True,
                 prevent_hallucinations=True,
                 description="You are an AI called 'RAGit'. You come up with commands and execute them step by step in order to fix kubernetes issues.",
-                task="Proivde the automated assistance in fixing kubernetes issues by executing commands that are relevant to the problem."
+                task="Proivde the automated assistance in fixing kubernetes issues by executing commands that are relevant to the problem.",
                 #add_history_to_messages=True,
                 #num_history_responses=3
             )
         except Exception as e:
             print(f"Error preparing debug agent: {e}")
-            sys.exit()
 
     def preparePrompt(self):
         """ Prepare the debug agent prompt """
@@ -365,10 +359,9 @@ class SingleAgent(Agent):
             self.prompt += "Do not use live feed flags when checking the logs such as 'kubectl logs -f'"
             self.prompt += "Do not use commands that would open an editor like 'kubectl edit'"
             self.prompt += "You will run the commands as Instructed! Please feel free to change it if necessary and if it makes sense to! You will solve the issue and run the commands!"
-            self.prompt += "DO NOT BY ANY MEANS USE kubectl edit"
+            self.prompt += "DO NOT BY ANY MEANS USE 'kubectl edit'"
         except Exception as e:
             print(f"Error creating debug agent prompt: {e}")
-            sys.exit()
 
 
     def askQuestion(self):
@@ -376,13 +369,122 @@ class SingleAgent(Agent):
         try:
             response = self.agent.run(self.prompt)
             response = response.content
+            response = response.replace("\n", "")
 
             if "<|SOLVED|>" in response:
                 self.debugStatus = True
             elif "<|ERROR|>" in response or "<|FAILED|>" in response:
                 self.debugStatus = False
+
+            if "<|REASON|>" in response:
+                reason = re.findall('<\|REASON\|>(.*)<\|\/REASON\|>', response)
+                self.reason = reason[0]
             return
             
         except Exception as e:
             print(f"Error asking question to knowledge agent: {e}")
-            sys.exit()
+
+#---------------------------------------------
+
+
+class AgentDebugConversational(Agent):
+    def __init__(self, agentType, config):
+        super().__init__(agentType, config)
+        self.agentAPIResponse = None
+        self.debugStatus = None
+        self.agentResponseAfterStep = None
+        self.reason = None
+
+    def prepareAgent(self):
+        """ Prepare the debug assistant based on the config file """
+        try:
+            model = Gemini(id="gemini-1.5-flash")
+            #OpenAIChat(id="o3-mini")
+            #Ollama(id="llama3.3")
+            #OpenAIChat(id="gpt-4o")
+            #Gemini(id="gemini-1.5-flash")
+
+            self.agent = llmAgent(
+                model=model,
+                tools=[BetterShellTools()], 
+                debug_mode=True,
+                show_tool_calls=True,
+                markdown=True,
+                instructions=[x for x in self.agentProperties["instructions"]],
+                guidelines=[x for x in self.agentProperties["guidelines"]],
+                add_history_to_messages=True,
+                num_history_responses=3
+            )
+        except Exception as e:
+            print(f"Error preparing debug agent: {e}")
+
+    def preparePrompt(self):
+        """ Prepare the debug agent prompt """
+        try:
+
+            self.prompt = f"Troubleshoot the Kubernetes issue described: {self.config['knowledge-prompt']['problem-desc']}"
+
+            for relevantFileType in ["deployment", "application", "service", "dockerfile"]:
+                self.prompt = traverseRelevantFiles(self.config, relevantFileType, self.prompt)
+
+            self.prompt += "Use `kubectl` commands to gather information, and provide a series of shell commands for the user to resolve the issue."
+
+        except Exception as e:
+            print(f"Error creating debug agent prompt: {e}")
+
+    def formProblemSolvingSteps(self):
+        """ From the resonse generate a list of steps that the debug agent will execute one by one """
+        self.steps = []
+
+        try:    
+            knowledgeAIRespnseString = str(self.agentAPIResponse)
+            knowledgeAIRespnseString = knowledgeAIRespnseString.replace("\n", "")
+
+            bashCommands = re.findall(r"```bash\\n   (.*?)\\n   ```", knowledgeAIRespnseString, re.DOTALL)
+            bashCommandsList = [cmd.strip() for cmd in bashCommands]
+            
+            self.steps = bashCommandsList
+
+        except Exception as e:
+            print(f"Failed to generate steps to problem: {e}")
+
+    @timeout_decorator.timeout(480)
+    @withTimeout(False)
+    def executeProblemSteps(self):
+        """ Once we have formed all of the steps based on the knowledge agent, then we can start to execute each step one by one """
+
+        #Execute one step here and then get the response and the status to then feed back to the knowledge api
+        try:
+            if len(self.steps) >= 1:
+                prompt = f'Perform the action suggested here: \n{self.steps[0]}\n'
+                prompt += f'If you struggle within one of the steps please quit and ask for help or for another command please stop and end the statement with the token : <|FAILED|> and give a reason for your need of help.'
+                #prompt += f"\nThe relevant configuration file is located in this path: {self.config['test-directory']+self.config['yaml-file-name']}\n"
+                prompt += "You can update these files if necessary. If any files are updated, make sure to delete and reapply the configuration file.\n"
+                prompt += "If you need to update a pod then use kubectl replace --force [POD_NAME]"
+                prompt += "Do not use live feed flags when checking the logs such as 'kubectl logs -f'"
+
+                response = self.agent.run(prompt)
+                response = response.content
+                response = response.replace("\n", "")
+
+            else:
+                self.agentResponseAfterStep = "Sorry, As I am another LLM I was not able to parse your command that you just gave, can you give me the command again in the proper format ```bash COMMAND_TO_EXECUTE ```"
+                return
+            
+            self.agentResponseAfterStep = f"Step that was performed : {self.steps[0]} and I got {response}. Can you provide me with the next best step?"
+
+            if "<|ERROR|>" in response or "<|FAILED|>" in response:
+                self.agentResponseAfterStep = f"Step that was performed : {self.steps[0]} and I got {response}. Can you help me fix it?"
+                self.debugStatus = False
+            elif "<|SOLVED|>" in response:
+                self.debugStatus = True
+            else:
+                self.debugStatus = False
+
+            if "<|REASON|>" in response:
+                reason = re.findall('<\|REASON\|>(.*)<\|\/REASON\|>', response)
+                self.reason = reason[0]
+            return
+                    
+        except Exception as e:
+            print(f"Failed to execute problem steps : {e}")
