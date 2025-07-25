@@ -53,3 +53,13 @@ Simply navigate to the kube_test.py file in debug_assistant_latest folder and ru
 Currently our approach uses two agents, one for knowledge and one that takes corrective actions recommended by the knowledge agent. The knowledge agent uses a pgvector database and Retrieval-Augmented Generation (RAG) technique to store and retrieve relevant knowledge, which primarily consists of Kubernetes documentation.
 
 * Our approach is currently based off this graph here [Kubernetes Troubleshooting Graph](https://learnk8s.io/troubleshooting-deployments)
+
+### Citation
+If you use KubeLLM in your work, please cite the following paper:
+@inproceedings{de2025llm,
+  author    = {Mario De Jesus and Perfect Sylvester and William Clifford and Aaron Perez and Palden Lama},
+  title     = {LLM-Based Multi-Agent Framework for Troubleshooting Distributed Systems},
+  booktitle = {Proceedings of the IEEE Cloud Summit},
+  year      = {2025}
+}
+
