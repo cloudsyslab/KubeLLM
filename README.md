@@ -56,10 +56,11 @@ Currently our approach uses two agents, one for knowledge and one that takes cor
 
 ### Citation
 If you use KubeLLM in your work, please cite the following paper:
+```
 @inproceedings{de2025llm,
   author    = {Mario De Jesus and Perfect Sylvester and William Clifford and Aaron Perez and Palden Lama},
   title     = {LLM-Based Multi-Agent Framework for Troubleshooting Distributed Systems},
   booktitle = {Proceedings of the IEEE Cloud Summit},
   year      = {2025}
 }
-
+```
