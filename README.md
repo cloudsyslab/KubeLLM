@@ -8,7 +8,7 @@ KubeLLM is an LLM-based multi-agent framework that manages your kubernetes clust
 - Dr. Palden Lama - palden.lama@utsa.edu - (Current Contributor)
 - William Clifford - william.clifford@utsa.edu - (Past Contributor)
 - Aaron Perez - aaron.perez@utsa.edu - (Past Contributor)
-- Mario De Jesus - mario.dejesus@utsa.edu - (Current Contributor)
+- Mario De Jesus - mario.dejesus@utsa.edu - (Past Contributor)
 
 ---
 
