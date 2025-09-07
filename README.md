@@ -32,12 +32,15 @@ KubeLLM is an LLM-based multi-agent framework that manages your kubernetes clust
   --name pgvector \\   
   phidata/pgvector:16
 
-4. Start the Knowledge Agent with RAG capability by running the **./start_apiserver.sh**.
+4. Start the Knowledge Agent with RAG capability by running the **bash start_apiserver.sh**.
 5. Once you have the Knowledge Agent running in the background or another terminal, change directory to debug_assistant_latest.
 6. Optional: if you need to run a single test case only
-   ***python3 main.py ~/KubeLLM/debug_assistant_latest/troubleshooting/TEST_CASE_TO_RUN/config_step.json.***
+   ***python3 main.py ~/KubeLLM/debug_assistant_latest/troubleshooting/TEST_CASE_NAME/config_step.json.***
 7. You may need to update config to contain the right paths. *(Note : This will be updated in a future update)*
 8. Finally, just sit back and let KubeLLM do all of the work.
+   *(Note: make sure to teardown the environment after each individual test case run.
+   ***python3 teardownenv.py TEST_CASE_NAME***
+    )
 
 ---
 
