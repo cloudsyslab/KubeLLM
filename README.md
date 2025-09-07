@@ -37,10 +37,9 @@ KubeLLM is an LLM-based multi-agent framework that manages your kubernetes clust
 6. Optional: if you need to run a single test case only
    ***python3 main.py ~/KubeLLM/debug_assistant_latest/troubleshooting/TEST_CASE_NAME/config_step.json.***
 7. You may need to update config to contain the right paths. *(Note : This will be updated in a future update)*
-8. Finally, just sit back and let KubeLLM do all of the work.
-   *(Note: make sure to teardown the environment after each individual test case run.
+8. Finally, just sit back and let KubeLLM do all of the work. Make sure to teardown the environment after each individual test case run.
    ***python3 teardownenv.py TEST_CASE_NAME***
-    )
+    
 
 ---
 
