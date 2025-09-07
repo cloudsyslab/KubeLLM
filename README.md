@@ -22,20 +22,20 @@ KubeLLM is an LLM-based multi-agent framework that manages your kubernetes clust
    pip install -r requirements.txt
 2. Make sure Kubernetes (MiniKube) is up and running.
 3. Start the PgVector database using the following command:
-   docker run -d \
-  -e POSTGRES_DB=ai \
-  -e POSTGRES_USER=ai \
-  -e POSTGRES_PASSWORD=ai \
-  -e PGDATA=/var/lib/postgresql/data/pgdata \
-  -v pgvolume:/var/lib/postgresql/data \
-  -p 5532:5432 \
-  --name pgvector \
+   docker run -d \\
+  -e POSTGRES_DB=ai \\
+  -e POSTGRES_USER=ai \\
+  -e POSTGRES_PASSWORD=ai \\
+  -e PGDATA=/var/lib/postgresql/data/pgdata \\
+  -v pgvolume:/var/lib/postgresql/data \\
+  -p 5532:5432 \\
+  --name pgvector \\
   phidata/pgvector:16
 
 4. Start the Knowledge Agent with RAG capability by running the **./start_apiserver.sh**.
 5. Once you have the Knowledge Agent running in the background or another terminal, change directory to debug_assistant_latest.
 6. Optional: if you need to run a single test case only
-   ***python3 main.py ~/KubeLLM/debug_assistant_latest/troubleshooting/TEST_CASE_TO_RUN/config.json.***
+   ***python3 main.py ~/KubeLLM/debug_assistant_latest/troubleshooting/TEST_CASE_TO_RUN/config_step.json.***
 7. You may need to update config to contain the right paths. *(Note : This will be updated in a future update)*
 8. Finally, just sit back and let KubeLLM do all of the work.
 
