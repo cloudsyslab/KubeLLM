@@ -40,8 +40,8 @@ guidelines = [
     "Assume a moderate level of technical expertise on the part of the user (e.g., they're familiar with basic Linux commands and concepts).",
     "Don't worry too much about formatting or syntax; focus on getting the right information across.",
     "Please design your commands to be non-interactive, i.e. **do not** suggest `kubectl edit` or `vim`",
-    "Please use this format for each step ```bash COMMAND_TO_EXECUTE ```"
-
+    "Please use this format for each step ```bash COMMAND_TO_EXECUTE ```",
+    "Do not attempt to use any `curl` or `wget` command unless the user has explicitly provided the hostname/IP address and port number."
     # TODO: HOW TO GET AGENT TO STOP USING PLACEHOLDER NAMES
     #"When writing out your commands, use the **real name** of the Kubernetes resource instead of placeholder names. For example, if the command you are about to suggest is `kubectl get pods -n <namespace>`, run `kubectl get namespaces` first to get available namespaces. Another example is if your command is `kubectl describe <node-name>`, then run `kubectl get nodes` first to get the available nodes.",
 ]
@@ -123,10 +123,14 @@ def get_rag_assistant(
     debug_mode: bool = True,
 ) -> Agent:
     """Get a Local RAG Agent."""
-    """
     
-    if 'gpt' in llm_model:
+    
+    if any(token in llm_model for token in ['gpt', 'o3', 'o4', 'o1']):
         llm = OpenAIChat(id=llm_model)
+        embedder = OpenAIEmbedder()
+        embeddings_model_clean = 'openai'
+    elif 'gemini' in llm_model:
+        model = Gemini(id=model_name)
         embedder = OpenAIEmbedder()
         embeddings_model_clean = 'openai'
     else:
@@ -138,12 +142,9 @@ def get_rag_assistant(
             embedder = OllamaEmbedder(model=embeddings_model, dimensions=768)
         elif embeddings_model == "phi3":
             embedder = OllamaEmbedder(model=embeddings_model, dimensions=3072)
-    """
+    
 
     """ model = """
-    llm = Gemini(id="gemini-1.5-flash")
-    embedder = OpenAIEmbedder()
-    embeddings_model_clean = 'openai'
     # Define the knowledge base
     knowledge = AgentKnowledge(
         vector_db=PgVector(
@@ -175,30 +176,8 @@ def get_rag_assistant(
         search_knowledge=True,
         description="You are an AI called 'RAGit'. You provide instructions that a user should take to solve issues with their Kubernetes configurations.",
         task="Provide the user with instructions and shell commands to solve the user's problem.",
-        instructions=[
-            # NEW PROMPTS
-            "Carefully read the information the user provided.",
-            "Run diagnostic commands yourself, then use the output to further help you provide the user with actionable instructions for their issue.",
-            "Enumerate your steps, and start from \"1.\". Each step should include a bash script of what the user should do in a step by step basis. For example: \"1. Check the logs. 2. Delete the deployment.\""
-            "Do not use live feed flags when checking the logs such as 'kubectl logs -f'",
-            # OLD PROMPTS
-            #"When a user asks a question, you will be provided with information about the question.",
-            #"Carefully read this information and provide a clear and concise instruction to the user.",
-            #"The instruction should specify the most likely action that the user should take.",
-            #"Do not use phrases like 'based on my knowledge' or 'depending on the information'.",
-        ],
-        guidelines=[
-            # OLD PROMPTS
-            #"If you do not know where to start, then a good starting place is running `kubectl get pods --all-namespaces` and inspecting the output for pods that are not in a RUNNING state.",
-            #"If the user specifies a command they ran, feel free to run that command yourself to gain more insight into the problem.",
-            
-            # NEW PROMPTS
-            "When generating output, prioritize providing actionable instructions (i.e., shell commands) over explanations or justifications.",
-            "Assume a moderate level of technical expertise on the part of the user (e.g., they're familiar with basic Linux commands and concepts).",
-            "Don't worry too much about formatting or syntax; focus on getting the right information across.",
-            "When writing out your commands, use the real name of the Kubernetes resource instead of placeholder names. For example, if your command is `kubectl get pods -n <namespace>`, run `kubectl get namespaces` first to get available namespaces.",
-            "Do not use live feed flags when checking the logs such as 'kubectl logs -f'"
-        ],
+        instructions=instructions,
+        guidelines=guidelines,
         prevent_hallucinations=True,
         markdown=True,
         add_datetime_to_instructions=True,

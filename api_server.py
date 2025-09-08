@@ -12,8 +12,15 @@ from assistant import get_rag_assistant, get_rag_agent  # type: ignore
 import shutil
 from pathlib import Path
 from statement import Model
+from sqlalchemy import create_engine, text
+from phi.vectordb.pgvector import PgVector
+from phi.knowledge.website import WebsiteKnowledgeBase
+
 
 app = FastAPI()
+DB_URL = "postgresql+psycopg2://ai:ai@localhost:5532/ai"  # adjust your DB URL
+engine = create_engine(DB_URL)
+
 
 # CORS middleware to allow requests from your frontend (if applicable)
 app.add_middleware(
@@ -95,6 +102,40 @@ async def ask_question(prompt: str = Form(...)):
     
     return {"response": response.content}
 
+def load_knowledge_base(url: str, table_name: str):
+    """
+    Scrape the website URL and load content into the pgvector knowledge base.
+    """
+    knowledge_base = WebsiteKnowledgeBase(
+        urls=[url],
+        max_links=2,  # adjust depth if needed
+        vector_db=PgVector(
+            table_name=table_name,
+            db_url=DB_URL,
+        ),
+    )
+    knowledge_base.load()
+
+
+@app.post("/add_url/")
+async def add_url(url: str = Form(...)):
+    """Add a URL to the RAG knowledge base using load_knowledge_base logic."""
+    if session_state.rag_assistant is None:
+        raise HTTPException(status_code=400, detail="Agent not initialized")
+
+    # Construct table name dynamically based on embeddings model
+    table_name = f"ai.local_rag_documents_{session_state.embeddings_model}"
+
+    try:
+        load_knowledge_base(url, table_name)
+        return {"status": "URL added", "url": url, "table": table_name}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Could not load knowledge base: {str(e)}")
+
+'''
+......................................................
+Deprecated: this code only works for static web page.
+......................................................
 @app.post("/add_url/")
 async def add_url(url: str = Form(...)):
     """Add a URL to the knowledge base."""
@@ -107,6 +148,7 @@ async def add_url(url: str = Form(...)):
         return {"status": "URL added"}
     else:
         raise HTTPException(status_code=400, detail="Could not read website")
+'''
 
 @app.post("/upload_md/")
 async def upload_md(file: UploadFile = File(...)):
@@ -143,6 +185,24 @@ async def upload_pdf(file: UploadFile = File(...)):
     else:
         raise HTTPException(status_code=400, detail="Could not read PDF")
 
+
+@app.post("/clear_knowledge_base/")
+async def clear_knowledge_base():
+    """Clear the knowledge base for the current embeddings model."""
+    if session_state.rag_assistant is None:
+        raise HTTPException(status_code=400, detail="Agent not initialized")
+
+    table_name = f"ai.local_rag_documents_{session_state.embeddings_model}"
+
+    try:
+        with engine.begin() as conn:
+            sql_stmt = text(f'TRUNCATE TABLE "{table_name}" RESTART IDENTITY CASCADE')
+            conn.execute(sql_stmt)
+        return {"status": "Knowledge base cleared", "table": table_name}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Could not clear knowledge base: {str(e)}")
+
+'''
 @app.post("/clear_knowledge_base/")
 async def clear_knowledge_base():
     """Clear the knowledge base."""
@@ -154,6 +214,7 @@ async def clear_knowledge_base():
         return {"status": "Knowledge base cleared"}
     else:
         raise HTTPException(status_code=400, detail="No knowledge base to clear")
+'''
 
 @app.get("/chat_history/")
 async def get_chat_history():
