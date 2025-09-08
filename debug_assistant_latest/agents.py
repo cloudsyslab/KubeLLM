@@ -245,9 +245,11 @@ class AgentDebugStepByStep(Agent):
         try:    
             knowledgeAIRespnseString = str(self.agentAPIResponse)
 
-            bashCommands = re.findall(r"``bash\\n(.*?)\\n```", knowledgeAIRespnseString, re.DOTALL)
+            bashCommands = re.findall(r"``bash\\n\s*(.*?)\\n\s*```", knowledgeAIRespnseString, re.DOTALL)
             bashCommandsList = [cmd.strip() for cmd in bashCommands]
-            
+            print(knowledgeAIRespnseString)
+            print(bashCommands)
+            print(bashCommandsList)
             self.steps = bashCommandsList
 
         except Exception as e:
