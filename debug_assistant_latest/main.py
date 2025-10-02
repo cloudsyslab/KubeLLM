@@ -92,14 +92,24 @@ def run( debugType, configFile ):
 
 if __name__ == "__main__":
     if (len(sys.argv) < 2):
-        print ('config file not provided')
+        print('Usage: python3 main.py <config_file> [test_type]')
+        print('Available test types: allStepsAtOnce, stepByStep, singleAgent (default: allStepsAtOnce)')
         sys.exit(1)
 
     configFile = sys.argv[1]
+    
+    # Get test type from second argument, default to "allStepsAtOnce"
+    testType = sys.argv[2] if len(sys.argv) > 2 else "allStepsAtOnce"
+    
+    # Validate test type
+    validTestTypes = ["allStepsAtOnce", "stepByStep", "singleAgent"]
+    if testType not in validTestTypes:
+        print(f'Invalid test type: {testType}')
+        print(f'Available test types: {", ".join(validTestTypes)}')
+        sys.exit(1)
+    
     if os.path.exists(configFile):
-        run("allStepsAtOnce", configFile)
-        #run("singleAgent", configFile)
-        #run("stepByStep", configFile)
+        run(testType, configFile)
     else:
         print (f'{configFile} does not exist')
 
