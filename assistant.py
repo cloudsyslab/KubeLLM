@@ -65,7 +65,8 @@ def get_rag_agent(
         knowledge = AgentKnowledge(
             vector_db=PgVector(
                 db_url=db_url,
-                table_name=f"ai.local_rag_documents_{embeddings_model_clean}",
+                schema="ai",
+                table_name=f"local_rag_documents_{embeddings_model_clean}",
                 embedder=embedder,
                 search_type=SearchType.hybrid
             ),
@@ -127,29 +128,24 @@ def get_rag_assistant(
     
     if any(token in llm_model for token in ['gpt', 'o3', 'o4', 'o1']):
         llm = OpenAIChat(id=llm_model)
-        embedder = OpenAIEmbedder()
-        embeddings_model_clean = 'openai'
     elif 'gemini' in llm_model:
-        model = Gemini(id=model_name)
-        embedder = OpenAIEmbedder()
-        embeddings_model_clean = 'openai'
+        llm = Gemini(id=llm_model)
     else:
-        llm=Ollama(id=llm_model)
-        # Define the embedder based on the embeddings model
-        embedder = OllamaEmbedder(model=embeddings_model, dimensions=4096)
-        embeddings_model_clean = embeddings_model.replace("-", "_")
-        if embeddings_model == "nomic-embed-text":
-            embedder = OllamaEmbedder(model=embeddings_model, dimensions=768)
-        elif embeddings_model == "phi3":
-            embedder = OllamaEmbedder(model=embeddings_model, dimensions=3072)
+        llm = Ollama(id=llm_model)
     
+    # Define the embedder based on the embeddings model
+    if embeddings_model == "nomic-embed-text":
+        embedder = OllamaEmbedder(model=embeddings_model, dimensions=768)
+    else:
+        embedder = OllamaEmbedder(model=embeddings_model)
 
     """ model = """
     # Define the knowledge base
     knowledge = AgentKnowledge(
         vector_db=PgVector(
             db_url=db_url,
-            table_name=f"ai.local_rag_documents_{embeddings_model_clean}",
+            schema="ai",
+            table_name=f"local_rag_documents_{embeddings_model}",
             embedder=embedder,
             search_type=SearchType.hybrid
         ),
@@ -161,7 +157,6 @@ def get_rag_assistant(
         name="local_rag_assistant",
         run_id=run_id,
         user_id=user_id,
-        #llm=Ollama(model=llm_model),
         #llm=OllamaTools(model=llm_model),
         model=llm,
         knowledge=knowledge,

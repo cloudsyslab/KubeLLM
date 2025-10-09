@@ -15,7 +15,11 @@ from statement import Model
 from sqlalchemy import create_engine, text
 from phi.vectordb.pgvector import PgVector
 from phi.knowledge.website import WebsiteKnowledgeBase
-
+import requests
+from bs4 import BeautifulSoup
+from phi.document.base import Document
+from phi.agent import AgentKnowledge
+from phi.embedder.ollama import OllamaEmbedder
 
 app = FastAPI()
 DB_URL = "postgresql+psycopg2://ai:ai@localhost:5532/ai"  # adjust your DB URL
@@ -102,7 +106,7 @@ async def ask_question(prompt: str = Form(...)):
     
     return {"response": response.content}
 
-def load_knowledge_base(url: str, table_name: str):
+def load_knowledge_base_old(url: str, table_name: str):
     """
     Scrape the website URL and load content into the pgvector knowledge base.
     """
@@ -116,6 +120,46 @@ def load_knowledge_base(url: str, table_name: str):
     )
     knowledge_base.load()
 
+def load_knowledge_base(url: str, table_name:str):
+    # Headers from your working manual test
+    headers = {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
+    }
+    
+    # Fetch and parse
+    response = requests.get(url, headers=headers)
+    response.raise_for_status()
+    
+    soup = BeautifulSoup(response.content, 'html.parser')
+    title = soup.title.string if soup.title else url.split('/')[-1]
+    
+    # Clean text (remove scripts/styles/nav)
+    for tag in soup(["script", "style", "nav", "footer"]):
+        tag.decompose()
+    text = soup.get_text(separator='\n', strip=True)
+    
+    doc = Document(
+        content=text,
+        metadata={"source": url, "title": title}
+    )
+    
+    
+    # Define the embedder based on the embeddings model
+    if session_state.embeddings_model == "nomic-embed-text":
+        embedder = OllamaEmbedder(model=session_state.embeddings_model, dimensions=768)
+    else:
+        embedder = OllamaEmbedder(model=session_state.embeddings_model)
+
+    # Load to KB
+    kb = AgentKnowledge(
+        vector_db=PgVector(
+            schema="ai",
+            table_name=table_name,
+            db_url=DB_URL,
+            embedder=embedder
+        )
+    )
+    kb.load_documents([doc])  # Add more docs for crawling/multi-URL
 
 @app.post("/add_url/")
 async def add_url(url: str = Form(...)):
@@ -124,7 +168,7 @@ async def add_url(url: str = Form(...)):
         raise HTTPException(status_code=400, detail="Agent not initialized")
 
     # Construct table name dynamically based on embeddings model
-    table_name = f"ai.local_rag_documents_{session_state.embeddings_model}"
+    table_name = f"local_rag_documents_{session_state.embeddings_model}"
 
     try:
         load_knowledge_base(url, table_name)
@@ -192,7 +236,7 @@ async def clear_knowledge_base():
     if session_state.rag_assistant is None:
         raise HTTPException(status_code=400, detail="Agent not initialized")
 
-    table_name = f"ai.local_rag_documents_{session_state.embeddings_model}"
+    table_name = f"local_rag_documents_{session_state.embeddings_model}"
 
     try:
         with engine.begin() as conn:
