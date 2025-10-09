@@ -11,16 +11,20 @@ from rag_api import (
 )
 
 # Initialize the assistant
-initialize_response = initialize_assistant("o3-mini", "nomic-embed-text")
+initialize_response = initialize_assistant("gpt-5-nano", "nomic-embed-text")
 print("Initialize Response:", initialize_response)
 
 # Ask a question
-question_response = ask_question("What is the capital of France?")
+question_response = ask_question("What are three popular ingress controllers ")
 print("Question Response:", question_response)
 
 # Add a URL to the knowledge base
 add_url_response = add_url("https://learnk8s.io/troubleshooting-deployments")
 print("Add URL Response:", add_url_response)
+
+# Ask a question
+question_response = ask_question("What are three popular ingress controllers ")
+print("Question Response:", question_response)
 
 # Clear the knowledge base
 clear_kb_response = clear_knowledge_base()
