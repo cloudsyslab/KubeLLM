@@ -163,10 +163,18 @@ class AgentDebug(Agent):
     def askQuestion(self):
         """ Ask the formatted prepared question to the debug agent """
         try:
-            prompt = f'Perform the action suggested here: \n{self.agentAPIResponse}\n'
+            prompt = f'Perform the actions suggested here: \n{self.agentAPIResponse}\n'
             prompt += f"\nThe relevant configuration file is located in this path: {self.config['test-directory']+self.config['yaml-file-name']}\n"
             prompt += "You can update these files if necessary. If any files are updated, make sure to delete and reapply the configuration file.\n"
-            prompt += "Do not use live feed flags when checking the logs such as 'kubectl logs -f'"
+            prompt += "Do not use live feed flags when checking the logs such as 'kubectl logs -f'\n"
+            prompt += (
+    "### Tool Usage Rules\n"
+    "- Only one tool call per assistant message.\n"
+    "- Never repeat a tool call that has already been executed successfully in this run.\n"
+    "- If you need the result of a previous tool call, use the provided output rather than re-invoking it.\n"
+    "- After a successful tool call, decide the next step based solely on the tool’s output, not by re-issuing the same command.\n"
+)
+
             response = self.agent.run(prompt)
             response = response.content
 
