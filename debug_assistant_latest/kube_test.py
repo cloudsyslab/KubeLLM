@@ -56,15 +56,26 @@ def tearDownEnviornment(testEnvName):
     elif testEnvName == "readiness_failure":
         os.remove(f"{filepath}/{testEnvName}/{testEnvName}.yaml")
         shutil.copyfile(f"{filepath}/{testEnvName}/backup_yaml.yaml", f"{filepath}/{testEnvName}/{testEnvName}.yaml")        
-        subprocess.run(f"kubectl delete -f ./troubleshooting/{testEnvName}/{testEnvName}.yaml", shell=True, check=True)
-
+        subprocess.run(f"kubectl delete -f ./troubleshooting/{testEnvName}/{testEnvName}.yaml --grace-period=5", shell=True, check=True)
+    elif testEnvName == "liveness_probe":
+        os.remove(f"{filepath}/{testEnvName}/{testEnvName}.yaml")
+        shutil.copyfile(f"{filepath}/{testEnvName}/backup_yaml.yaml", f"{filepath}/{testEnvName}/{testEnvName}.yaml")        
+        subprocess.run(f"kubectl delete -f ./troubleshooting/{testEnvName}/{testEnvName}.yaml --grace-period=5", shell=True, check=True)
+    elif testEnvName == "missing_dependency":
+        os.remove(f"{filepath}/{testEnvName}/{testEnvName}.yaml")
+        os.remove(f"{filepath}/{testEnvName}/server.py")
+        os.remove(f"{filepath}/{testEnvName}/Dockerfile")
+ 
+        shutil.copyfile(f"{filepath}/{testEnvName}/backup_yaml.yaml", f"{filepath}/{testEnvName}/{testEnvName}.yaml")        
+        shutil.copyfile(f"{filepath}/{testEnvName}/backup_server.py", f"{filepath}/{testEnvName}/server.py")        
+        shutil.copyfile(f"{filepath}/{testEnvName}/backup_Dockerfile", f"{filepath}/{testEnvName}/Dockerfile")        
+        subprocess.run(f"kubectl delete -f ./troubleshooting/{testEnvName}/{testEnvName}.yaml --grace-period=5", shell=True, check=True)
     elif testEnvName == "wrong_port":
         #subprocess.run("docker stop wrong_port_app", shell=True, check=True)
         #subprocess.run("docker rm wrong_port_app", shell=True, check=True)
         #subprocess.run("docker rmi -f marioutsa/kube-wrong-port-app", shell=True, check=True)
         #subprocess.run("docker rmi -f kube-wrong-port-app", shell=True, check=True)
 
-        subprocess.run(f"kubectl delete -f ./troubleshooting/{testEnvName}/{testEnvName}.yaml", shell=True, check=True)
         os.remove(f"{filepath}/{testEnvName}/{testEnvName}.yaml")
         os.remove(f"{filepath}/{testEnvName}/server.py")
         os.remove(f"{filepath}/{testEnvName}/Dockerfile")
