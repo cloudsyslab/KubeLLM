@@ -18,9 +18,6 @@ import timeout_decorator
 from better_shell import BetterShellTools
 from phi.model.openai import OpenAIChat
 from phi.model.ollama import Ollama
-
-
-
 from phi.agent import AgentKnowledge
 from phi.vectordb.pgvector import PgVector, SearchType
 from phi.storage.agent.postgres import PgAgentStorage
@@ -158,8 +155,8 @@ class AgentDebug(Agent):
             print(f"Error creating debug agent prompt: {e}")
             sys.exit()
 
-    @timeout_decorator.timeout(480)
     @withTimeout(False)
+    @timeout_decorator.timeout(480)
     def askQuestion(self):
         """ Ask the formatted prepared question to the debug agent """
         try:
@@ -172,19 +169,38 @@ class AgentDebug(Agent):
     "- Only one tool call per assistant message.\n"
     "- Never repeat a tool call that has already been executed successfully in this run.\n"
     "- If you need the result of a previous tool call, use the provided output rather than re-invoking it.\n"
-    "- After a successful tool call, decide the next step based solely on the tool’s output, not by re-issuing the same command.\n"
+    "- Keep the tool call as simple as possible to avoid errors.\n"
+    #"- After a successful tool call, decide the next step based solely on the tool’s output, not by re-issuing the same command.\n"
 )
 
-            response = self.agent.run(prompt)
-            response = response.content
-
-            if "<|ERROR|>" in response or "<|FAILED|>" in response:
+            response = self.agent.run(prompt, return_response=True)
+            response_content = response.content
+            
+            metrics = response.metrics or {}  # Fallback to empty dict if None
+            input_tokens = sum(metrics.get("input_tokens", []))
+            output_tokens = sum(metrics.get("output_tokens", []))
+            total_tokens = sum(metrics.get("total_tokens", []))
+            model_name = response.model  
+            
+            # SUCCESS or FAILURE should be determined by a verification agent
+            # the following debugStatus is still useful to demonstrate the need for verification agent
+            if "<|ERROR|>" in response_content or "<|FAILED|>" in response_content:
                 self.debugStatus = False
-            elif "<|SOLVED|>" in response:
+            elif "<|SOLVED|>" in response_content:
                 self.debugStatus = True
             else:
                 self.debugStatus = False
-            return
+            
+            # Save metrics to a JSON file (append mode for logging multiple runs)
+            metrics_entry = {
+                "test_case": self.config['test-name'],    
+                "model": model_name,
+                "input_tokens": input_tokens,
+                "output_tokens": output_tokens,
+                "total_tokens": total_tokens,
+                "task_status_wo_verification": self.debugStatus
+            }
+            return metrics_entry
         except Exception as e:
             print(f"Error asking question to debug agent: {e}")
             sys.exit()
@@ -264,10 +280,19 @@ class AgentDebugStepByStep(Agent):
             print(f"Failed to generate steps to problem: {e}")
             sys.exit()
 
-    @timeout_decorator.timeout(480)
     @withTimeout(False)
+    @timeout_decorator.timeout(480)
     def executeProblemSteps(self):
         """ Once we have formed all of the steps based on the knowledge agent, then we can start to execute each step one by one """
+        # Define tool usage rules once
+        tool_rules = (
+           "### Tool Usage Rules\n"
+           "- Only one tool call per assistant message.\n"
+           "- Never repeat a tool call that has already been executed successfully in this run.\n"
+           "- If you need the result of a previous tool call, use the provided output rather than re-invoking it.\n"
+           "- After a successful tool call, decide the next step based solely on the tool’s output, not by re-issuing the same command.\n"
+        )
+
         try:
             numSteps = len(self.steps)
             for i, step in enumerate(self.steps, start=1):
@@ -278,6 +303,9 @@ class AgentDebugStepByStep(Agent):
                 prompt += "If you need to update a pod then use kubectl replace --force [POD_NAME]"
                 prompt += f"\nThis is step {i} out of {numSteps}."
                 prompt += "Do not use live feed flags when checking the logs such as 'kubectl logs -f'"
+                
+                # Append the tool usage rules
+                prompt += tool_rules
 
                 response = self.agent.run(prompt)
                 response = response.content

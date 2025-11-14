@@ -11,6 +11,7 @@
         ]
     },
     "debug-agent": {
+        "llm-source": "openai",
         "model": "gpt-5-nano",
         "instructions": [
             "If all and only all commands fail to execute, declare that there was an error in trying to solve the issue, and end that statement with this token: <|ERROR|>.",
@@ -19,20 +20,22 @@
             "If you believe you have met the goal, declare that you have solved the user's issue, and end that statement with this token: <|SOLVED|>.",
             "If the steps do not solve the issue, or if you need more information, declare that you cannot solve the issue, and end that statement with this token: <|FAILED|>.",
             "Do not use live feed flags when checking the logs such as 'kubectl logs -f'",
-            "If you do not conclude on an answer or a code then try again please."
+            "If you do not conclude on an answer or a code then try again please.",
+            "Do not use commands like vim or vi",
+            "If you are unable to resolve the issue and you end the statement with <|ERROR|> or <|FAILED|>, please tell why you encountered the issue and what command caused it. Pease put the details for the issue within <|REASON|> <|/REASON|> "
         ],
         "api-key": "",
         "guidelines": [
             "If a command invocation is successful but gives no stdout nor stderr, then that is because that invocation resulted in no output to stdout or stderr.",
             "If a command contains a placeholder name surrounded in angle brackets such as <pod_name>, for example, then **do not** run that command as-is. First run a `kubectl get` command to find a real name to replace the placeholder name, then run the suggested command with the replaced name of the resource. For example, if you see `kubectl logs <pod_name> -n example_namespace`, first run `kubectl get pods -n example_namespace` and use the name of the first pod you see.",
             "Do not use live feed flags when checking the logs such as 'kubectl logs -f'",
-            "If you do not conclude on an answer or a code then try again please."
-
+            "If you do not conclude on an answer or a code then try again please.",
+            "Do not use commands like vim or vi"
         ]
     },
     "knowledge-prompt": {
-        "problem-desc": "The pod on my Kubernetes cluster cannot be accessed by making a curl request. Any requests made to the application running in this pod result in a timeout.",
-        "system-prompt": "Give specific commands to fix this issue. If modifying file contents is necessary, use the sed command to achieve this. If providing a file path, make sure to keep the full file path.",
+        "problem-desc": "The pod on my Kubernetes cluster logs show EnvironmentError: Missing required environment variable 'APP_MODE'.",
+        "system-prompt": "Give specific commands to fix this issue. If modifying file contents is necessary, use the sed command to achieve this. If providing a file path, make sure to keep the full file path. Suggest only the essential steps needed to solve the issue. Be frugal.",
         "additional-directions": ""
     },
     "debug-prompt": {
@@ -40,7 +43,7 @@
     },
     "relevant-files":{
         "deployment": [
-            "wrong_port.yaml"
+            "environment_variable.yaml"
         ],
         "application": [
             "server.py"
@@ -51,11 +54,11 @@
         "dockerfile": true
     },
     "setup-commands": [
-        "docker build -t kube-wrong-port-app ~/KubeLLM/debug_assistant_latest/troubleshooting/wrong_port/",
-        "docker tag kube-wrong-port-app marioutsa/kube-wrong-port-app",
-        "kubectl apply -f ~/KubeLLM/debug_assistant_latest/troubleshooting/wrong_port/wrong_port.yaml"
+        "docker build -t kube-env-missing-app ~/KubeLLM/debug_assistant_latest/troubleshooting/environment_variable/",
+        "docker tag kube-env-missing-app marioutsa/kube-env-missing-app",
+        "kubectl apply -f ~/KubeLLM/debug_assistant_latest/troubleshooting/environment_variable/environment_variable.yaml"
     ],
-    "test-name": "wrong_port",
-    "test-directory": "~/KubeLLM/debug_assistant_latest/troubleshooting/wrong_port/",
-    "yaml-file-name": "wrong_port.yaml"
+    "test-name": "environment_variable",
+    "test-directory": "~/KubeLLM/debug_assistant_latest/troubleshooting/environment_variable/",
+    "yaml-file-name": "environment_variable.yaml"
 }

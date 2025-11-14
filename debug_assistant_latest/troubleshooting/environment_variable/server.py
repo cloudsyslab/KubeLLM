@@ -1,5 +1,6 @@
 import os
 from http.server import HTTPServer, BaseHTTPRequestHandler
+import sys
 
 mode = os.getenv("APP_MODE")
 if not mode:
@@ -19,6 +20,10 @@ class Handler(BaseHTTPRequestHandler):
             self.send_response(404)
             self.end_headers()
 
-print(f"Running in {mode}")
+import sys
+
+print(f"Running in {mode}", flush=True)
+sys.stdout.flush()
+
 httpd = HTTPServer(("0.0.0.0", 8765), Handler)
 httpd.serve_forever()
