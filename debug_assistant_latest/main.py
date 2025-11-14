@@ -1,6 +1,7 @@
 from agents import AgentAPI, AgentDebug, AgentDebugStepByStep, SingleAgent
 from utils import readTheJSONConfigFile, setUpEnvironment, printFinishMessage
 import sys, os
+from metrics_db import store_metrics_entry, calculate_cost, calculate_totals
 
 def allStepsAtOnce(configFile = None):
     """
@@ -24,8 +25,27 @@ def allStepsAtOnce(configFile = None):
     #Run the LLMs as needed
     apiAgent.askQuestion()
     debugAgent.agentAPIResponse = apiAgent.response
-    debugAgent.askQuestion()
+    metrics = debugAgent.askQuestion()
 
+    # call the verificaiton agent to determine SUCCESS or FAILURE
+    #-----------------------------------#
+    task_status = True 
+
+    #-----------------------------------#
+    
+    # Calculate the cost
+    cost = calculate_cost(metrics.get("model"), metrics.get("input_tokens"), metrics.get("output_tokens"))
+
+    # Store metrics entry into the database
+    db_path = os.path.expanduser("~/KubeLLM/token_metrics.db")
+
+    store_metrics_entry(
+        db_path, metrics.get('test_case'), metrics.get("model"),
+        metrics.get("input_tokens"), metrics.get("output_tokens"), 
+        metrics.get("total_tokens"), int(task_status), cost
+    )
+
+    
     printFinishMessage()
 
     return debugAgent.debugStatus

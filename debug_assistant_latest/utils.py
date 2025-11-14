@@ -52,6 +52,37 @@ def readTheJSONConfigFile(configFile):
         sys.exit()
     return parsedConfig
 
+
+def update_debug_agent_model(json_file_path: str, new_model: str) -> None:
+    """
+    Updates the model name under the 'debug-agent' category in the specified JSON file.
+    
+    Args:
+        json_file_path (str): The path to the JSON file.
+        new_model (str): The new model name to set.
+    
+    Raises:
+        FileNotFoundError: If the JSON file does not exist.
+        KeyError: If 'debug-agent' or 'model' key is not found in the JSON.
+        json.JSONDecodeError: If the file is not valid JSON.
+    """
+    # Load the JSON file
+    with open(json_file_path, 'r') as file:
+        data = json.load(file)
+    
+    # Update the model in debug-agent
+    if 'debug-agent' not in data:
+        raise KeyError("'debug-agent' key not found in JSON.")
+    if 'model' not in data['debug-agent']:
+        raise KeyError("'model' key not found in 'debug-agent'.")
+    
+    data['debug-agent']['model'] = new_model
+    
+    # Write back to the JSON file
+    with open(json_file_path, 'w') as file:
+        json.dump(data, file, indent=4)
+
+
 def setUpEnvironment(config):
     """ Setup the enviornment using the set up commands specified in the config"""
     try:
