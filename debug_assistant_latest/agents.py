@@ -166,7 +166,7 @@ class AgentDebug(Agent):
             prompt += "Do not use live feed flags when checking the logs such as 'kubectl logs -f'\n"
             prompt += (
     "### Tool Usage Rules\n"
-    "- Only one tool call per assistant message.\n"
+    "- Do not attempt many commands in one tool call.\n"
     "- Never repeat a tool call that has already been executed successfully in this run.\n"
     "- If you need the result of a previous tool call, use the provided output rather than re-invoking it.\n"
     "- Keep the tool call as simple as possible to avoid errors.\n"
@@ -287,7 +287,7 @@ class AgentDebugStepByStep(Agent):
         # Define tool usage rules once
         tool_rules = (
            "### Tool Usage Rules\n"
-           "- Only one tool call per assistant message.\n"
+           "- Do not attempt many commands in one tool call.\n"
            "- Never repeat a tool call that has already been executed successfully in this run.\n"
            "- If you need the result of a previous tool call, use the provided output rather than re-invoking it.\n"
            "- After a successful tool call, decide the next step based solely on the tool’s output, not by re-issuing the same command.\n"
