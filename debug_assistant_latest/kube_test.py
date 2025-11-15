@@ -39,7 +39,6 @@ def tearDownEnviornment(testEnvName):
     if testEnvName == "wrong_interface":
         #subprocess.run("docker stop wrong_interface_app", shell=True, check=True)
         #subprocess.run("docker rm wrong_interface_app", shell=True, check=True)
-        subprocess.run("docker rmi -f marioutsa/kube-wrong-interface-app", shell=True, check=True)
         subprocess.run("docker rmi -f kube-wrong-interface-app", shell=True, check=True)
 
         os.remove(f"{filepath}/{testEnvName}/{testEnvName}.yaml")
@@ -70,25 +69,9 @@ def tearDownEnviornment(testEnvName):
         shutil.copyfile(f"{filepath}/{testEnvName}/backup_server.py", f"{filepath}/{testEnvName}/server.py")        
         shutil.copyfile(f"{filepath}/{testEnvName}/backup_Dockerfile", f"{filepath}/{testEnvName}/Dockerfile")        
         subprocess.run(f"kubectl delete -f ./troubleshooting/{testEnvName}/{testEnvName}.yaml --grace-period=5", shell=True, check=True)
-    elif testEnvName == "wrong_port":
-        #subprocess.run("docker stop wrong_port_app", shell=True, check=True)
-        #subprocess.run("docker rm wrong_port_app", shell=True, check=True)
-        #subprocess.run("docker rmi -f marioutsa/kube-wrong-port-app", shell=True, check=True)
-        #subprocess.run("docker rmi -f kube-wrong-port-app", shell=True, check=True)
-
-        os.remove(f"{filepath}/{testEnvName}/{testEnvName}.yaml")
-        os.remove(f"{filepath}/{testEnvName}/server.py")
-        os.remove(f"{filepath}/{testEnvName}/Dockerfile")
-
-        shutil.copyfile(f"{filepath}/{testEnvName}/backup_yaml.yaml", f"{filepath}/{testEnvName}/{testEnvName}.yaml")        
-        shutil.copyfile(f"{filepath}/{testEnvName}/backup_server.py", f"{filepath}/{testEnvName}/server.py")        
-        shutil.copyfile(f"{filepath}/{testEnvName}/backup_Dockerfile", f"{filepath}/{testEnvName}/Dockerfile")        
-
-        subprocess.run(f"kubectl delete -f ./troubleshooting/{testEnvName}/{testEnvName}.yaml", shell=True, check=True)
     elif testEnvName == "port_mismatch":
         #subprocess.run("docker stop port_mismatch_app", shell=True, check=True)
         #subprocess.run("docker rm port_mismatch_app", shell=True, check=True)
-        subprocess.run("docker rmi -f marioutsa/kube-port-mismatch-app", shell=True, check=True)
         subprocess.run("docker rmi -f kube-port-mismatch-app", shell=True, check=True)
 
         os.remove(f"{filepath}/{testEnvName}/{testEnvName}.yaml")
@@ -108,7 +91,7 @@ def tearDownEnviornment(testEnvName):
 
         #subprocess.run("docker stop incorrect_selector_app", shell=True, check=True)
         #subprocess.run("docker rm incorrect_selector_app", shell=True, check=True)
-        subprocess.run("docker rmi -f marioutsa/kube-incorrect-selector-app", shell=True, check=True)
+        #subprocess.run("docker rmi -f marioutsa/kube-incorrect-selector-app", shell=True, check=True)
         subprocess.run("docker rmi -f kube-incorrect-selector-app", shell=True, check=True)
 
         os.remove(f"{filepath}/{testEnvName}/{testEnvName}.yaml")
@@ -127,7 +110,7 @@ def tearDownEnviornment(testEnvName):
     elif testEnvName == "environment_variable":
         #subprocess.run("docker stop environment_variable_app", shell=True, check=True)
         #subprocess.run("docker rm environment_variable_app", shell=True, check=True)
-        subprocess.run("docker rmi -f marioutsa/kube-env-missing-app", shell=True, check=True)
+        #subprocess.run("docker rmi -f marioutsa/kube-env-missing-app", shell=True, check=True)
         subprocess.run("docker rmi -f kube-env-missing-app", shell=True, check=True)
 
         os.remove(f"{filepath}/{testEnvName}/{testEnvName}.yaml")
