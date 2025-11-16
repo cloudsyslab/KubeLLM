@@ -112,6 +112,7 @@ class AgentDebug(Agent):
         super().__init__(agentType, config)
         self.agentAPIResponse = None
         self.debugStatus = None
+        self.response = None  # Store the debug agent's response for verification
 
     def prepareAgent(self):
         """ Prepare the debug assistant based on the config file """
@@ -175,6 +176,9 @@ class AgentDebug(Agent):
 
             response = self.agent.run(prompt, return_response=True)
             response_content = response.content
+            
+            # Store the response for verification agent
+            self.response = response_content
             
             metrics = response.metrics or {}  # Fallback to empty dict if None
             input_tokens = sum(metrics.get("input_tokens", []))
@@ -424,3 +428,175 @@ class SingleAgent(Agent):
         except Exception as e:
             print(f"Error asking question to knowledge agent: {e}")
             sys.exit()
+
+
+class AgentVerification(Agent):
+    """
+    Verification agent that checks whether the debug agent successfully resolved the Kubernetes issue.
+    This agent runs diagnostic commands to verify the actual state of the cluster and files.
+    """
+
+    def __init__(self, agentType, config):
+        super().__init__(agentType, config)
+        self.debugAgentResponse = None
+        self.verificationStatus = None
+        self.verificationReport = None
+        
+        # Default instructions 
+        self.default_instructions = [
+            "You are a verification agent tasked with verifying whether the debug agent successfully resolved the Kubernetes issue.",
+            "Run diagnostic commands to check the current state of the cluster.",
+            "Verify that the fixes claimed by the debug agent were actually applied.",
+            "Always check the actual file contents using commands like 'cat' or 'grep'",
+            "Do not use live feed flags when checking the logs such as 'kubectl logs -f'",
+            "If kubectl logs fails, wait 5-10 seconds and try again up to 3 times",
+            "If logs are still unavailable after retries, you can still verify based on file contents and pod status",
+            "Use <|VERIFIED|> if the YAML file has the correct changes AND pod is Running (even if logs temporarily unavailable)",
+            "After completing verification, you must conclude with EXACTLY one of these tokens:",
+            "- <|VERIFIED|> if the issue has been completely fixed",
+            "- <|FAILED|> if the issue has NOT been fixed",
+            "- <|VERIFICATION_ERROR|> only if you cannot check files or pod status at all",
+            "DO NOT create your own tokens. Use ONLY the three tokens listed above."
+        ]
+
+        # Default guidelines
+        self.default_guidelines = [
+            "Always verify the actual file contents to confirm changes were made",
+            "Check pod status with kubectl get pods",
+            "If pod logs are temporarily unavailable, this is acceptable - focus on file verification and pod status",
+            "Verify the changes match what the debug agent claimed",
+            "The PRIMARY verification is: Files have correct changes AND pod is Running",
+            "Log verification is secondary - if unavailable, still verify based on files + pod status",
+            "Do not assume the debug agent succeeded just because it said so",
+            "Check the actual current state, not what was claimed",
+            "If files are correct and pod is Running, you can conclude VERIFIED even without logs",
+            "You MUST use one of the three specified tokens: <|VERIFIED|>, <|FAILED|>, or <|VERIFICATION_ERROR|>"
+        ]
+
+    def prepareAgent(self):
+        """ Prepare the verification agent based on the config file """
+        # agentProperties can be None if verification-agent is not in config - that's okay, we'll use defaults
+        try:
+            # Get model and temperature from config or use defaults
+            if self.agentProperties:
+                model_name = self.agentProperties.get("model", "gpt-4o")
+                temperature = self.agentProperties.get("temperature", 0.3)
+            else:
+                model_name = "gpt-4o"
+                temperature = 0.3
+            
+            if any(token in model_name for token in ['gpt', 'o3', 'o4', 'o1']):
+                model = OpenAIChat(id=model_name, temperature=temperature)
+            elif 'llama' in model_name:
+                model = Ollama(id=model_name, temperature=temperature)
+            elif 'gemini' in model_name:
+                model = Gemini(id=model_name, temperature=temperature)
+            else:
+                raise Exception("Invalid model name provided for verification agent.")
+
+            # Use config instructions/guidelines if provided, otherwise use defaults
+            if self.agentProperties:
+                instructions = self.agentProperties.get("instructions", self.default_instructions)
+                guidelines = self.agentProperties.get("guidelines", self.default_guidelines)
+            else:
+                instructions = self.default_instructions
+                guidelines = self.default_guidelines
+
+            self.agent = llmAgent(
+                model=model,
+                tools=[BetterShellTools()], 
+                debug_mode=True,
+                instructions=instructions,
+                show_tool_calls=True,
+                markdown=True,
+                guidelines=guidelines
+            )
+        except Exception as e:
+            print(f"Error preparing verification agent: {e}")
+            raise  # Re-raise the exception instead of sys.exit()
+
+    def preparePrompt(self):
+        """ Prepare the verification agent prompt - fully generic, no problem-specific config needed """
+        try:
+            # Start with the problem description
+            self.prompt = "You are a verification agent. Your task is to verify whether the debug agent actually solved the Kubernetes issue.\n\n"
+            
+            self.prompt += f"=== ORIGINAL PROBLEM ===\n{self.config['knowledge-prompt']['problem-desc']}\n\n"
+            
+            # The key part: what did the debug agent claim?
+            if self.debugAgentResponse:
+                self.prompt += f"=== DEBUG AGENT'S RESPONSE ===\n{self.debugAgentResponse}\n\n"
+            
+            self.prompt += "=== YOUR VERIFICATION TASK ===\n"
+            self.prompt += "1. Read the debug agent's response carefully\n"
+            self.prompt += "2. Identify what changes it claims to have made\n"
+            self.prompt += "3. Verify each claimed change is actually present in the system\n"
+            self.prompt += "4. Check if the original problem is actually resolved\n"
+            self.prompt += "5. Use kubectl commands and file inspection to verify the actual state\n\n"
+            
+            # Add context about relevant files
+            self.prompt += "=== RELEVANT FILES (from configuration) ===\n"
+            for relevantFileType in ["deployment", "application", "service"]:
+                self.prompt = traverseRelevantFiles(self.config, relevantFileType, self.prompt)
+            
+            self.prompt += f"\nTest directory: {self.config['test-directory']}\n"
+            self.prompt += f"Configuration file: {self.config.get('yaml-file-name', 'N/A')}\n\n"
+            
+            self.prompt += "=== VERIFICATION APPROACH ===\n"
+            self.prompt += "- Check file contents match what debug agent claimed\n"
+            self.prompt += "- Verify Kubernetes resources were actually modified/reapplied\n"
+            self.prompt += "- Confirm pods are running (not in error states)\n"
+            self.prompt += "- Test that the original problem symptom is gone\n"
+            self.prompt += "- DO NOT trust claims without verification\n\n"
+            
+        except Exception as e:
+            print(f"Error creating verification agent prompt: {e}")
+            sys.exit()
+
+    @timeout_decorator.timeout(480)
+    @withTimeout(None)
+    def askQuestion(self):
+        """ Ask the verification agent to verify the fix """
+        try:
+            prompt = self.prompt
+            prompt += "\n\n=== CRITICAL: USE EXACT TOKENS ===\n"
+            prompt += "You MUST conclude with EXACTLY one of these three tokens:\n"
+            prompt += "1. <|VERIFIED|> if the issue has been completely resolved\n"
+            prompt += "2. <|FAILED|> if the issue has NOT been fixed\n"
+            prompt += "3. <|VERIFICATION_ERROR|> if you encountered errors during verification\n\n"
+            prompt += "DO NOT make up your own tokens like <|FIX_VERIFIED_FAILED|> or anything else.\n"
+            prompt += "Use ONLY: <|VERIFIED|>, <|FAILED|>, or <|VERIFICATION_ERROR|>\n"
+            
+            response = self.agent.run(prompt)
+            self.verificationReport = response.content
+
+            if "<|VERIFIED|>" in self.verificationReport:
+                self.verificationStatus = True
+                print("\n" + "="*80)
+                print("VERIFICATION STATUS: ✓ VERIFIED")
+                print("The issue has been completely resolved")
+                print("="*80 + "\n")
+            elif "<|FAILED|>" in self.verificationReport:
+                self.verificationStatus = False
+                print("\n" + "="*80)
+                print("VERIFICATION STATUS: ✗ FAILED")
+                print("The issue has NOT been fixed")
+                print("="*80 + "\n")
+            elif "<|VERIFICATION_ERROR|>" in self.verificationReport:
+                self.verificationStatus = None
+                print("\n" + "="*80)
+                print("VERIFICATION STATUS: ⚠ ERROR")
+                print("Encountered errors during verification")
+                print("="*80 + "\n")
+            else:
+                self.verificationStatus = None
+                print("\n" + "="*80)
+                print("VERIFICATION STATUS: ? UNKNOWN")
+                print("No verification status token found in response")
+                print("="*80 + "\n")
+            
+            return self.verificationStatus
+        except Exception as e:
+            print(f"Error during verification: {e}")
+            self.verificationStatus = None
+            return None

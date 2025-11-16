@@ -1,4 +1,4 @@
-from agents import AgentAPI, AgentDebug, AgentDebugStepByStep, SingleAgent
+from agents import AgentAPI, AgentDebug, AgentDebugStepByStep, SingleAgent, AgentVerification
 from utils import readTheJSONConfigFile, setUpEnvironment, printFinishMessage
 import sys, os
 from metrics_db import store_metrics_entry, calculate_cost, calculate_totals
@@ -27,8 +27,32 @@ def allStepsAtOnce(configFile = None):
     debugAgent.agentAPIResponse = apiAgent.response
     metrics = debugAgent.askQuestion()
 
-    # call the verificaiton agent to determine SUCCESS or FAILURE
+    # call the verification agent to determine SUCCESS or FAILURE
     #-----------------------------------#
+    print("\n" + "="*80)
+    print("STARTING VERIFICATION PHASE")
+    print("="*80 + "\n")
+    
+    verificationAgent = AgentVerification("verification-agent", config)
+    verificationAgent.setupAgent()
+    
+    # Pass the debug agent's response to the verification agent
+    verificationAgent.debugAgentResponse = debugAgent.response if debugAgent.response else "Debug agent completed execution"
+    
+    # Run verification
+    task_status = verificationAgent.askQuestion()
+    
+    # If verification returns None (error or unknown), fall back to debug agent's self-reported status
+    if task_status is None:
+        print("⚠ Warning: Verification agent could not determine status. Using debug agent's self-reported status.")
+        task_status = debugAgent.debugStatus
+    
+    # Convert boolean to int for database storage (True->1, False->0, None->0)
+    task_status_int = 1 if task_status else 0
+    
+    print(f"\nFinal Task Status: {'SUCCESS' if task_status else 'FAILURE'}")
+    print(f"Debug Agent Self-Report: {'SUCCESS' if debugAgent.debugStatus else 'FAILURE'}")
+    print(f"Verification Agent Report: {'VERIFIED' if verificationAgent.verificationStatus else 'FAILED' if verificationAgent.verificationStatus is False else 'UNKNOWN'}\n")
     task_status_verified = True 
 
     #-----------------------------------#
@@ -42,13 +66,14 @@ def allStepsAtOnce(configFile = None):
     store_metrics_entry(
         db_path, metrics.get('test_case'), metrics.get("model"),
         metrics.get("input_tokens"), metrics.get("output_tokens"), 
+        metrics.get("total_tokens"), int(task_status_int), cost
         metrics.get("total_tokens"), metrics.get("task_status"), int(task_status_verified), cost
     )
 
     
     printFinishMessage()
 
-    return debugAgent.debugStatus
+    return task_status  # Return verification result instead of debug agent's self-report
 
 def stepByStep( configFile = None ):
     """
