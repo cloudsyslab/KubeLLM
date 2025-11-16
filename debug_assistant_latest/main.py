@@ -44,16 +44,16 @@ def allStepsAtOnce(configFile = None):
     
     # If verification returns None (error or unknown), fall back to debug agent's self-reported status
     if task_status is None:
-        print("⚠ Warning: Verification agent could not determine status. Using debug agent's self-reported status.")
-        task_status = debugAgent.debugStatus
+        print("⚠ Warning: Verification agent could not determine status. We consider the task FAILED.")
+        #task_status = debugAgent.debugStatus
+        task_status = False
     
     # Convert boolean to int for database storage (True->1, False->0, None->0)
-    task_status_int = 1 if task_status else 0
+    task_status_verified = 1 if task_status else 0
     
     print(f"\nFinal Task Status: {'SUCCESS' if task_status else 'FAILURE'}")
     print(f"Debug Agent Self-Report: {'SUCCESS' if debugAgent.debugStatus else 'FAILURE'}")
     print(f"Verification Agent Report: {'VERIFIED' if verificationAgent.verificationStatus else 'FAILED' if verificationAgent.verificationStatus is False else 'UNKNOWN'}\n")
-    task_status_verified = True 
 
     #-----------------------------------#
     
@@ -66,8 +66,7 @@ def allStepsAtOnce(configFile = None):
     store_metrics_entry(
         db_path, metrics.get('test_case'), metrics.get("model"),
         metrics.get("input_tokens"), metrics.get("output_tokens"), 
-        metrics.get("total_tokens"), int(task_status_int), cost
-        metrics.get("total_tokens"), metrics.get("task_status"), int(task_status_verified), cost
+        metrics.get("total_tokens"), metrics.get("task_status"), task_status_verified, cost
     )
 
     
