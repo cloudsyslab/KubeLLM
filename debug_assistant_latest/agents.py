@@ -195,14 +195,14 @@ class AgentDebug(Agent):
             else:
                 self.debugStatus = False
             
-            # Save metrics to a JSON file (append mode for logging multiple runs)
+            # Save metrics
             metrics_entry = {
                 "test_case": self.config['test-name'],    
                 "model": model_name,
                 "input_tokens": input_tokens,
                 "output_tokens": output_tokens,
                 "total_tokens": total_tokens,
-                "task_status_wo_verification": self.debugStatus
+                "task_status": int(self.debugStatus)
             }
             return metrics_entry
         except Exception as e:

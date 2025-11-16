@@ -53,6 +53,8 @@ def allStepsAtOnce(configFile = None):
     print(f"\nFinal Task Status: {'SUCCESS' if task_status else 'FAILURE'}")
     print(f"Debug Agent Self-Report: {'SUCCESS' if debugAgent.debugStatus else 'FAILURE'}")
     print(f"Verification Agent Report: {'VERIFIED' if verificationAgent.verificationStatus else 'FAILED' if verificationAgent.verificationStatus is False else 'UNKNOWN'}\n")
+    task_status_verified = True 
+
     #-----------------------------------#
     
     # Calculate the cost
@@ -65,6 +67,7 @@ def allStepsAtOnce(configFile = None):
         db_path, metrics.get('test_case'), metrics.get("model"),
         metrics.get("input_tokens"), metrics.get("output_tokens"), 
         metrics.get("total_tokens"), int(task_status_int), cost
+        metrics.get("total_tokens"), metrics.get("task_status"), int(task_status_verified), cost
     )
 
     
