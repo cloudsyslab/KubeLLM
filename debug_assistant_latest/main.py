@@ -29,7 +29,7 @@ def allStepsAtOnce(configFile = None):
 
     # call the verificaiton agent to determine SUCCESS or FAILURE
     #-----------------------------------#
-    task_status = True 
+    task_status_verified = True 
 
     #-----------------------------------#
     
@@ -42,7 +42,7 @@ def allStepsAtOnce(configFile = None):
     store_metrics_entry(
         db_path, metrics.get('test_case'), metrics.get("model"),
         metrics.get("input_tokens"), metrics.get("output_tokens"), 
-        metrics.get("total_tokens"), int(task_status), cost
+        metrics.get("total_tokens"), metrics.get("task_status"), int(task_status_verified), cost
     )
 
     
