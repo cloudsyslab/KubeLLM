@@ -28,7 +28,7 @@ print(f"\nGrand total:")
 print(f"\truns: {total_metrics['total_entries']}")
 print(f"\tsuccess: {total_metrics['total_successes']}")
 print(f"\tverified success: {total_metrics['total_verified_successes']}")
-print(f"\tcost: ${total_metrics['grand_total_cost']}")
+print(f"\tdebug cost: ${total_metrics['total_debug_cost']}")
 print(f"\tverification cost: ${total_metrics['total_verification_cost']}")
 
 

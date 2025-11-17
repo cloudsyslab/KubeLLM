@@ -85,8 +85,8 @@ def calculate_totals(db_path):
     cursor.execute('SELECT SUM(total_tokens) FROM metrics')
     grand_total_tokens = cursor.fetchone()[0] or 0
     
-    cursor.execute('SELECT SUM(cost) FROM metrics')
-    grand_total_cost = cursor.fetchone()[0] or 0.0
+    cursor.execute('SELECT SUM(cost) FROM metrics WHERE agent_type = "debug"')
+    debug_cost = cursor.fetchone()[0] or 0.0
 
     cursor.execute('SELECT SUM(cost) FROM metrics WHERE agent_type = "verification"')
     verification_cost = cursor.fetchone()[0] or 0.0
@@ -112,7 +112,7 @@ def calculate_totals(db_path):
     
     return {
         "grand_total_tokens": grand_total_tokens,
-        "grand_total_cost": grand_total_cost,
+        "total_debug_cost": debug_cost,
         "total_verification_cost": verification_cost,
         "per_test_case": per_test,
         "total_entries": total_entries,
