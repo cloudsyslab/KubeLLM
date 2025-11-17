@@ -25,7 +25,7 @@ def calculate_cost(model_name: str, input_tokens: int, output_tokens: int) -> fl
     output_cost = (output_tokens / 1000.0) * prices['output_per_1k']
     return round(input_cost + output_cost, 4)
 
-def store_metrics_entry(db_path, test_case, model, input_tokens, output_tokens, total_tokens, task_status, task_status_verified, cost):
+def store_metrics_entry(db_path, metrics, task_status_verified, cost):
     """Create table if needed and insert a metrics entry. Reusable across scripts."""
     os.makedirs(os.path.dirname(db_path), exist_ok=True)  # Ensure dir exists
     
@@ -39,6 +39,7 @@ def store_metrics_entry(db_path, test_case, model, input_tokens, output_tokens, 
             timestamp TEXT NOT NULL,
             test_case TEXT NOT NULL,
             model TEXT,
+            agent_type TEXT,
             input_tokens INTEGER DEFAULT 0,
             output_tokens INTEGER DEFAULT 0,
             total_tokens INTEGER DEFAULT 0,
@@ -51,24 +52,25 @@ def store_metrics_entry(db_path, test_case, model, input_tokens, output_tokens, 
     # Insert the entry
     timestamp = datetime.now().isoformat()
     cursor.execute('''
-        INSERT INTO metrics (timestamp, test_case, model, input_tokens, output_tokens, total_tokens, task_status, task_status_verified, cost)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-    ''', (timestamp, test_case, model, input_tokens, output_tokens, total_tokens, task_status, task_status_verified, cost))
+        INSERT INTO metrics (timestamp, test_case, model, agent_type, input_tokens, output_tokens, total_tokens, task_status, task_status_verified, cost)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ''', (timestamp, metrics.get("test_case"), metrics.get("model"), metrics.get("agent_type"), metrics.get("input_tokens"), metrics.get("output_tokens"), metrics.get("total_tokens"), metrics.get("task_status"), task_status_verified, cost))
 
     conn.commit()
     conn.close()
 
-def get_model_statistics(db_path):
+def get_model_stats(db_path):
     os.makedirs(os.path.dirname(db_path), exist_ok=True)  # Ensure dir exists
     conn = sqlite3.connect(db_path)
     cursor = conn.cursor()
     cursor.execute('''
-        SELECT model,
+        SELECT agent_type, model,
             COUNT(*) as total_runs,
-            SUM(CASE WHEN task_status = 1 THEN 1 ELSE 0 END) as successes
-            SUM(CASE WHEN task_status_verified = 1 THEN 1 ELSE 0 END) as verified_successes
+            SUM(CASE WHEN task_status = 1 THEN 1 ELSE 0 END) as successes,
+            SUM(CASE WHEN task_status_verified = 1 THEN 1 ELSE 0 END) as verified_successes,
+            SUM(cost) as cost
         FROM metrics
-        GROUP BY model
+        GROUP BY agent_type, model
          ''')
     success_stats = cursor.fetchall()
     conn.close()
@@ -85,6 +87,9 @@ def calculate_totals(db_path):
     
     cursor.execute('SELECT SUM(cost) FROM metrics')
     grand_total_cost = cursor.fetchone()[0] or 0.0
+
+    cursor.execute('SELECT SUM(cost) FROM metrics WHERE agent_type = "verification"')
+    verification_cost = cursor.fetchone()[0] or 0.0
     
     # Per test case (tokens and costs)
     cursor.execute('SELECT test_case, SUM(total_tokens), SUM(cost) FROM metrics GROUP BY test_case')
@@ -92,15 +97,15 @@ def calculate_totals(db_path):
     per_test = {row[0]: {'tokens': row[1] or 0, 'cost': row[2] or 0.0} for row in per_test_data}
     
     # Total entries
-    cursor.execute('SELECT COUNT(*) FROM metrics')
+    cursor.execute('SELECT COUNT(*) FROM metrics WHERE agent_type = "debug"')
     total_entries = cursor.fetchone()[0] or 0
     
     # Total success
-    cursor.execute('SELECT SUM(task_status) FROM metrics')
+    cursor.execute('SELECT COUNT(*) FROM metrics WHERE agent_type = "debug" AND task_status = 1')
     total_successes = cursor.fetchone()[0] or 0
 
     # Total verified success
-    cursor.execute('SELECT SUM(task_status_verified) FROM metrics')
+    cursor.execute('SELECT COUNT(*) FROM metrics WHERE agent_type = "debug" AND task_status_verified = 1')
     total_verified_successes = cursor.fetchone()[0] or 0
 
     conn.close()
@@ -108,6 +113,7 @@ def calculate_totals(db_path):
     return {
         "grand_total_tokens": grand_total_tokens,
         "grand_total_cost": grand_total_cost,
+        "total_verification_cost": verification_cost,
         "per_test_case": per_test,
         "total_entries": total_entries,
         "total_successes": total_successes,
