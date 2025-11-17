@@ -25,7 +25,7 @@ def calculate_cost(model_name: str, input_tokens: int, output_tokens: int) -> fl
     output_cost = (output_tokens / 1000.0) * prices['output_per_1k']
     return round(input_cost + output_cost, 4)
 
-def store_metrics_entry(db_path, metrics, task_status_verified, cost):
+def store_metrics_entry(db_path, metrics, task_status_verified):
     """Create table if needed and insert a metrics entry. Reusable across scripts."""
     os.makedirs(os.path.dirname(db_path), exist_ok=True)  # Ensure dir exists
     
@@ -45,6 +45,7 @@ def store_metrics_entry(db_path, metrics, task_status_verified, cost):
             total_tokens INTEGER DEFAULT 0,
             task_status INTEGER DEFAULT 0,
             task_status_verified  INTEGER DEFAULT 0,
+            duration_s REAL DEFAULT 0.0, 
             cost REAL DEFAULT 0.0
         )
     ''')
@@ -52,9 +53,9 @@ def store_metrics_entry(db_path, metrics, task_status_verified, cost):
     # Insert the entry
     timestamp = datetime.now().isoformat()
     cursor.execute('''
-        INSERT INTO metrics (timestamp, test_case, model, agent_type, input_tokens, output_tokens, total_tokens, task_status, task_status_verified, cost)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    ''', (timestamp, metrics.get("test_case"), metrics.get("model"), metrics.get("agent_type"), metrics.get("input_tokens"), metrics.get("output_tokens"), metrics.get("total_tokens"), metrics.get("task_status"), task_status_verified, cost))
+        INSERT INTO metrics (timestamp, test_case, model, agent_type, input_tokens, output_tokens, total_tokens, task_status, task_status_verified, duration_s, cost)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ''', (timestamp, metrics.get("test_case"), metrics.get("model"), metrics.get("agent_type"), metrics.get("input_tokens"), metrics.get("output_tokens"), metrics.get("total_tokens"), metrics.get("task_status"), task_status_verified, metrics.get("duration_s"), metrics.get("cost")))
 
     conn.commit()
     conn.close()
@@ -68,6 +69,7 @@ def get_model_stats(db_path):
             COUNT(*) as total_runs,
             SUM(CASE WHEN task_status = 1 THEN 1 ELSE 0 END) as successes,
             SUM(CASE WHEN task_status_verified = 1 THEN 1 ELSE 0 END) as verified_successes,
+            SUM(duration_s) as duration_s,
             SUM(cost) as cost
         FROM metrics
         GROUP BY agent_type, model
@@ -88,8 +90,14 @@ def calculate_totals(db_path):
     cursor.execute('SELECT SUM(cost) FROM metrics WHERE agent_type = "debug"')
     debug_cost = cursor.fetchone()[0] or 0.0
 
+    cursor.execute('SELECT SUM(duration_s) FROM metrics WHERE agent_type = "debug"')
+    debug_duration_s = cursor.fetchone()[0] or 0.0
+    
     cursor.execute('SELECT SUM(cost) FROM metrics WHERE agent_type = "verification"')
     verification_cost = cursor.fetchone()[0] or 0.0
+    
+    cursor.execute('SELECT SUM(duration_s) FROM metrics WHERE agent_type = "verification"')
+    verification_duration_s = cursor.fetchone()[0] or 0.0
     
     # Per test case (tokens and costs)
     cursor.execute('SELECT test_case, SUM(total_tokens), SUM(cost) FROM metrics GROUP BY test_case')
@@ -114,6 +122,8 @@ def calculate_totals(db_path):
         "grand_total_tokens": grand_total_tokens,
         "total_debug_cost": debug_cost,
         "total_verification_cost": verification_cost,
+        "debug_duration": debug_duration_s,
+        "verification_duration": verification_duration_s,
         "per_test_case": per_test,
         "total_entries": total_entries,
         "total_successes": total_successes,

@@ -618,7 +618,9 @@ class AgentVerification(Agent):
                 "input_tokens": input_tokens,
                 "output_tokens": output_tokens,
                 "total_tokens": total_tokens,
-                "task_status": STATUS_MAP.get(self.verificationStatus, -1)
+                "task_status": STATUS_MAP.get(self.verificationStatus, -1),
+                "duration_s": 0,
+                "cost": 0
             }
             return metrics_entry
 
@@ -633,6 +635,10 @@ class AgentVerification(Agent):
                 "input_tokens": 0,
                 "output_tokens": 0,
                 "total_tokens": 0,
-                "task_status": -1
+                "task_status": -1,
+                "duration_s": 0,
+                "cost": 0
             }
             return metrics_entry
+
+        
