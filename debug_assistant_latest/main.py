@@ -3,6 +3,8 @@ from utils import readTheJSONConfigFile, setUpEnvironment, printFinishMessage
 import sys, os
 from metrics_db import store_metrics_entry, calculate_cost, calculate_totals
 
+db_path = os.path.expanduser("~/KubeLLM/token_metrics.db")
+
 def allStepsAtOnce(configFile = None):
     """
         This function will run the knowledge agent and debug agent. 
@@ -25,8 +27,12 @@ def allStepsAtOnce(configFile = None):
     #Run the LLMs as needed
     apiAgent.askQuestion()
     debugAgent.agentAPIResponse = apiAgent.response
-    metrics = debugAgent.askQuestion()
+    debugMetrics = debugAgent.askQuestion()
 
+
+    # Calculate the cost
+    debugCost = calculate_cost(debugMetrics.get("model"), debugMetrics.get("input_tokens"), debugMetrics.get("output_tokens"))
+    
     # call the verification agent to determine SUCCESS or FAILURE
     #-----------------------------------#
     print("\n" + "="*80)
@@ -40,39 +46,29 @@ def allStepsAtOnce(configFile = None):
     verificationAgent.debugAgentResponse = debugAgent.response if debugAgent.response else "Debug agent completed execution"
     
     # Run verification
-    task_status = verificationAgent.askQuestion()
+    verificationMetrics = verificationAgent.askQuestion()
     
     # If verification returns None (error or unknown), fall back to debug agent's self-reported status
-    if task_status is None:
-        print("⚠ Warning: Verification agent could not determine status. We consider the task FAILED.")
-        #task_status = debugAgent.debugStatus
-        task_status = False
+    #if verificationAgent.verificationStatus is None:
+    #    print("⚠ Warning: Verification agent could not determine status. We consider the task FAILED.")
+    #    task_status = False
     
-    # Convert boolean to int for database storage (True->1, False->0, None->0)
-    task_status_verified = 1 if task_status else 0
     
-    print(f"\nFinal Task Status: {'SUCCESS' if task_status else 'FAILURE'}")
+    print(f"\nFinal Task Status: {'SUCCESS' if verificationAgent.verificationStatus else 'FAILURE'}")
     print(f"Debug Agent Self-Report: {'SUCCESS' if debugAgent.debugStatus else 'FAILURE'}")
     print(f"Verification Agent Report: {'VERIFIED' if verificationAgent.verificationStatus else 'FAILED' if verificationAgent.verificationStatus is False else 'UNKNOWN'}\n")
 
     #-----------------------------------#
     
     # Calculate the cost
-    cost = calculate_cost(metrics.get("model"), metrics.get("input_tokens"), metrics.get("output_tokens"))
+    verificationCost = calculate_cost(verificationMetrics.get("model"), verificationMetrics.get("input_tokens"), verificationMetrics.get("output_tokens"))
 
     # Store metrics entry into the database
-    db_path = os.path.expanduser("~/KubeLLM/token_metrics.db")
-
-    store_metrics_entry(
-        db_path, metrics.get('test_case'), metrics.get("model"),
-        metrics.get("input_tokens"), metrics.get("output_tokens"), 
-        metrics.get("total_tokens"), metrics.get("task_status"), task_status_verified, cost
-    )
-
-    
+    store_metrics_entry(db_path, debugMetrics, verificationMetrics.get("task_status"), debugCost)
+    store_metrics_entry(db_path, verificationMetrics, verificationMetrics.get("task_status"), verificationCost)
     printFinishMessage()
 
-    return task_status  # Return verification result instead of debug agent's self-report
+    return verificationAgent.verificationStatus  # Return verification result instead of debug agent's self-report
 
 def stepByStep( configFile = None ):
     """

@@ -35,6 +35,12 @@ from rag_api import (
     start_new_run
 )
 
+STATUS_MAP = {
+    True: 1,
+    False: 0,
+    None: -1
+}
+
 class Agent():
     def __init__(self, agentType, config):
         self.agentProperties = config.get(agentType, None)
@@ -185,6 +191,7 @@ class AgentDebug(Agent):
             output_tokens = sum(metrics.get("output_tokens", []))
             total_tokens = sum(metrics.get("total_tokens", []))
             model_name = response.model  
+            agent_type = 'debug'
             
             # SUCCESS or FAILURE should be determined by a verification agent
             # the following debugStatus is still useful to demonstrate the need for verification agent
@@ -199,6 +206,7 @@ class AgentDebug(Agent):
             metrics_entry = {
                 "test_case": self.config['test-name'],    
                 "model": model_name,
+                "agent_type": agent_type,
                 "input_tokens": input_tokens,
                 "output_tokens": output_tokens,
                 "total_tokens": total_tokens,
@@ -595,8 +603,36 @@ class AgentVerification(Agent):
                 print("No verification status token found in response")
                 print("="*80 + "\n")
             
-            return self.verificationStatus
+            metrics = response.metrics or {}  # Fallback to empty dict if None
+            input_tokens = sum(metrics.get("input_tokens", []))
+            output_tokens = sum(metrics.get("output_tokens", []))
+            total_tokens = sum(metrics.get("total_tokens", []))
+            model_name = response.model
+            agent_type = 'verification'
+            
+            # Save metrics
+            metrics_entry = {
+                "test_case": self.config['test-name'],
+                "model": model_name,
+                "agent_type": agent_type,
+                "input_tokens": input_tokens,
+                "output_tokens": output_tokens,
+                "total_tokens": total_tokens,
+                "task_status": STATUS_MAP.get(self.verificationStatus, -1)
+            }
+            return metrics_entry
+
         except Exception as e:
             print(f"Error during verification: {e}")
             self.verificationStatus = None
-            return None
+
+            metrics_entry = {
+                "test_case": self.config['test-name'],
+                "model": self.config['verification-agent']['model'],
+                "agent_type": 'verification',
+                "input_tokens": 0,
+                "output_tokens": 0,
+                "total_tokens": 0,
+                "task_status": -1
+            }
+            return metrics_entry
