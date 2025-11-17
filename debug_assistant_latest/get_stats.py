@@ -8,7 +8,7 @@ success_stats = get_model_stats(db_path)
 print("\nModel Success Stats (after this run):")
 
 last_agent_type = None  # Track the previously printed agent type
-for agent_type, model, total_runs, successes, verified_successes, cost in success_stats:
+for agent_type, model, total_runs, successes, verified_successes, duration_s, cost in success_stats:
     if agent_type != last_agent_type:
         print(f"Agent Type: {agent_type}")
         last_agent_type = agent_type
@@ -20,6 +20,7 @@ for agent_type, model, total_runs, successes, verified_successes, cost in succes
         print(f"\t{model}: {successes} successes ({success_rate:.1f}% rate over {total_runs} runs)")
         print(f"\t{model}: {verified_successes} verified_successes ({verified_success_rate:.1f}% rate over {total_runs} runs)")
     
+    print(f"\t{model}: {duration_s} seconds")
     print(f"\t{model}: ${cost}")
 
 total_metrics = calculate_totals(db_path)
@@ -27,7 +28,9 @@ total_metrics = calculate_totals(db_path)
 print(f"\nGrand total:")
 print(f"\truns: {total_metrics['total_entries']}")
 print(f"\tsuccess: {total_metrics['total_successes']}")
-print(f"\tverified success: {total_metrics['total_verified_successes']}")
+print(f"\tverified success: {total_metrics['total_verified_successes']} seconds")
+print(f"\tdebug duration: {total_metrics['debug_duration']} seconds")
+print(f"\tverification duration: {total_metrics['verification_duration']}")
 print(f"\tdebug cost: ${total_metrics['total_debug_cost']}")
 print(f"\tverification cost: ${total_metrics['total_verification_cost']}")
 

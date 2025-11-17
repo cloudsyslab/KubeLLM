@@ -2,6 +2,7 @@ from agents import AgentAPI, AgentDebug, AgentDebugStepByStep, SingleAgent, Agen
 from utils import readTheJSONConfigFile, setUpEnvironment, printFinishMessage
 import sys, os
 from metrics_db import store_metrics_entry, calculate_cost, calculate_totals
+import time
 
 db_path = os.path.expanduser("~/KubeLLM/token_metrics.db")
 
@@ -27,11 +28,13 @@ def allStepsAtOnce(configFile = None):
     #Run the LLMs as needed
     apiAgent.askQuestion()
     debugAgent.agentAPIResponse = apiAgent.response
-    debugMetrics = debugAgent.askQuestion()
-
+    debug_start_time = time.perf_counter()
+    debug_metrics = debugAgent.askQuestion()
+    debug_end_time = time.perf_counter()
+    debug_duration_s = debug_end_time - debug_start_time
 
     # Calculate the cost
-    debugCost = calculate_cost(debugMetrics.get("model"), debugMetrics.get("input_tokens"), debugMetrics.get("output_tokens"))
+    debug_cost = calculate_cost(debug_metrics.get("model"), debug_metrics.get("input_tokens"), debug_metrics.get("output_tokens"))
     
     # call the verification agent to determine SUCCESS or FAILURE
     #-----------------------------------#
@@ -46,13 +49,15 @@ def allStepsAtOnce(configFile = None):
     verificationAgent.debugAgentResponse = debugAgent.response if debugAgent.response else "Debug agent completed execution"
     
     # Run verification
-    verificationMetrics = verificationAgent.askQuestion()
+    verification_start_time = time.perf_counter()
+    verification_metrics = verificationAgent.askQuestion()
+    verification_end_time = time.perf_counter()
+    verification_duration_s = verification_end_time - verification_start_time
     
     # If verification returns None (error or unknown), fall back to debug agent's self-reported status
     #if verificationAgent.verificationStatus is None:
     #    print("⚠ Warning: Verification agent could not determine status. We consider the task FAILED.")
     #    task_status = False
-    
     
     print(f"\nFinal Task Status: {'SUCCESS' if verificationAgent.verificationStatus else 'FAILURE'}")
     print(f"Debug Agent Self-Report: {'SUCCESS' if debugAgent.debugStatus else 'FAILURE'}")
@@ -61,11 +66,17 @@ def allStepsAtOnce(configFile = None):
     #-----------------------------------#
     
     # Calculate the cost
-    verificationCost = calculate_cost(verificationMetrics.get("model"), verificationMetrics.get("input_tokens"), verificationMetrics.get("output_tokens"))
+    verification_cost = calculate_cost(verification_metrics.get("model"), verification_metrics.get("input_tokens"), verification_metrics.get("output_tokens"))
+
+    # Update debug_metrics and verification_metrics
+    debug_metrics["duration_s"] = round(debug_duration_s, 2)
+    debug_metrics["cost"] = round(debug_cost, 4)
+    verification_metrics["duration_s"] = round(verification_duration_s, 2)
+    verification_metrics["cost"] = round(verification_cost, 4)
 
     # Store metrics entry into the database
-    store_metrics_entry(db_path, debugMetrics, verificationMetrics.get("task_status"), debugCost)
-    store_metrics_entry(db_path, verificationMetrics, verificationMetrics.get("task_status"), verificationCost)
+    store_metrics_entry(db_path, debug_metrics, verification_metrics.get("task_status"))
+    store_metrics_entry(db_path, verification_metrics, verification_metrics.get("task_status"))
     printFinishMessage()
 
     return verificationAgent.verificationStatus  # Return verification result instead of debug agent's self-report
