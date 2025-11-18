@@ -1,0 +1,94 @@
+{
+    "test-name": "port_mismatch_wrong_interface",
+    "test-directory": "~/KubeLLM/debug_assistant_latest/troubleshooting/port_mismatch_wrong_interface/",
+    "yaml-file-name": "port_mismatch_wrong_interface.yaml",
+    "minikube-profile": "lamap",
+
+    "api-agent": {
+        "model": "llama3.1:70b",
+        "embedder": "nomic-embed-text",
+        "clear-knowledge": true,
+        "new-run": true,
+        "init-agent": true,
+        "knowledge": [
+            "https://learnk8s.io/troubleshooting-deployments"
+        ]
+    },
+
+    "debug-agent": {
+        "model": "gpt-4o",
+        "instructions": [
+            "You are a Kubernetes troubleshooting expert. Your task is to diagnose and fix issues with Kubernetes deployments.",
+            "Execute kubectl commands to gather diagnostic information about the cluster and pods.",
+            "Analyze configuration files, application code, and Dockerfiles to identify root causes.",
+            "Make necessary modifications to fix the issues.",
+            "After modifying files, rebuild container images when necessary.",
+            "Delete and reapply Kubernetes resources after making changes.",
+            "Use the <|SOLVED|> token when you have successfully fixed all issues and verified the pod is running.",
+            "Use the <|FAILED|> token if you cannot fix the issue.",
+            "Use the <|ERROR|> token if you encounter unexpected errors."
+        ],
+        "guidelines": [
+            "This test case has MULTIPLE issues that must ALL be fixed:",
+            "1. The application binds to localhost (127.0.0.1) instead of 0.0.0.0",
+            "2. The service targetPort does not match the actual container port",
+            "Always check both the application code AND service configuration",
+            "When writing kubectl commands, use REAL resource names extracted from previous command outputs",
+            "Never use placeholder names like <pod-name> or <service-name>",
+            "Before describing a resource, run 'kubectl get' to find the actual name",
+            "Do not use interactive commands like 'kubectl edit'",
+            "Do not use live feed flags like 'kubectl logs -f'",
+            "After modifying server.py or Dockerfile, you MUST rebuild the container image",
+            "Use 'docker build -t kube-port-mismatch-wrong-interface-app . --no-cache' to rebuild",
+            "After rebuilding, delete the pod with 'kubectl delete -f <yaml>' and reapply with 'kubectl apply -f <yaml>'",
+            "Verify your changes worked by checking pod status and testing with curl"
+        ]
+    },
+
+    "verification-agent": {
+        "model": "gpt-4o",
+        "temperature": 0.3,
+        "instructions": [
+            "You are a verification agent. Your task is to independently verify that BOTH issues have been fixed.",
+            "Run diagnostic commands to check the actual state of the cluster.",
+            "Verify that the application is accessible both directly (pod IP) and through the service.",
+            "Do not trust what the debug agent claimed - verify everything yourself.",
+            "Use <|VERIFIED|> if BOTH issues are completely resolved",
+            "Use <|FAILED|> if ANY issue remains unfixed",
+            "Use <|VERIFICATION_ERROR|> if you cannot perform verification"
+        ],
+        "guidelines": [
+            "Check that the pod is Running with 1/1 ready",
+            "Verify the application code binds to 0.0.0.0 (not localhost) by examining server.py",
+            "Verify the service targetPort matches the container port by examining app_service.yaml",
+            "Test pod direct access: curl <POD_IP>:8765 should work",
+            "Test service access: use 'minikube -p lamap service app-service --url' then curl the URL",
+            "Both direct and service access must work for <|VERIFIED|>"
+        ]
+    },
+
+    "knowledge-prompt": {
+        "problem-desc": "A Kubernetes pod is running but not accessible. The application binds to localhost instead of 0.0.0.0, AND the service is configured with the wrong targetPort. Both issues must be fixed for the application to work correctly.",
+        "system-prompt": "Analyze the Kubernetes deployment, service configuration, and application code to identify ALL issues preventing the application from being accessible.",
+        "additional-directions": "Pay close attention to BOTH the application's network binding configuration AND the service's port configuration. This test case has multiple simultaneous issues."
+    },
+
+    "debug-prompt": {
+        "additional-directions": "Remember to check BOTH the application code (server.py for localhost binding) AND the service configuration (app_service.yaml for port mismatch). Both must be fixed."
+    },
+
+    "relevant-files": {
+        "deployment": ["port_mismatch_wrong_interface.yaml"],
+        "application": ["server.py"],
+        "service": ["app_service.yaml"],
+        "dockerfile": true
+    },
+
+    "setup-commands": [
+        "cd ~/KubeLLM/debug_assistant_latest/troubleshooting/port_mismatch_wrong_interface/",
+        "eval $(minikube -p lamap docker-env)",
+        "docker build -t kube-port-mismatch-wrong-interface-app .",
+        "kubectl apply -f port_mismatch_wrong_interface.yaml",
+        "kubectl apply -f app_service.yaml"
+    ]
+}

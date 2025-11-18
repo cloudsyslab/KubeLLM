@@ -1,0 +1,85 @@
+{
+    "test-name": "resource_limits_oom",
+    "test-directory": "~/KubeLLM/debug_assistant_latest/troubleshooting/resource_limits_oom/",
+    "yaml-file-name": "resource_limits_oom.yaml",
+    "minikube-profile": "lamap",
+
+    "api-agent": {
+        "model": "llama3.1:70b",
+        "embedder": "nomic-embed-text",
+        "clear-knowledge": true,
+        "new-run": true,
+        "init-agent": true,
+        "knowledge": [
+            "https://learnk8s.io/troubleshooting-deployments"
+        ]
+    },
+
+    "debug-agent": {
+        "model": "gpt-4o",
+        "instructions": [
+            "You are a Kubernetes troubleshooting expert specializing in resource limit issues.",
+            "When pods show CrashLoopBackOff, always check 'kubectl describe pod' for termination reasons.",
+            "Look for 'OOMKilled' in the pod events - this indicates the memory limit was exceeded.",
+            "Check the resource limits in the pod specification.",
+            "If OOMKilled, increase the memory limit to a reasonable value (128Mi or 256Mi).",
+            "After modifying the YAML, delete and reapply the pod.",
+            "Use <|SOLVED|> when the pod runs without OOMKilled events.",
+            "Use <|FAILED|> if you cannot resolve the issue."
+        ],
+        "guidelines": [
+            "OOMKilled means the container used more memory than its limit",
+            "Check 'kubectl describe pod' for Last State: Terminated with Reason: OOMKilled",
+            "Look at the memory limits in resources.limits.memory",
+            "Typical fix: increase memory limit from 50Mi to 128Mi or 256Mi",
+            "Do not modify the application code - the issue is in resource limits",
+            "After fixing YAML: kubectl delete -f then kubectl apply -f",
+            "Verify pod stays running and doesn't restart",
+            "Do not use placeholder pod names - get actual name from kubectl get pods"
+        ]
+    },
+
+    "verification-agent": {
+        "model": "gpt-4o",
+        "temperature": 0.3,
+        "instructions": [
+            "Verify that the pod is running without OOMKilled events.",
+            "Check pod status is Running with 1/1 ready.",
+            "Check 'kubectl describe pod' shows no OOMKilled in recent events.",
+            "Verify restart count is not increasing.",
+            "Use <|VERIFIED|> if pod runs successfully without memory issues.",
+            "Use <|FAILED|> if pod still shows OOMKilled or keeps restarting."
+        ],
+        "guidelines": [
+            "Pod must be in Running state",
+            "Restart count should be stable (not increasing)",
+            "No OOMKilled events in pod description",
+            "Memory limit should be reasonable (128Mi or higher)",
+            "Application should respond to HTTP requests"
+        ]
+    },
+
+    "knowledge-prompt": {
+        "problem-desc": "A Kubernetes pod keeps crashing with CrashLoopBackOff. Investigation shows the pod is being OOMKilled (Out of Memory Killed) because the memory limit is set to only 50Mi, which is too restrictive for the application's memory requirements.",
+        "system-prompt": "Analyze the pod events to identify OOMKilled status, then examine the resource limits to understand why the container is being killed.",
+        "additional-directions": "Focus on the resource limits specification. The solution involves increasing the memory limit to allow the application to run."
+    },
+
+    "debug-prompt": {
+        "additional-directions": "This is a resource limit issue, not an application code issue. The fix is in the YAML configuration, specifically the resources.limits.memory value."
+    },
+
+    "relevant-files": {
+        "deployment": ["resource_limits_oom.yaml"],
+        "application": ["server.py"],
+        "service": [],
+        "dockerfile": true
+    },
+
+    "setup-commands": [
+        "cd ~/KubeLLM/debug_assistant_latest/troubleshooting/resource_limits_oom/",
+        "eval $(minikube -p lamap docker-env)",
+        "docker build -t kube-resource-limits-app .",
+        "kubectl apply -f resource_limits_oom.yaml"
+    ]
+}
