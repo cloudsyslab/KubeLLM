@@ -1,4 +1,4 @@
-from agents import AgentAPI, AgentDebug, AgentDebugStepByStep, SingleAgent, AgentVerification
+from agents import AgentAPI, AgentDebug, AgentDebugStepByStep, SingleAgent, AgentVerification_v1, AgentVerification_v2
 from utils import readTheJSONConfigFile, setUpEnvironment, printFinishMessage
 import sys, os
 from metrics_db import store_metrics_entry, calculate_cost, calculate_totals
@@ -42,7 +42,7 @@ def allStepsAtOnce(configFile = None):
     print("STARTING VERIFICATION PHASE")
     print("="*80 + "\n")
     
-    verificationAgent = AgentVerification("verification-agent", config)
+    verificationAgent = AgentVerification_v2("verification-agent", config)
     verificationAgent.setupAgent()
     
     # Pass the debug agent's response to the verification agent
