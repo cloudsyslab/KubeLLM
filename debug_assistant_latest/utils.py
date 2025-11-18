@@ -38,13 +38,22 @@ def read_yaml_file_as_string(file_path):
 def readTheJSONConfigFile(configFile):
     """ Read the provided config JSON file within the arguments when the script is called """
     parsedConfig = None
+    config_file_path = None
     try:
         if configFile:
+            config_file_path = configFile
             with open(configFile,"r") as config_file:
                 parsedConfig = json.loads(config_file.read())
         else:
+            config_file_path = sys.argv[1]
             with open(sys.argv[1],"r") as config_file:
                 parsedConfig = json.loads(config_file.read())
+
+        # If test-directory is empty, derive it from config file location
+        if not parsedConfig.get("test-directory") or parsedConfig.get("test-directory") == "":
+            config_dir = Path(config_file_path).parent.absolute()
+            parsedConfig["test-directory"] = str(config_dir) + "/"
+            print(f"DEBUG: Derived test-directory from config location: {parsedConfig['test-directory']}")
 
     except Exception as e:
         print("Failed to open config file, please make sure you input a valid path in the arguments when invoking the python script")
