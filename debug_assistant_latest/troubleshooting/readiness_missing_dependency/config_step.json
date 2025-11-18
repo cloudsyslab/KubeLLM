@@ -1,0 +1,83 @@
+{
+    "test-name": "readiness_missing_dependency",
+    "test-directory": "~/KubeLLM/debug_assistant_latest/troubleshooting/readiness_missing_dependency/",
+    "yaml-file-name": "readiness_missing_dependency.yaml",
+    "minikube-profile": "lamap",
+
+    "api-agent": {
+        "model": "llama3.1:70b",
+        "embedder": "nomic-embed-text",
+        "clear-knowledge": true,
+        "new-run": true,
+        "init-agent": true,
+        "knowledge": [
+            "https://learnk8s.io/troubleshooting-deployments"
+        ]
+    },
+
+    "debug-agent": {
+        "model": "gpt-4o",
+        "instructions": [
+            "You are a Kubernetes troubleshooting expert focused on application startup and readiness issues.",
+            "Execute kubectl commands to gather diagnostic information.",
+            "Always check pod logs first to identify application errors.",
+            "Examine Dockerfile and application code to find missing dependencies.",
+            "The readiness probe failure is a SYMPTOM, not the root cause - find what's preventing the app from starting.",
+            "After fixing the Dockerfile, rebuild the container image and redeploy.",
+            "Use <|SOLVED|> when the pod is Running AND ready (1/1).",
+            "Use <|FAILED|> if you cannot identify or fix the issue."
+        ],
+        "guidelines": [
+            "This test has a root cause (missing dependency) and a symptom (readiness failure)",
+            "Always check 'kubectl logs' first to see ImportError or ModuleNotFoundError",
+            "The readiness probe configuration is correct - don't modify it",
+            "Focus on fixing the Dockerfile to install missing packages",
+            "After modifying Dockerfile: rebuild with --no-cache, delete pod, reapply",
+            "Verify success by checking pod status shows 1/1 READY",
+            "Do not use placeholder names - get actual pod name from 'kubectl get pods'",
+            "Do not use interactive or blocking commands"
+        ]
+    },
+
+    "verification-agent": {
+        "model": "gpt-4o",
+        "temperature": 0.3,
+        "instructions": [
+            "Verify that the application starts successfully and the readiness probe passes.",
+            "Check pod logs for any ImportError or startup errors.",
+            "Verify the pod status shows 1/1 READY.",
+            "Use <|VERIFIED|> only if pod is fully ready and application responds.",
+            "Use <|FAILED|> if the pod is not ready or application has errors."
+        ],
+        "guidelines": [
+            "Pod must show Running status AND 1/1 ready",
+            "Check logs show no ImportError or ModuleNotFoundError",
+            "Readiness probe must be passing",
+            "Application must respond to HTTP requests on port 8080"
+        ]
+    },
+
+    "knowledge-prompt": {
+        "problem-desc": "A Kubernetes pod is not becoming ready (0/1). The application requires a Python package (requests) that is not installed in the Dockerfile, causing the application to crash on startup with ImportError. The readiness probe fails because the application never starts successfully.",
+        "system-prompt": "Analyze the pod logs to identify missing dependencies, then examine the Dockerfile to understand why those dependencies are not installed.",
+        "additional-directions": "Focus on the root cause (missing dependency) rather than just the symptom (readiness probe failure)."
+    },
+
+    "debug-prompt": {
+        "additional-directions": "Remember: the readiness probe configuration is correct. The issue is that the application crashes before it can respond to the probe."
+    },
+
+    "relevant-files": {
+        "deployment": ["readiness_missing_dependency.yaml"],
+        "application": ["server.py"],
+        "service": [],
+        "dockerfile": true
+    },
+
+    "setup-commands": [
+        "cd ~/KubeLLM/debug_assistant_latest/troubleshooting/readiness_missing_dependency/",
+        "eval $(minikube -p lamap docker-env)",
+        "docker build -t kube-readiness-missing-dep-app .",
+        "kubectl apply -f readiness_missing_dependency.yaml"
+    ]
+}

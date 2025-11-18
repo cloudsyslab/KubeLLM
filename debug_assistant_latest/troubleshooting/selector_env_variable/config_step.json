@@ -1,0 +1,89 @@
+{
+    "test-name": "selector_env_variable",
+    "test-directory": "~/KubeLLM/debug_assistant_latest/troubleshooting/selector_env_variable/",
+    "yaml-file-name": "selector_env_variable.yaml",
+    "minikube-profile": "lamap",
+
+    "api-agent": {
+        "model": "llama3.1:70b",
+        "embedder": "nomic-embed-text",
+        "clear-knowledge": true,
+        "new-run": true,
+        "init-agent": true,
+        "knowledge": [
+            "https://learnk8s.io/troubleshooting-deployments"
+        ]
+    },
+
+    "debug-agent": {
+        "model": "gpt-4o",
+        "instructions": [
+            "You are a Kubernetes troubleshooting expert handling multiple simultaneous issues.",
+            "This test case has TWO INDEPENDENT issues that must BOTH be fixed:",
+            "1. Pod crashes due to missing environment variable",
+            "2. Service cannot find pod due to selector mismatch",
+            "Check pod logs first to identify the missing environment variable.",
+            "Check service selector vs. pod labels to identify the mismatch.",
+            "Fix BOTH issues before considering the problem solved.",
+            "Use <|SOLVED|> only when pod is running AND service has endpoints.",
+            "Use <|FAILED|> if you cannot fix both issues."
+        ],
+        "guidelines": [
+            "Start by checking pod logs for KeyError to identify missing env var",
+            "Then check 'kubectl describe service' to see if it has endpoints",
+            "Compare service selector with pod labels using 'kubectl get' commands",
+            "Fix the deployment YAML to add the missing environment variable",
+            "Fix the service YAML to correct the selector",
+            "Delete and reapply BOTH resources after making changes",
+            "Verify pod is Running (not CrashLoopBackOff)",
+            "Verify service has endpoints listed",
+            "Do not use placeholder names - extract actual names from kubectl output"
+        ]
+    },
+
+    "verification-agent": {
+        "model": "gpt-4o",
+        "temperature": 0.3,
+        "instructions": [
+            "Verify that BOTH issues are fixed:",
+            "1. Pod must be running without errors (environment variable is set)",
+            "2. Service must have endpoints (selector matches pod labels)",
+            "Check pod logs for any KeyError messages.",
+            "Check service endpoints with 'kubectl describe service'.",
+            "Use <|VERIFIED|> only if both issues are resolved.",
+            "Use <|FAILED|> if either issue remains."
+        ],
+        "guidelines": [
+            "Pod status must be Running with 1/1 ready",
+            "Pod logs must not show KeyError for APP_MESSAGE",
+            "Service must have at least one endpoint listed",
+            "kubectl describe service should show the pod IP as an endpoint",
+            "Both direct pod access and service access should work"
+        ]
+    },
+
+    "knowledge-prompt": {
+        "problem-desc": "A Kubernetes pod crashes immediately with KeyError due to missing environment variable APP_MESSAGE. Additionally, the service cannot route traffic to the pod because the service selector label does not match the pod's label. Both issues must be identified and fixed.",
+        "system-prompt": "Analyze both the pod configuration (for missing env vars) and the service configuration (for selector mismatch) to identify all issues.",
+        "additional-directions": "These are two independent issues - one in the pod spec and one in the service spec. Both must be fixed."
+    },
+
+    "debug-prompt": {
+        "additional-directions": "Remember to check BOTH the pod logs (for env var issues) AND the service endpoints (for selector issues). Both problems must be solved."
+    },
+
+    "relevant-files": {
+        "deployment": ["selector_env_variable.yaml"],
+        "application": ["server.py"],
+        "service": ["app_service.yaml"],
+        "dockerfile": true
+    },
+
+    "setup-commands": [
+        "cd ~/KubeLLM/debug_assistant_latest/troubleshooting/selector_env_variable/",
+        "eval $(minikube -p lamap docker-env)",
+        "docker build -t kube-selector-env-app .",
+        "kubectl apply -f selector_env_variable.yaml",
+        "kubectl apply -f app_service.yaml"
+    ]
+}
