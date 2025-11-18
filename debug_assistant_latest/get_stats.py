@@ -17,21 +17,21 @@ for agent_type, model, total_runs, successes, verified_successes, duration_s, co
     verified_success_rate = (verified_successes / total_runs * 100) if total_runs > 0 else 0
     
     if agent_type != 'verification':
-        print(f"\t{model}: {successes} successes ({success_rate:.1f}% rate over {total_runs} runs)")
+        print(f"\t{model}: {successes} claimed_successes ({success_rate:.1f}% rate over {total_runs} runs)")
         print(f"\t{model}: {verified_successes} verified_successes ({verified_success_rate:.1f}% rate over {total_runs} runs)")
     
-    print(f"\t{model}: {duration_s} seconds")
-    print(f"\t{model}: ${cost}")
+    print(f"\t{model}: {duration_s:.2f} seconds")
+    print(f"\t{model}: ${cost:.4f}")
 
 total_metrics = calculate_totals(db_path)
 
 print(f"\nGrand total:")
 print(f"\truns: {total_metrics['total_entries']}")
-print(f"\tsuccess: {total_metrics['total_successes']}")
-print(f"\tverified success: {total_metrics['total_verified_successes']} seconds")
-print(f"\tdebug duration: {total_metrics['debug_duration']} seconds")
-print(f"\tverification duration: {total_metrics['verification_duration']}")
-print(f"\tdebug cost: ${total_metrics['total_debug_cost']}")
-print(f"\tverification cost: ${total_metrics['total_verification_cost']}")
+print(f"\tclaimed success: {total_metrics['total_successes']}")
+print(f"\tverified success: {total_metrics['total_verified_successes']}")
+print(f"\tdebug duration: {total_metrics['debug_duration']:.2f} seconds")
+print(f"\tverification duration: {total_metrics['verification_duration']:.2f} seconds")
+print(f"\tdebug cost: ${total_metrics['total_debug_cost']:.4f}")
+print(f"\tverification cost: ${total_metrics['total_verification_cost']:.4f}")
 
 
