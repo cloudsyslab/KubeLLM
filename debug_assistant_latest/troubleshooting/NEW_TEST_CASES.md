@@ -29,7 +29,7 @@ Four new test scenarios have been added to increase the complexity and realism o
 ---
 
 ### 2. readiness_missing_dependency (Combined)
-**Difficulty**: 🟥 Hard
+**Difficulty**: 🟠 Hard
 
 **Issues**:
 - Dockerfile missing `RUN pip install requests`
@@ -51,7 +51,7 @@ Four new test scenarios have been added to increase the complexity and realism o
 ---
 
 ### 3. selector_env_variable (Combined)
-**Difficulty**: 🟥 Hard
+**Difficulty**: 🟠 Hard
 
 **Issues**:
 - Pod crashes due to missing APP_MESSAGE environment variable
@@ -73,7 +73,7 @@ Four new test scenarios have been added to increase the complexity and realism o
 ---
 
 ### 4. resource_limits_oom (New Scenario)
-**Difficulty**: 🟨 Medium-Hard
+**Difficulty**: 🟡 Medium-Hard
 
 **Issues**:
 - Memory limit set to 50Mi (too restrictive)
@@ -183,10 +183,10 @@ Verification agents should:
 
 | Test Case | Difficulty | Issues | Rebuild? | Reason |
 |-----------|-----------|--------|----------|---------|
-| readiness_missing_dependency | 🟥 Hard | 2 (related) | Yes | Root cause vs. symptom |
-| selector_env_variable | 🟥 Hard | 2 (independent) | No | Multiple independent fixes |
 | port_mismatch_wrong_interface | 🔴 Very Hard | 2 (independent) | Yes | Complex networking, rebuild |
-| resource_limits_oom | 🟨 Medium-Hard | 1 | No | New concept (OOM), simple fix |
+| readiness_missing_dependency | 🟠 Hard | 2 (related) | Yes | Root cause vs. symptom |
+| selector_env_variable | 🟠 Hard | 2 (independent) | No | Multiple independent fixes |
+| resource_limits_oom | 🟡 Medium-Hard | 1 | No | New concept (OOM), simple fix |
 
 ---
 
@@ -236,6 +236,38 @@ You'll need to add teardown logic for each test case in the `tearDownEnviornment
 
 ---
 
+## Teardown Procedures
+
+### Manual Teardown Commands
+
+#### 1. port_mismatch_wrong_interface
+```bash
+kubectl delete -f ~/KubeLLM/debug_assistant_latest/troubleshooting/port_mismatch_wrong_interface/port_mismatch_wrong_interface.yaml
+kubectl delete -f ~/KubeLLM/debug_assistant_latest/troubleshooting/port_mismatch_wrong_interface/app_service.yaml
+docker rmi -f kube-port-mismatch-wrong-interface-app
+```
+
+#### 2. readiness_missing_dependency
+```bash
+kubectl delete -f ~/KubeLLM/debug_assistant_latest/troubleshooting/readiness_missing_dependency/readiness_missing_dependency.yaml
+docker rmi -f kube-readiness-missing-dep-app
+```
+
+#### 3. selector_env_variable
+```bash
+kubectl delete -f ~/KubeLLM/debug_assistant_latest/troubleshooting/selector_env_variable/selector_env_variable.yaml
+kubectl delete -f ~/KubeLLM/debug_assistant_latest/troubleshooting/selector_env_variable/app_service.yaml
+docker rmi -f kube-selector-env-app
+```
+
+#### 4. resource_limits_oom
+```bash
+kubectl delete -f ~/KubeLLM/debug_assistant_latest/troubleshooting/resource_limits_oom/resource_limits_oom.yaml
+docker rmi -f kube-resource-limits-app
+```
+
+---
+
 ## Future Test Case Ideas
 
 Potential future combinations:
@@ -248,6 +280,6 @@ Potential future combinations:
 
 ---
 
-Created: 2025-01-XX
+Created: 2025-01-18
 Author: Claude AI Assistant
 Purpose: Enhanced testing complexity for KubeLLM research framework
