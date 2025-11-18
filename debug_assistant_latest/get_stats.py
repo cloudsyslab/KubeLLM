@@ -1,8 +1,11 @@
 import sqlite3
 import os
 from metrics_db import calculate_totals, get_model_stats
+from pathlib import Path
 
-db_path = os.path.expanduser("~/KubeLLM/token_metrics.db")
+# Use relative path from script location
+SCRIPT_DIR = Path(__file__).parent.absolute()
+db_path = str(SCRIPT_DIR.parent / "token_metrics.db")
 success_stats = get_model_stats(db_path)
 
 print("\nModel Success Stats (after this run):")
