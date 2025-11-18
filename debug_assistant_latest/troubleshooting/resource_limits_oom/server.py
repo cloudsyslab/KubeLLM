@@ -11,11 +11,15 @@ print(f"Memory allocated. List size: {sys.getsizeof(large_list) / (1024*1024):.2
 
 class SimpleHTTPRequestHandler(BaseHTTPRequestHandler):
     def do_GET(self):
-        self.send_response(200)
-        self.send_header('Content-type', 'text/html')
-        self.end_headers()
-        message = "Hello from resource_limits_oom test! Server is running."
-        self.wfile.write(bytes(message, "utf8"))
+        try:
+            self.send_response(200)
+            self.send_header('Content-type', 'text/html')
+            self.end_headers()
+            message = "Hello from resource_limits_oom test! Server is running."
+            self.wfile.write(bytes(message, "utf8"))
+        except Exception as e:
+            print(f"Error handling request: {e}")
+            self.send_error(500, f"Internal server error: {e}")
 
 if __name__ == '__main__':
     server_address = ('0.0.0.0', 8080)
