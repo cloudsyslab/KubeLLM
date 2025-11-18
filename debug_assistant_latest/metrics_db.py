@@ -5,6 +5,7 @@
 import sqlite3
 import os
 from datetime import datetime
+from pathlib import Path
 
 def calculate_cost(model_name: str, input_tokens: int, output_tokens: int) -> float:
     """Calculate cost based on model pricing."""
@@ -27,8 +28,9 @@ def calculate_cost(model_name: str, input_tokens: int, output_tokens: int) -> fl
 
 def store_metrics_entry(db_path, metrics, task_status_verified):
     """Create table if needed and insert a metrics entry. Reusable across scripts."""
-    os.makedirs(os.path.dirname(db_path), exist_ok=True)  # Ensure dir exists
-    
+    # Ensure parent directory exists using Path API for consistency
+    Path(db_path).parent.mkdir(parents=True, exist_ok=True)
+
     conn = sqlite3.connect(db_path)
     cursor = conn.cursor()
 

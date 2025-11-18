@@ -9,6 +9,13 @@ from pathlib import Path
 SCRIPT_DIR = Path(__file__).parent.absolute()
 db_path = str(SCRIPT_DIR.parent / "token_metrics.db")
 
+# Validate that parent directory exists (should be repo root)
+if not SCRIPT_DIR.parent.exists():
+    raise FileNotFoundError(
+        f"Repository root directory not found: {SCRIPT_DIR.parent}\n"
+        f"This script should be run from within the repository structure."
+    )
+
 def allStepsAtOnce(configFile = None):
     """
         This function will run the knowledge agent and debug agent. 
