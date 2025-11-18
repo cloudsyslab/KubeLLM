@@ -3,8 +3,11 @@ from utils import readTheJSONConfigFile, setUpEnvironment, printFinishMessage
 import sys, os
 from metrics_db import store_metrics_entry, calculate_cost, calculate_totals
 import time
+from pathlib import Path
 
-db_path = os.path.expanduser("~/KubeLLM/token_metrics.db")
+# Use relative path from script location
+SCRIPT_DIR = Path(__file__).parent.absolute()
+db_path = str(SCRIPT_DIR.parent / "token_metrics.db")
 
 def allStepsAtOnce(configFile = None):
     """
