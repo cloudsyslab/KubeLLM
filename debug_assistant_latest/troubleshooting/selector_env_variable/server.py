@@ -1,6 +1,11 @@
 #!/usr/bin/env python3
 from http.server import BaseHTTPRequestHandler, HTTPServer
 import os
+import logging
+
+# Setup logging
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+logger = logging.getLogger(__name__)
 
 # BUG: Application requires APP_MESSAGE env var but it's not defined in deployment
 APP_MESSAGE = os.environ['APP_MESSAGE']  # Will raise KeyError if not set
@@ -14,12 +19,15 @@ class SimpleHTTPRequestHandler(BaseHTTPRequestHandler):
             message = f"{APP_MESSAGE} (from env var)"
             self.wfile.write(bytes(message, "utf8"))
         except Exception as e:
-            print(f"Error handling request: {e}")
-            self.send_error(500, f"Internal server error: {e}")
+            logger.error(f"Error handling request: {e}")
+            try:
+                self.send_error(500, f"Internal server error: {e}")
+            except:
+                pass  # Headers already sent, can't send error response
 
 if __name__ == '__main__':
     server_address = ('0.0.0.0', 8080)
     httpd = HTTPServer(server_address, SimpleHTTPRequestHandler)
-    print(f'Server running on {server_address[0]}:{server_address[1]}')
-    print(f'APP_MESSAGE: {APP_MESSAGE}')
+    logger.info(f'Server running on {server_address[0]}:{server_address[1]}')
+    logger.info(f'APP_MESSAGE: {APP_MESSAGE}')
     httpd.serve_forever()
