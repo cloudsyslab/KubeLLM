@@ -52,21 +52,24 @@ def teardown_port_mismatch_wrong_interface():
         # Check and delete pod
         if check_pod_exists("app=port-mismatch-wrong-interface-app"):
             logger.info("Deleting pod...")
-            subprocess.run(f"kubectl delete -f {test_dir}/port_mismatch_wrong_interface.yaml --grace-period=5",
+            subprocess.run(f"kubectl delete -f {test_dir}/port_mismatch_wrong_interface.yaml",
                           shell=True, check=False)
         else:
             logger.info("Pod not found, skipping")
 
         # Check and delete service
-        if check_service_exists("app-service"):
+        if check_service_exists("port-mismatch-app-service"):
             logger.info("Deleting service...")
-            subprocess.run(f"kubectl delete -f {test_dir}/app_service.yaml --grace-period=5",
+            subprocess.run(f"kubectl delete -f {test_dir}/app_service.yaml",
                           shell=True, check=False)
         else:
             logger.info("Service not found, skipping")
 
-        # Check and delete Docker image
+        # Check and delete Docker image (remove containers first)
         if check_image_exists("kube-port-mismatch-wrong-interface-app"):
+            logger.info("Removing containers using the image...")
+            subprocess.run("docker ps -a -q --filter ancestor=kube-port-mismatch-wrong-interface-app | xargs -r docker rm -f",
+                          shell=True, check=False)
             logger.info("Deleting Docker image...")
             subprocess.run("docker rmi -f kube-port-mismatch-wrong-interface-app",
                           shell=True, check=False)
@@ -84,17 +87,20 @@ def teardown_readiness_missing_dependency():
 
     try:
         # Check and delete pod
-        if check_pod_exists("app=readiness-missing-dep-app"):
+        if check_pod_exists("app=readiness-missing-dependency-app"):
             logger.info("Deleting pod...")
-            subprocess.run(f"kubectl delete -f {test_dir}/readiness_missing_dependency.yaml --grace-period=5",
+            subprocess.run(f"kubectl delete -f {test_dir}/readiness_missing_dependency.yaml",
                           shell=True, check=False)
         else:
             logger.info("Pod not found, skipping")
 
-        # Check and delete Docker image
-        if check_image_exists("kube-readiness-missing-dep-app"):
+        # Check and delete Docker image (remove containers first)
+        if check_image_exists("kube-readiness-missing-dependency-app"):
+            logger.info("Removing containers using the image...")
+            subprocess.run("docker ps -a -q --filter ancestor=kube-readiness-missing-dependency-app | xargs -r docker rm -f",
+                          shell=True, check=False)
             logger.info("Deleting Docker image...")
-            subprocess.run("docker rmi -f kube-readiness-missing-dep-app",
+            subprocess.run("docker rmi -f kube-readiness-missing-dependency-app",
                           shell=True, check=False)
         else:
             logger.info("Docker image not found, skipping")
@@ -112,21 +118,24 @@ def teardown_selector_env_variable():
         # Check and delete pod
         if check_pod_exists("app=selector-env-app"):
             logger.info("Deleting pod...")
-            subprocess.run(f"kubectl delete -f {test_dir}/selector_env_variable.yaml --grace-period=5",
+            subprocess.run(f"kubectl delete -f {test_dir}/selector_env_variable.yaml",
                           shell=True, check=False)
         else:
             logger.info("Pod not found, skipping")
 
         # Check and delete service
-        if check_service_exists("app-service"):
+        if check_service_exists("selector-env-app-service"):
             logger.info("Deleting service...")
-            subprocess.run(f"kubectl delete -f {test_dir}/app_service.yaml --grace-period=5",
+            subprocess.run(f"kubectl delete -f {test_dir}/app_service.yaml",
                           shell=True, check=False)
         else:
             logger.info("Service not found, skipping")
 
-        # Check and delete Docker image
+        # Check and delete Docker image (remove containers first)
         if check_image_exists("kube-selector-env-app"):
+            logger.info("Removing containers using the image...")
+            subprocess.run("docker ps -a -q --filter ancestor=kube-selector-env-app | xargs -r docker rm -f",
+                          shell=True, check=False)
             logger.info("Deleting Docker image...")
             subprocess.run("docker rmi -f kube-selector-env-app",
                           shell=True, check=False)
@@ -146,15 +155,18 @@ def teardown_resource_limits_oom():
         # Check and delete pod
         if check_pod_exists("app=resource-limits-oom-app"):
             logger.info("Deleting pod...")
-            subprocess.run(f"kubectl delete -f {test_dir}/resource_limits_oom.yaml --grace-period=5",
+            subprocess.run(f"kubectl delete -f {test_dir}/resource_limits_oom.yaml",
                           shell=True, check=False)
         else:
             logger.info("Pod not found, skipping")
 
-        # Check and delete Docker image
-        if check_image_exists("kube-resource-limits-app"):
+        # Check and delete Docker image (remove containers first)
+        if check_image_exists("kube-resource-limits-oom-app"):
+            logger.info("Removing containers using the image...")
+            subprocess.run("docker ps -a -q --filter ancestor=kube-resource-limits-oom-app | xargs -r docker rm -f",
+                          shell=True, check=False)
             logger.info("Deleting Docker image...")
-            subprocess.run("docker rmi -f kube-resource-limits-app",
+            subprocess.run("docker rmi -f kube-resource-limits-oom-app",
                           shell=True, check=False)
         else:
             logger.info("Docker image not found, skipping")
