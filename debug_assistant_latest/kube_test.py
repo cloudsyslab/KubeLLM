@@ -9,7 +9,9 @@ import subprocess
 import datetime
 from pathlib import Path
 
-filepath = Path("~").expanduser() / "KubeLLM/debug_assistant_latest/troubleshooting"
+# Use relative path from script location
+SCRIPT_DIR = Path(__file__).parent.absolute()
+filepath = SCRIPT_DIR / "troubleshooting"
 print (filepath)
 
 def backupEnviornment(testEnvName):
@@ -185,7 +187,7 @@ def runSingleTest(testFunc, configFile):
 def appendResultsToLog(testTechnique, testName, model, results):
 
     todaysDate = datetime.date.today()
-    file_path = Path("~").expanduser() / "KubeLLM/debug_assistant_latest/result_logs/result_logs_agents_rag_memory.txt"
+    file_path = SCRIPT_DIR / "result_logs" / "result_logs_agents_rag_memory.txt"
     print (f"Logging into {file_path}")
     # Ensure the parent directory exists
     file_path.parent.mkdir(parents=True, exist_ok=True)
