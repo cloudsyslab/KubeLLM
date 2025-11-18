@@ -117,11 +117,50 @@ def tearDownEnviornment(testEnvName):
         os.remove(f"{filepath}/{testEnvName}/server.py")
         os.remove(f"{filepath}/{testEnvName}/Dockerfile")
 
-        shutil.copyfile(f"{filepath}/{testEnvName}/backup_yaml.yaml", f"{filepath}/{testEnvName}/{testEnvName}.yaml")   
-        shutil.copyfile(f"{filepath}/{testEnvName}/backup_server.py", f"{filepath}/{testEnvName}/server.py")        
-        shutil.copyfile(f"{filepath}/{testEnvName}/backup_Dockerfile", f"{filepath}/{testEnvName}/Dockerfile")        
-        
+        shutil.copyfile(f"{filepath}/{testEnvName}/backup_yaml.yaml", f"{filepath}/{testEnvName}/{testEnvName}.yaml")
+        shutil.copyfile(f"{filepath}/{testEnvName}/backup_server.py", f"{filepath}/{testEnvName}/server.py")
+        shutil.copyfile(f"{filepath}/{testEnvName}/backup_Dockerfile", f"{filepath}/{testEnvName}/Dockerfile")
+
         subprocess.run(f"kubectl delete -f ./troubleshooting/{testEnvName}/{testEnvName}.yaml --grace-period=5", shell=True, check=True)
+
+    # New combined test cases - no backup/restore needed, just cleanup
+    elif testEnvName == "port_mismatch_wrong_interface":
+        # Clean up containers using this image first
+        subprocess.run("docker ps -a -q --filter ancestor=kube-port-mismatch-wrong-interface-app | xargs -r docker rm -f",
+                      shell=True, check=False)
+        # Remove image
+        subprocess.run("docker rmi -f kube-port-mismatch-wrong-interface-app", shell=True, check=False)
+        # Delete k8s resources
+        subprocess.run(f"kubectl delete -f ./troubleshooting/{testEnvName}/{testEnvName}.yaml", shell=True, check=False)
+        subprocess.run(f"kubectl delete -f ./troubleshooting/{testEnvName}/app_service.yaml", shell=True, check=False)
+
+    elif testEnvName == "readiness_missing_dependency":
+        # Clean up containers using this image first
+        subprocess.run("docker ps -a -q --filter ancestor=kube-readiness-missing-dependency-app | xargs -r docker rm -f",
+                      shell=True, check=False)
+        # Remove image
+        subprocess.run("docker rmi -f kube-readiness-missing-dependency-app", shell=True, check=False)
+        # Delete k8s resources
+        subprocess.run(f"kubectl delete -f ./troubleshooting/{testEnvName}/{testEnvName}.yaml", shell=True, check=False)
+
+    elif testEnvName == "selector_env_variable":
+        # Clean up containers using this image first
+        subprocess.run("docker ps -a -q --filter ancestor=kube-selector-env-app | xargs -r docker rm -f",
+                      shell=True, check=False)
+        # Remove image
+        subprocess.run("docker rmi -f kube-selector-env-app", shell=True, check=False)
+        # Delete k8s resources
+        subprocess.run(f"kubectl delete -f ./troubleshooting/{testEnvName}/{testEnvName}.yaml", shell=True, check=False)
+        subprocess.run(f"kubectl delete -f ./troubleshooting/{testEnvName}/app_service.yaml", shell=True, check=False)
+
+    elif testEnvName == "resource_limits_oom":
+        # Clean up containers using this image first
+        subprocess.run("docker ps -a -q --filter ancestor=kube-resource-limits-oom-app | xargs -r docker rm -f",
+                      shell=True, check=False)
+        # Remove image
+        subprocess.run("docker rmi -f kube-resource-limits-oom-app", shell=True, check=False)
+        # Delete k8s resources
+        subprocess.run(f"kubectl delete -f ./troubleshooting/{testEnvName}/{testEnvName}.yaml", shell=True, check=False)
 
 def selectTestFunc(testName):
     """ return the test function based on the test name given """
