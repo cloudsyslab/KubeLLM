@@ -8,90 +8,169 @@ Example: python3 teardown_new_tests.py port_mismatch_wrong_interface
 import subprocess
 import sys
 import os
+import logging
 from pathlib import Path
 
-filepath = Path("~").expanduser() / "KubeLLM/debug_assistant_latest/troubleshooting"
+# Use relative path from script location
+script_dir = Path(__file__).parent.resolve()
+filepath = script_dir / "troubleshooting"
+
+# Setup logging
+logging.basicConfig(level=logging.INFO, format='%(levelname)s: %(message)s')
+logger = logging.getLogger(__name__)
+
+def check_pod_exists(label_selector):
+    """Check if pod with given label exists"""
+    result = subprocess.run(
+        ["kubectl", "get", "pod", "-l", label_selector],
+        capture_output=True, text=True
+    )
+    return result.returncode == 0 and result.stdout.strip() and "No resources found" not in result.stdout
+
+def check_service_exists(service_name):
+    """Check if service exists"""
+    result = subprocess.run(
+        ["kubectl", "get", "service", service_name],
+        capture_output=True, text=True
+    )
+    return result.returncode == 0
+
+def check_image_exists(image_name):
+    """Check if Docker image exists"""
+    result = subprocess.run(
+        ["docker", "images", "-q", image_name],
+        capture_output=True, text=True
+    )
+    return result.returncode == 0 and result.stdout.strip()
 
 def teardown_port_mismatch_wrong_interface():
     """Teardown for port_mismatch_wrong_interface test"""
     test_dir = filepath / "port_mismatch_wrong_interface"
+    logger.info("Starting teardown for port_mismatch_wrong_interface...")
 
     try:
-        # Delete Kubernetes resources
-        subprocess.run(f"kubectl delete -f {test_dir}/port_mismatch_wrong_interface.yaml --grace-period=5",
-                      shell=True, check=False)
-        subprocess.run(f"kubectl delete -f {test_dir}/app_service.yaml --grace-period=5",
-                      shell=True, check=False)
+        # Check and delete pod
+        if check_pod_exists("app=port-mismatch-wrong-interface-app"):
+            logger.info("Deleting pod...")
+            subprocess.run(f"kubectl delete -f {test_dir}/port_mismatch_wrong_interface.yaml --grace-period=5",
+                          shell=True, check=False)
+        else:
+            logger.info("Pod not found, skipping")
 
-        # Delete Docker image
-        subprocess.run("docker rmi -f kube-port-mismatch-wrong-interface-app",
-                      shell=True, check=False)
+        # Check and delete service
+        if check_service_exists("app-service"):
+            logger.info("Deleting service...")
+            subprocess.run(f"kubectl delete -f {test_dir}/app_service.yaml --grace-period=5",
+                          shell=True, check=False)
+        else:
+            logger.info("Service not found, skipping")
 
-        print("✓ Teardown complete for port_mismatch_wrong_interface")
+        # Check and delete Docker image
+        if check_image_exists("kube-port-mismatch-wrong-interface-app"):
+            logger.info("Deleting Docker image...")
+            subprocess.run("docker rmi -f kube-port-mismatch-wrong-interface-app",
+                          shell=True, check=False)
+        else:
+            logger.info("Docker image not found, skipping")
+
+        logger.info("✓ Teardown complete for port_mismatch_wrong_interface")
     except Exception as e:
-        print(f"Error during teardown: {e}")
+        logger.error(f"Error during teardown: {e}")
 
 def teardown_readiness_missing_dependency():
     """Teardown for readiness_missing_dependency test"""
     test_dir = filepath / "readiness_missing_dependency"
+    logger.info("Starting teardown for readiness_missing_dependency...")
 
     try:
-        # Delete Kubernetes resources
-        subprocess.run(f"kubectl delete -f {test_dir}/readiness_missing_dependency.yaml --grace-period=5",
-                      shell=True, check=False)
+        # Check and delete pod
+        if check_pod_exists("app=readiness-missing-dep-app"):
+            logger.info("Deleting pod...")
+            subprocess.run(f"kubectl delete -f {test_dir}/readiness_missing_dependency.yaml --grace-period=5",
+                          shell=True, check=False)
+        else:
+            logger.info("Pod not found, skipping")
 
-        # Delete Docker image
-        subprocess.run("docker rmi -f kube-readiness-missing-dep-app",
-                      shell=True, check=False)
+        # Check and delete Docker image
+        if check_image_exists("kube-readiness-missing-dep-app"):
+            logger.info("Deleting Docker image...")
+            subprocess.run("docker rmi -f kube-readiness-missing-dep-app",
+                          shell=True, check=False)
+        else:
+            logger.info("Docker image not found, skipping")
 
-        print("✓ Teardown complete for readiness_missing_dependency")
+        logger.info("✓ Teardown complete for readiness_missing_dependency")
     except Exception as e:
-        print(f"Error during teardown: {e}")
+        logger.error(f"Error during teardown: {e}")
 
 def teardown_selector_env_variable():
     """Teardown for selector_env_variable test"""
     test_dir = filepath / "selector_env_variable"
+    logger.info("Starting teardown for selector_env_variable...")
 
     try:
-        # Delete Kubernetes resources
-        subprocess.run(f"kubectl delete -f {test_dir}/selector_env_variable.yaml --grace-period=5",
-                      shell=True, check=False)
-        subprocess.run(f"kubectl delete -f {test_dir}/app_service.yaml --grace-period=5",
-                      shell=True, check=False)
+        # Check and delete pod
+        if check_pod_exists("app=selector-env-app"):
+            logger.info("Deleting pod...")
+            subprocess.run(f"kubectl delete -f {test_dir}/selector_env_variable.yaml --grace-period=5",
+                          shell=True, check=False)
+        else:
+            logger.info("Pod not found, skipping")
 
-        # Delete Docker image
-        subprocess.run("docker rmi -f kube-selector-env-app",
-                      shell=True, check=False)
+        # Check and delete service
+        if check_service_exists("app-service"):
+            logger.info("Deleting service...")
+            subprocess.run(f"kubectl delete -f {test_dir}/app_service.yaml --grace-period=5",
+                          shell=True, check=False)
+        else:
+            logger.info("Service not found, skipping")
 
-        print("✓ Teardown complete for selector_env_variable")
+        # Check and delete Docker image
+        if check_image_exists("kube-selector-env-app"):
+            logger.info("Deleting Docker image...")
+            subprocess.run("docker rmi -f kube-selector-env-app",
+                          shell=True, check=False)
+        else:
+            logger.info("Docker image not found, skipping")
+
+        logger.info("✓ Teardown complete for selector_env_variable")
     except Exception as e:
-        print(f"Error during teardown: {e}")
+        logger.error(f"Error during teardown: {e}")
 
 def teardown_resource_limits_oom():
     """Teardown for resource_limits_oom test"""
     test_dir = filepath / "resource_limits_oom"
+    logger.info("Starting teardown for resource_limits_oom...")
 
     try:
-        # Delete Kubernetes resources
-        subprocess.run(f"kubectl delete -f {test_dir}/resource_limits_oom.yaml --grace-period=5",
-                      shell=True, check=False)
+        # Check and delete pod
+        if check_pod_exists("app=resource-limits-oom-app"):
+            logger.info("Deleting pod...")
+            subprocess.run(f"kubectl delete -f {test_dir}/resource_limits_oom.yaml --grace-period=5",
+                          shell=True, check=False)
+        else:
+            logger.info("Pod not found, skipping")
 
-        # Delete Docker image
-        subprocess.run("docker rmi -f kube-resource-limits-app",
-                      shell=True, check=False)
+        # Check and delete Docker image
+        if check_image_exists("kube-resource-limits-app"):
+            logger.info("Deleting Docker image...")
+            subprocess.run("docker rmi -f kube-resource-limits-app",
+                          shell=True, check=False)
+        else:
+            logger.info("Docker image not found, skipping")
 
-        print("✓ Teardown complete for resource_limits_oom")
+        logger.info("✓ Teardown complete for resource_limits_oom")
     except Exception as e:
-        print(f"Error during teardown: {e}")
+        logger.error(f"Error during teardown: {e}")
 
 def teardown_all():
     """Teardown all new test cases"""
-    print("Tearing down all new test cases...")
+    logger.info("Tearing down all new test cases...")
     teardown_port_mismatch_wrong_interface()
     teardown_readiness_missing_dependency()
     teardown_selector_env_variable()
     teardown_resource_limits_oom()
-    print("\n✓ All teardowns complete")
+    logger.info("\n✓ All teardowns complete")
 
 if __name__ == "__main__":
     if len(sys.argv) < 2:
