@@ -7,11 +7,15 @@ APP_MESSAGE = os.environ['APP_MESSAGE']  # Will raise KeyError if not set
 
 class SimpleHTTPRequestHandler(BaseHTTPRequestHandler):
     def do_GET(self):
-        self.send_response(200)
-        self.send_header('Content-type', 'text/html')
-        self.end_headers()
-        message = f"{APP_MESSAGE} (from env var)"
-        self.wfile.write(bytes(message, "utf8"))
+        try:
+            self.send_response(200)
+            self.send_header('Content-type', 'text/html')
+            self.end_headers()
+            message = f"{APP_MESSAGE} (from env var)"
+            self.wfile.write(bytes(message, "utf8"))
+        except Exception as e:
+            print(f"Error handling request: {e}")
+            self.send_error(500, f"Internal server error: {e}")
 
 if __name__ == '__main__':
     server_address = ('0.0.0.0', 8080)
