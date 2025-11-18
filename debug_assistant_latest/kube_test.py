@@ -12,7 +12,15 @@ from pathlib import Path
 # Use relative path from script location
 SCRIPT_DIR = Path(__file__).parent.absolute()
 filepath = SCRIPT_DIR / "troubleshooting"
-print (filepath)
+
+# Validate that troubleshooting directory exists
+if not filepath.exists():
+    raise FileNotFoundError(
+        f"Troubleshooting directory not found: {filepath}\n"
+        f"Expected structure: <repo-root>/debug_assistant_latest/troubleshooting/"
+    )
+
+print(f"Troubleshooting directory: {filepath}")
 
 def backupEnviornment(testEnvName):
     if testEnvName == "wrong_interface":
