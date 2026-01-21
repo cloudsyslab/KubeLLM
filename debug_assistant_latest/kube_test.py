@@ -62,6 +62,17 @@ def tearDownEnviornment(testEnvName):
         shutil.copyfile(f"{filepath}/{testEnvName}/backup_app_service.yaml", f"{filepath}/{testEnvName}/app_service.yaml")     
         subprocess.run(f"kubectl delete -f ./troubleshooting/{testEnvName}/{testEnvName}.yaml --grace-period=5", shell=True, check=True)
         subprocess.run(f"kubectl delete -f ./troubleshooting/{testEnvName}/app_service.yaml", shell=True, check=True)
+    elif testEnvName == "wrong_port":
+        subprocess.run("docker rmi -f kube-wrong-port-app", shell=True, check=True)
+
+        os.remove(f"{filepath}/{testEnvName}/{testEnvName}.yaml")
+        os.remove(f"{filepath}/{testEnvName}/server.py")
+        os.remove(f"{filepath}/{testEnvName}/Dockerfile")
+
+        shutil.copyfile(f"{filepath}/{testEnvName}/backup_yaml.yaml", f"{filepath}/{testEnvName}/{testEnvName}.yaml")
+        shutil.copyfile(f"{filepath}/{testEnvName}/backup_server.py", f"{filepath}/{testEnvName}/server.py")
+        shutil.copyfile(f"{filepath}/{testEnvName}/backup_Dockerfile", f"{filepath}/{testEnvName}/Dockerfile")
+        subprocess.run(f"kubectl delete -f ./troubleshooting/{testEnvName}/{testEnvName}.yaml --grace-period=5", shell=True, check=True)
     elif testEnvName == "readiness_failure":
         os.remove(f"{filepath}/{testEnvName}/{testEnvName}.yaml")
         shutil.copyfile(f"{filepath}/{testEnvName}/backup_yaml.yaml", f"{filepath}/{testEnvName}/{testEnvName}.yaml")        
@@ -170,6 +181,25 @@ def tearDownEnviornment(testEnvName):
         # Remove image
         subprocess.run("docker rmi -f kube-resource-limits-oom-app", shell=True, check=False)
         # Delete k8s resources
+        subprocess.run(f"kubectl delete -f ./troubleshooting/{testEnvName}/{testEnvName}.yaml", shell=True, check=False)
+    elif testEnvName == "correct_app":
+        subprocess.run(f"kubectl delete -f ./troubleshooting/{testEnvName}/correct_app.yaml", shell=True, check=False)
+        subprocess.run(f"kubectl delete -f ./troubleshooting/{testEnvName}/app_service.yaml", shell=True, check=False)
+    elif testEnvName == "no_pod_ip":
+        subprocess.run(f"kubectl delete -f ./troubleshooting/{testEnvName}/correct_app.yaml", shell=True, check=False)
+        subprocess.run(f"kubectl delete -f ./troubleshooting/{testEnvName}/app_service.yaml", shell=True, check=False)
+    elif testEnvName == "volume_mount":
+        subprocess.run("docker ps -a -q --filter ancestor=marioutsa/kube-volume-mount-app | xargs -r docker rm -f",
+                      shell=True, check=False)
+        subprocess.run("docker rmi -f marioutsa/kube-volume-mount-app", shell=True, check=False)
+
+        os.remove(f"{filepath}/{testEnvName}/{testEnvName}.yaml")
+        os.remove(f"{filepath}/{testEnvName}/server.py")
+        os.remove(f"{filepath}/{testEnvName}/Dockerfile")
+
+        shutil.copyfile(f"{filepath}/{testEnvName}/backup_yaml.yaml", f"{filepath}/{testEnvName}/{testEnvName}.yaml")
+        shutil.copyfile(f"{filepath}/{testEnvName}/backup_server.py", f"{filepath}/{testEnvName}/server.py")
+        shutil.copyfile(f"{filepath}/{testEnvName}/backup_Dockerfile", f"{filepath}/{testEnvName}/Dockerfile")
         subprocess.run(f"kubectl delete -f ./troubleshooting/{testEnvName}/{testEnvName}.yaml", shell=True, check=False)
 
 def selectTestFunc(testName):
