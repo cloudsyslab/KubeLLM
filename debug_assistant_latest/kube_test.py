@@ -63,7 +63,8 @@ def tearDownEnviornment(testEnvName):
         subprocess.run(f"kubectl delete -f ./troubleshooting/{testEnvName}/{testEnvName}.yaml --grace-period=5", shell=True, check=True)
         subprocess.run(f"kubectl delete -f ./troubleshooting/{testEnvName}/app_service.yaml", shell=True, check=True)
     elif testEnvName == "wrong_port":
-        subprocess.run("docker rmi -f kube-wrong-port-app", shell=True, check=True)
+        subprocess.run("docker rmi -f marioutsa/kube-wrong-port-app", shell=True, check=False)
+        subprocess.run("docker rmi -f kube-wrong-port-app", shell=True, check=False)
 
         os.remove(f"{filepath}/{testEnvName}/{testEnvName}.yaml")
         os.remove(f"{filepath}/{testEnvName}/server.py")
