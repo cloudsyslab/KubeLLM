@@ -43,6 +43,11 @@ KubeLLM is an LLM-based multi-agent framework that manages your kubernetes clust
 
 ---
 
+### Test Cases 📁
+All troubleshooting test cases are located in `debug_assistant_latest/troubleshooting/`. This is the canonical location for test case definitions.
+
+---
+
 ### Instructions to Run Tests 📝
 Simply navigate to the kube_test.py file in debug_assistant_latest folder and run the test.
 ```
