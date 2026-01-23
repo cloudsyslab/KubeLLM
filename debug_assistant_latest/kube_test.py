@@ -22,186 +22,163 @@ if not filepath.exists():
 
 print(f"Troubleshooting directory: {filepath}")
 
+# Data-driven teardown configuration for all test cases
+# Each entry defines: docker images to remove, files to restore from backup, k8s manifests to delete
+TEARDOWN_CONFIG = {
+    "correct_app": {
+        "docker_images": [],
+        "restore_files": [],
+        "k8s_manifests": ["correct_app.yaml", "app_service.yaml"],
+    },
+    "no_pod_ip": {
+        "docker_images": [],
+        "restore_files": [],
+        "k8s_manifests": ["correct_app.yaml", "app_service.yaml"],
+    },
+    "wrong_interface": {
+        "docker_images": ["kube-wrong-interface-app"],
+        "restore_files": ["yaml", "server.py", "Dockerfile", "app_service.yaml"],
+        "k8s_manifests": ["{name}.yaml", "app_service.yaml"],
+    },
+    "wrong_port": {
+        "docker_images": ["kube-wrong-port-app", "marioutsa/kube-wrong-port-app"],
+        "restore_files": ["yaml", "server.py", "Dockerfile"],
+        "k8s_manifests": ["{name}.yaml"],
+    },
+    "readiness_failure": {
+        "docker_images": [],
+        "restore_files": ["yaml"],
+        "k8s_manifests": ["{name}.yaml"],
+    },
+    "liveness_probe": {
+        "docker_images": [],
+        "restore_files": ["yaml"],
+        "k8s_manifests": ["{name}.yaml"],
+    },
+    "missing_dependency": {
+        "docker_images": [],
+        "restore_files": ["yaml", "server.py", "Dockerfile"],
+        "k8s_manifests": ["{name}.yaml"],
+    },
+    "port_mismatch": {
+        "docker_images": ["kube-port-mismatch-app"],
+        "restore_files": ["yaml", "server.py", "Dockerfile", "app_service.yaml"],
+        "k8s_manifests": ["{name}.yaml", "app_service.yaml"],
+    },
+    "incorrect_selector": {
+        "docker_images": ["kube-incorrect-selector-app"],
+        "restore_files": ["yaml", "server.py", "Dockerfile", "app_service.yaml"],
+        "k8s_manifests": ["{name}.yaml", "app_service.yaml"],
+    },
+    "environment_variable": {
+        "docker_images": ["kube-env-missing-app"],
+        "restore_files": ["yaml", "server.py", "Dockerfile"],
+        "k8s_manifests": ["{name}.yaml"],
+    },
+    "port_mismatch_wrong_interface": {
+        "docker_images": ["kube-port-mismatch-wrong-interface-app"],
+        "restore_files": [],
+        "k8s_manifests": ["{name}.yaml", "app_service.yaml"],
+    },
+    "readiness_missing_dependency": {
+        "docker_images": ["kube-readiness-missing-dependency-app"],
+        "restore_files": [],
+        "k8s_manifests": ["{name}.yaml"],
+    },
+    "selector_env_variable": {
+        "docker_images": ["kube-selector-env-app"],
+        "restore_files": [],
+        "k8s_manifests": ["{name}.yaml", "app_service.yaml"],
+    },
+    "resource_limits_oom": {
+        "docker_images": ["kube-resource-limits-oom-app"],
+        "restore_files": [],
+        "k8s_manifests": ["{name}.yaml"],
+    },
+    "volume_mount": {
+        "docker_images": ["marioutsa/kube-volume-mount-app"],
+        "restore_files": ["yaml", "server.py", "Dockerfile"],
+        "k8s_manifests": ["{name}.yaml"],
+    },
+}
+
+
 def backupEnviornment(testEnvName):
-    if testEnvName == "wrong_interface":
-        shutil.copyfile(f"{filepath}/{testEnvName}/server.py", f"{filepath}/{testEnvName}/backup_server.py")
-        shutil.copyfile(f"{filepath}/{testEnvName}/{testEnvName}.yaml", f"{filepath}/{testEnvName}/backup_yaml.yaml")
-        shutil.copyfile(f"{filepath}/{testEnvName}/Dockerfile", f"{filepath}/{testEnvName}/backup_Dockerfile")
-    elif testEnvName == "readiness_failure":
-        shutil.copyfile(f"{filepath}/{testEnvName}/{testEnvName}.yaml", f"{filepath}/{testEnvName}/backup_yaml.yaml")
-    elif testEnvName == "wrong_port":
-        shutil.copyfile(f"{filepath}/{testEnvName}/server.py", f"{filepath}/{testEnvName}/backup_server.py")
-        shutil.copyfile(f"{filepath}/{testEnvName}/{testEnvName}.yaml", f"{filepath}/{testEnvName}/backup_yaml.yaml")
-        shutil.copyfile(f"{filepath}/{testEnvName}/Dockerfile", f"{filepath}/{testEnvName}/backup_Dockerfile")
-    elif testEnvName == "port_mismatch":
-        shutil.copyfile(f"{filepath}/{testEnvName}/server.py", f"{filepath}/{testEnvName}/backup_server.py")
-        shutil.copyfile(f"{filepath}/{testEnvName}/{testEnvName}.yaml", f"{filepath}/{testEnvName}/backup_yaml.yaml")
-        shutil.copyfile(f"{filepath}/{testEnvName}/Dockerfile", f"{filepath}/{testEnvName}/backup_Dockerfile")
-        shutil.copyfile(f"{filepath}/{testEnvName}/app_service.yaml", f"{filepath}/{testEnvName}/backup_app_service.yaml")
-    elif testEnvName == "incorrect_selector":
-        shutil.copyfile(f"{filepath}/{testEnvName}/server.py", f"{filepath}/{testEnvName}/backup_server.py")
-        shutil.copyfile(f"{filepath}/{testEnvName}/{testEnvName}.yaml", f"{filepath}/{testEnvName}/backup_yaml.yaml")
-        shutil.copyfile(f"{filepath}/{testEnvName}/Dockerfile", f"{filepath}/{testEnvName}/backup_Dockerfile")
-        shutil.copyfile(f"{filepath}/{testEnvName}/app_service.yaml", f"{filepath}/{testEnvName}/backup_app_service.yaml")
+    """Create backups of files that may be modified during testing."""
+    config = TEARDOWN_CONFIG.get(testEnvName)
+    if not config:
+        return
+
+    test_dir = filepath / testEnvName
+    for file_type in config["restore_files"]:
+        if file_type == "yaml":
+            src = test_dir / f"{testEnvName}.yaml"
+            dst = test_dir / "backup_yaml.yaml"
+        elif file_type == "app_service.yaml":
+            src = test_dir / "app_service.yaml"
+            dst = test_dir / "backup_app_service.yaml"
+        else:
+            src = test_dir / file_type
+            dst = test_dir / f"backup_{file_type.replace('.', '_')}"
+            # Handle common file names
+            if file_type == "server.py":
+                dst = test_dir / "backup_server.py"
+            elif file_type == "Dockerfile":
+                dst = test_dir / "backup_Dockerfile"
+
+        if src.exists():
+            shutil.copyfile(src, dst)
 
 
 def tearDownEnviornment(testEnvName):
-    if testEnvName == "wrong_interface":
-        #subprocess.run("docker stop wrong_interface_app", shell=True, check=True)
-        #subprocess.run("docker rm wrong_interface_app", shell=True, check=True)
-        subprocess.run("docker rmi -f kube-wrong-interface-app", shell=True, check=True)
+    """Teardown a test environment: remove docker images, restore files, delete k8s resources."""
+    config = TEARDOWN_CONFIG.get(testEnvName)
+    if not config:
+        raise ValueError(f"Unknown test case: {testEnvName}")
 
-        os.remove(f"{filepath}/{testEnvName}/{testEnvName}.yaml")
-        os.remove(f"{filepath}/{testEnvName}/server.py")
-        os.remove(f"{filepath}/{testEnvName}/Dockerfile")
-        os.remove(f"{filepath}/{testEnvName}/app_service.yaml")
-        
-        shutil.copyfile(f"{filepath}/{testEnvName}/backup_yaml.yaml", f"{filepath}/{testEnvName}/{testEnvName}.yaml")        
-        shutil.copyfile(f"{filepath}/{testEnvName}/backup_server.py", f"{filepath}/{testEnvName}/server.py")        
-        shutil.copyfile(f"{filepath}/{testEnvName}/backup_Dockerfile", f"{filepath}/{testEnvName}/Dockerfile")        
-        shutil.copyfile(f"{filepath}/{testEnvName}/backup_app_service.yaml", f"{filepath}/{testEnvName}/app_service.yaml")     
-        subprocess.run(f"kubectl delete -f ./troubleshooting/{testEnvName}/{testEnvName}.yaml --grace-period=5", shell=True, check=True)
-        subprocess.run(f"kubectl delete -f ./troubleshooting/{testEnvName}/app_service.yaml", shell=True, check=True)
-    elif testEnvName == "wrong_port":
-        subprocess.run("docker rmi -f marioutsa/kube-wrong-port-app", shell=True, check=False)
-        subprocess.run("docker rmi -f kube-wrong-port-app", shell=True, check=False)
+    test_dir = filepath / testEnvName
 
-        os.remove(f"{filepath}/{testEnvName}/{testEnvName}.yaml")
-        os.remove(f"{filepath}/{testEnvName}/server.py")
-        os.remove(f"{filepath}/{testEnvName}/Dockerfile")
+    # 1. Docker cleanup - remove images (and any containers using them)
+    for image in config["docker_images"]:
+        # First remove any containers using this image
+        subprocess.run(
+            f"docker ps -a -q --filter ancestor={image} | xargs -r docker rm -f",
+            shell=True, check=False
+        )
+        # Then remove the image
+        subprocess.run(f"docker rmi -f {image}", shell=True, check=False)
 
-        shutil.copyfile(f"{filepath}/{testEnvName}/backup_yaml.yaml", f"{filepath}/{testEnvName}/{testEnvName}.yaml")
-        shutil.copyfile(f"{filepath}/{testEnvName}/backup_server.py", f"{filepath}/{testEnvName}/server.py")
-        shutil.copyfile(f"{filepath}/{testEnvName}/backup_Dockerfile", f"{filepath}/{testEnvName}/Dockerfile")
-        subprocess.run(f"kubectl delete -f ./troubleshooting/{testEnvName}/{testEnvName}.yaml --grace-period=5", shell=True, check=True)
-    elif testEnvName == "readiness_failure":
-        os.remove(f"{filepath}/{testEnvName}/{testEnvName}.yaml")
-        shutil.copyfile(f"{filepath}/{testEnvName}/backup_yaml.yaml", f"{filepath}/{testEnvName}/{testEnvName}.yaml")        
-        subprocess.run(f"kubectl delete -f ./troubleshooting/{testEnvName}/{testEnvName}.yaml --grace-period=5", shell=True, check=True)
-    elif testEnvName == "liveness_probe":
-        os.remove(f"{filepath}/{testEnvName}/{testEnvName}.yaml")
-        shutil.copyfile(f"{filepath}/{testEnvName}/backup_yaml.yaml", f"{filepath}/{testEnvName}/{testEnvName}.yaml")        
-        subprocess.run(f"kubectl delete -f ./troubleshooting/{testEnvName}/{testEnvName}.yaml --grace-period=5", shell=True, check=True)
-    elif testEnvName == "missing_dependency":
-        os.remove(f"{filepath}/{testEnvName}/{testEnvName}.yaml")
-        os.remove(f"{filepath}/{testEnvName}/server.py")
-        os.remove(f"{filepath}/{testEnvName}/Dockerfile")
- 
-        shutil.copyfile(f"{filepath}/{testEnvName}/backup_yaml.yaml", f"{filepath}/{testEnvName}/{testEnvName}.yaml")        
-        shutil.copyfile(f"{filepath}/{testEnvName}/backup_server.py", f"{filepath}/{testEnvName}/server.py")        
-        shutil.copyfile(f"{filepath}/{testEnvName}/backup_Dockerfile", f"{filepath}/{testEnvName}/Dockerfile")        
-        subprocess.run(f"kubectl delete -f ./troubleshooting/{testEnvName}/{testEnvName}.yaml --grace-period=5", shell=True, check=True)
-    elif testEnvName == "port_mismatch":
-        #subprocess.run("docker stop port_mismatch_app", shell=True, check=True)
-        #subprocess.run("docker rm port_mismatch_app", shell=True, check=True)
-        subprocess.run("docker rmi -f kube-port-mismatch-app", shell=True, check=True)
+    # 2. File restoration - restore from backups
+    for file_type in config["restore_files"]:
+        if file_type == "yaml":
+            src = test_dir / "backup_yaml.yaml"
+            dst = test_dir / f"{testEnvName}.yaml"
+        elif file_type == "app_service.yaml":
+            src = test_dir / "backup_app_service.yaml"
+            dst = test_dir / "app_service.yaml"
+        elif file_type == "server.py":
+            src = test_dir / "backup_server.py"
+            dst = test_dir / "server.py"
+        elif file_type == "Dockerfile":
+            src = test_dir / "backup_Dockerfile"
+            dst = test_dir / "Dockerfile"
+        else:
+            continue
 
-        os.remove(f"{filepath}/{testEnvName}/{testEnvName}.yaml")
-        os.remove(f"{filepath}/{testEnvName}/app_service.yaml")
-        os.remove(f"{filepath}/{testEnvName}/server.py")
-        os.remove(f"{filepath}/{testEnvName}/Dockerfile")
+        # Remove modified file and restore from backup
+        if dst.exists():
+            os.remove(dst)
+        if src.exists():
+            shutil.copyfile(src, dst)
 
-        shutil.copyfile(f"{filepath}/{testEnvName}/backup_yaml.yaml", f"{filepath}/{testEnvName}/{testEnvName}.yaml")   
-        shutil.copyfile(f"{filepath}/{testEnvName}/backup_app_service.yaml", f"{filepath}/{testEnvName}/app_service.yaml")     
-        shutil.copyfile(f"{filepath}/{testEnvName}/backup_server.py", f"{filepath}/{testEnvName}/server.py")        
-        shutil.copyfile(f"{filepath}/{testEnvName}/backup_Dockerfile", f"{filepath}/{testEnvName}/Dockerfile")        
-
-        subprocess.run(f"kubectl delete -f ./troubleshooting/{testEnvName}/{testEnvName}.yaml --grace-period=5", shell=True, check=True)
-        subprocess.run(f"kubectl delete -f ./troubleshooting/{testEnvName}/app_service.yaml", shell=True, check=True)
-
-    elif testEnvName == "incorrect_selector":
-
-        #subprocess.run("docker stop incorrect_selector_app", shell=True, check=True)
-        #subprocess.run("docker rm incorrect_selector_app", shell=True, check=True)
-        #subprocess.run("docker rmi -f marioutsa/kube-incorrect-selector-app", shell=True, check=True)
-        subprocess.run("docker rmi -f kube-incorrect-selector-app", shell=True, check=True)
-
-        os.remove(f"{filepath}/{testEnvName}/{testEnvName}.yaml")
-        os.remove(f"{filepath}/{testEnvName}/app_service.yaml")
-        os.remove(f"{filepath}/{testEnvName}/server.py")
-        os.remove(f"{filepath}/{testEnvName}/Dockerfile")
-
-        shutil.copyfile(f"{filepath}/{testEnvName}/backup_yaml.yaml", f"{filepath}/{testEnvName}/{testEnvName}.yaml")   
-        shutil.copyfile(f"{filepath}/{testEnvName}/backup_app_service.yaml", f"{filepath}/{testEnvName}/app_service.yaml")     
-        shutil.copyfile(f"{filepath}/{testEnvName}/backup_server.py", f"{filepath}/{testEnvName}/server.py")        
-        shutil.copyfile(f"{filepath}/{testEnvName}/backup_Dockerfile", f"{filepath}/{testEnvName}/Dockerfile")        
-
-        subprocess.run(f"kubectl delete -f ./troubleshooting/{testEnvName}/{testEnvName}.yaml --grace-period=5", shell=True, check=True)
-        subprocess.run(f"kubectl delete -f ./troubleshooting/{testEnvName}/app_service.yaml", shell=True, check=True)
-    
-    elif testEnvName == "environment_variable":
-        #subprocess.run("docker stop environment_variable_app", shell=True, check=True)
-        #subprocess.run("docker rm environment_variable_app", shell=True, check=True)
-        #subprocess.run("docker rmi -f marioutsa/kube-env-missing-app", shell=True, check=True)
-        subprocess.run("docker rmi -f kube-env-missing-app", shell=True, check=True)
-
-        os.remove(f"{filepath}/{testEnvName}/{testEnvName}.yaml")
-        os.remove(f"{filepath}/{testEnvName}/server.py")
-        os.remove(f"{filepath}/{testEnvName}/Dockerfile")
-
-        shutil.copyfile(f"{filepath}/{testEnvName}/backup_yaml.yaml", f"{filepath}/{testEnvName}/{testEnvName}.yaml")
-        shutil.copyfile(f"{filepath}/{testEnvName}/backup_server.py", f"{filepath}/{testEnvName}/server.py")
-        shutil.copyfile(f"{filepath}/{testEnvName}/backup_Dockerfile", f"{filepath}/{testEnvName}/Dockerfile")
-
-        subprocess.run(f"kubectl delete -f ./troubleshooting/{testEnvName}/{testEnvName}.yaml --grace-period=5", shell=True, check=True)
-
-    # New combined test cases - no backup/restore needed, just cleanup
-    elif testEnvName == "port_mismatch_wrong_interface":
-        # Clean up containers using this image first
-        subprocess.run("docker ps -a -q --filter ancestor=kube-port-mismatch-wrong-interface-app | xargs -r docker rm -f",
-                      shell=True, check=False)
-        # Remove image
-        subprocess.run("docker rmi -f kube-port-mismatch-wrong-interface-app", shell=True, check=False)
-        # Delete k8s resources
-        subprocess.run(f"kubectl delete -f ./troubleshooting/{testEnvName}/{testEnvName}.yaml", shell=True, check=False)
-        subprocess.run(f"kubectl delete -f ./troubleshooting/{testEnvName}/app_service.yaml", shell=True, check=False)
-
-    elif testEnvName == "readiness_missing_dependency":
-        # Clean up containers using this image first
-        subprocess.run("docker ps -a -q --filter ancestor=kube-readiness-missing-dependency-app | xargs -r docker rm -f",
-                      shell=True, check=False)
-        # Remove image
-        subprocess.run("docker rmi -f kube-readiness-missing-dependency-app", shell=True, check=False)
-        # Delete k8s resources
-        subprocess.run(f"kubectl delete -f ./troubleshooting/{testEnvName}/{testEnvName}.yaml", shell=True, check=False)
-
-    elif testEnvName == "selector_env_variable":
-        # Clean up containers using this image first
-        subprocess.run("docker ps -a -q --filter ancestor=kube-selector-env-app | xargs -r docker rm -f",
-                      shell=True, check=False)
-        # Remove image
-        subprocess.run("docker rmi -f kube-selector-env-app", shell=True, check=False)
-        # Delete k8s resources
-        subprocess.run(f"kubectl delete -f ./troubleshooting/{testEnvName}/{testEnvName}.yaml", shell=True, check=False)
-        subprocess.run(f"kubectl delete -f ./troubleshooting/{testEnvName}/app_service.yaml", shell=True, check=False)
-
-    elif testEnvName == "resource_limits_oom":
-        # Clean up containers using this image first
-        subprocess.run("docker ps -a -q --filter ancestor=kube-resource-limits-oom-app | xargs -r docker rm -f",
-                      shell=True, check=False)
-        # Remove image
-        subprocess.run("docker rmi -f kube-resource-limits-oom-app", shell=True, check=False)
-        # Delete k8s resources
-        subprocess.run(f"kubectl delete -f ./troubleshooting/{testEnvName}/{testEnvName}.yaml", shell=True, check=False)
-    elif testEnvName == "correct_app":
-        subprocess.run(f"kubectl delete -f ./troubleshooting/{testEnvName}/correct_app.yaml", shell=True, check=False)
-        subprocess.run(f"kubectl delete -f ./troubleshooting/{testEnvName}/app_service.yaml", shell=True, check=False)
-    elif testEnvName == "no_pod_ip":
-        subprocess.run(f"kubectl delete -f ./troubleshooting/{testEnvName}/correct_app.yaml", shell=True, check=False)
-        subprocess.run(f"kubectl delete -f ./troubleshooting/{testEnvName}/app_service.yaml", shell=True, check=False)
-    elif testEnvName == "volume_mount":
-        subprocess.run("docker ps -a -q --filter ancestor=marioutsa/kube-volume-mount-app | xargs -r docker rm -f",
-                      shell=True, check=False)
-        subprocess.run("docker rmi -f marioutsa/kube-volume-mount-app", shell=True, check=False)
-
-        os.remove(f"{filepath}/{testEnvName}/{testEnvName}.yaml")
-        os.remove(f"{filepath}/{testEnvName}/server.py")
-        os.remove(f"{filepath}/{testEnvName}/Dockerfile")
-
-        shutil.copyfile(f"{filepath}/{testEnvName}/backup_yaml.yaml", f"{filepath}/{testEnvName}/{testEnvName}.yaml")
-        shutil.copyfile(f"{filepath}/{testEnvName}/backup_server.py", f"{filepath}/{testEnvName}/server.py")
-        shutil.copyfile(f"{filepath}/{testEnvName}/backup_Dockerfile", f"{filepath}/{testEnvName}/Dockerfile")
-        subprocess.run(f"kubectl delete -f ./troubleshooting/{testEnvName}/{testEnvName}.yaml", shell=True, check=False)
+    # 3. K8s resource deletion
+    for manifest in config["k8s_manifests"]:
+        # Replace {name} placeholder with test case name
+        manifest_file = manifest.format(name=testEnvName)
+        subprocess.run(
+            f"kubectl delete -f ./troubleshooting/{testEnvName}/{manifest_file} --grace-period=5",
+            shell=True, check=False
+        )
 
 def selectTestFunc(testName):
     """ return the test function based on the test name given """
