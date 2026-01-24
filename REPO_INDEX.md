@@ -13,7 +13,7 @@ One-line summaries for clutter detection and repo understanding.
 | `requirements.txt` | Python dependencies for the project |
 | `config_template.json` | Template for test case configuration |
 | `README.md` | Project documentation and setup instructions |
-| `CLAUDE.md` | Claude Code guidance for this repo |
+| `CLAUDE.md` | Claude Code guidance (includes lab-only enumeration constraint) |
 | `LICENSE` | License file |
 | `.mcp.json` | MCP server configuration for Claude Code |
 | `.gitignore` | Git ignore patterns |
@@ -22,12 +22,16 @@ One-line summaries for clutter detection and repo understanding.
 
 | File | Summary |
 |------|---------|
+| `runner.py` | **New** CLI for parallel test execution with config overrides |
 | `main.py` | Entry point: allStepsAtOnce, stepByStep, singleAgent execution |
 | `agents.py` | Agent implementations (AgentAPI, AgentDebug, AgentVerification, etc.) |
 | `kube_test.py` | Test harness with TEARDOWN_CONFIG and tearDownEnviornment() |
 | `teardownenv.py` | CLI wrapper for teardown operations |
 | `metrics_db.py` | SQLite metrics tracking (tokens, cost, duration per agent) |
 | `utils.py` | Config reading, file traversal, LLM identification |
+| `test_discovery.py` | **New** Test case enumeration and pattern matching |
+| `config_merge.py` | **New** Config override merge logic |
+| `report.py` | **New** Summary and aggregate report generation |
 | `get_stats.py` | Print metrics statistics from database |
 | `parse_logs.py` | Parse debug logs for analysis |
 | `pgVector.py` | pgvector database utilities |
