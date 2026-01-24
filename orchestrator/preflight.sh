@@ -35,7 +35,7 @@ import sys, re, pathlib
 
 src, dst, ip = sys.argv[1:]
 text = pathlib.Path(src).read_text()
-text, n = re.subn(r'^(\s*server:\s*https://)[^:]+(:8443\s*)$', r'\1'+ip+r'\2', text, flags=re.M)
+text, n = re.subn(r'^(\s*server:\s*https://)[^:]+(:8443\s*)$', r'\g<1>'+ip+r'\g<2>', text, flags=re.M)
 if n == 0:
     raise SystemExit("server line not found in kubeconfig")
 pathlib.Path(dst).write_text(text)
