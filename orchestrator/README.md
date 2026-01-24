@@ -95,7 +95,7 @@ Guidance for task specs:
 ## Scripts
 
 - `orchestrator/preflight.sh`
-  - Refreshes kubeconfig from the minikube-in-docker container (`vindhya2`), patches the API server IP, and verifies `/readyz` plus `kubectl get nodes`.
+  - Refreshes kubeconfig from the minikube-in-docker container (`minh`), patches the API server IP, and verifies `/readyz` plus `kubectl get nodes`.
   - Use this first on the lab server before any apply or test.
 
 - `orchestrator/context_pack.py`
@@ -253,7 +253,7 @@ bash orchestrator/preflight.sh
 
 2) Run a test case (example):
 ```bash
-kubectl --kubeconfig ~/.kube/vindhya2-admin.conf apply -f debug_assistant_latest/troubleshooting/<CASE>/<FILE>.yaml
+kubectl --kubeconfig ~/.kube/minh-admin.conf apply -f debug_assistant_latest/troubleshooting/<CASE>/<FILE>.yaml
 ```
 
 3) Collect diagnostics:
@@ -263,7 +263,7 @@ bash orchestrator/collect_diagnostics.sh
 
 4) Rollback:
 ```bash
-kubectl --kubeconfig ~/.kube/vindhya2-admin.conf delete -f debug_assistant_latest/troubleshooting/<CASE>/<FILE>.yaml --ignore-not-found
+kubectl --kubeconfig ~/.kube/minh-admin.conf delete -f debug_assistant_latest/troubleshooting/<CASE>/<FILE>.yaml --ignore-not-found
 ```
 
 5) Teardown all test cases:
