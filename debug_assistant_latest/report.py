@@ -29,7 +29,7 @@ class TestSummary:
     test_name: str
     technique: str
     status: str  # PASS, FAIL, ERROR, TIMEOUT
-    verified: bool
+    verified: Optional[bool]  # True/False if verification ran, None if no verification
     debug_self_report: Optional[bool] = None
     started_at: str = ""
     finished_at: str = ""
@@ -124,8 +124,9 @@ class AggregateReport:
     failed: int = 0
     errors: int = 0
     verified: int = 0
+    tests_with_verification: int = 0  # Tests that had verification agent run
     pass_rate: float = 0.0
-    verified_rate: float = 0.0
+    verified_rate: float = 0.0  # verified / tests_with_verification
     total_duration_s: float = 0.0
     wall_clock_s: float = 0.0
     total_cost: float = 0.0
@@ -159,7 +160,10 @@ def generate_aggregate_report(
     passed = sum(1 for s in summaries if s.status == "PASS")
     failed = sum(1 for s in summaries if s.status == "FAIL")
     errors = sum(1 for s in summaries if s.status in ("ERROR", "TIMEOUT"))
-    verified_count = sum(1 for s in summaries if s.verified)
+    # Only count verified=True; verified=None means no verification was run
+    verified_count = sum(1 for s in summaries if s.verified is True)
+    # Count tests that actually had verification (verified is not None)
+    tests_with_verification = sum(1 for s in summaries if s.verified is not None)
 
     total_duration = sum(s.duration_s for s in summaries)
 
@@ -201,8 +205,9 @@ def generate_aggregate_report(
         failed=failed,
         errors=errors,
         verified=verified_count,
+        tests_with_verification=tests_with_verification,
         pass_rate=round(passed / total * 100, 1) if total > 0 else 0.0,
-        verified_rate=round(verified_count / total * 100, 1) if total > 0 else 0.0,
+        verified_rate=round(verified_count / tests_with_verification * 100, 1) if tests_with_verification > 0 else 0.0,
         total_duration_s=round(total_duration, 2),
         wall_clock_s=round(wall_clock_s, 2),
         total_cost=round(total_cost, 4),
@@ -268,7 +273,10 @@ def print_console_summary(report: AggregateReport, output_dir: Path) -> None:
     print("=" * 80)
     print()
     print(f"Tests: {report.total_tests} total | {report.passed} passed | {report.failed} failed | {report.errors} error")
-    print(f"Verified: {report.verified}/{report.total_tests} ({report.verified_rate}%)")
+    if report.tests_with_verification > 0:
+        print(f"Verified: {report.verified}/{report.tests_with_verification} ({report.verified_rate}%)")
+    else:
+        print(f"Verified: N/A (no verification agent ran)")
     print(f"Duration: {report.total_duration_s}s (wall: {report.wall_clock_s}s)")
 
     if report.total_cost > 0:
