@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-CONTAINER="vindhya2"
-KUBECONFIG_PATH="${HOME}/.kube/vindhya2-admin.conf"
+CONTAINER="minh"
+KUBECONFIG_PATH="${HOME}/.kube/minh-admin.conf"
 
 fail() {
   echo "preflight: $*" >&2
