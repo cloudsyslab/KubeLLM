@@ -251,22 +251,52 @@ Deliverables:
 bash orchestrator/preflight.sh
 ```
 
-2) Run a test case (example):
+2) Run tests using runner.py (recommended):
+```bash
+# List available tests
+python3 debug_assistant_latest/runner.py --list
+
+# Run single test
+python3 debug_assistant_latest/runner.py wrong_port
+
+# Run single test with model override
+python3 debug_assistant_latest/runner.py wrong_port --debug-model gpt-4o
+
+# Run pattern with parallelism
+python3 debug_assistant_latest/runner.py --run-many "port_*" --jobs 4
+
+# Run all tests with 8 workers
+python3 debug_assistant_latest/runner.py --run-many all --jobs 8
+
+# Dry run
+python3 debug_assistant_latest/runner.py --run-many "wrong_*" --dry-run
+```
+
+3) Manual test case application (alternative):
 ```bash
 kubectl --kubeconfig ~/.kube/minh-admin.conf apply -f debug_assistant_latest/troubleshooting/<CASE>/<FILE>.yaml
 ```
 
-3) Collect diagnostics:
+4) Collect diagnostics:
 ```bash
 bash orchestrator/collect_diagnostics.sh
 ```
 
-4) Rollback:
+5) View test results:
+```bash
+# Latest run aggregate
+cat .local/test_runs/*/aggregate.json | jq
+
+# Per-test summary
+cat .local/test_runs/*/<CASE>/summary.json | jq
+```
+
+6) Rollback:
 ```bash
 kubectl --kubeconfig ~/.kube/minh-admin.conf delete -f debug_assistant_latest/troubleshooting/<CASE>/<FILE>.yaml --ignore-not-found
 ```
 
-5) Teardown all test cases:
+7) Teardown all test cases:
 ```bash
 cd debug_assistant_latest && python3 teardownenv.py all
 ```
