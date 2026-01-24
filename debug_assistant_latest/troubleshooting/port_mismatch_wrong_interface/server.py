@@ -22,8 +22,8 @@ class SimpleHTTPRequestHandler(BaseHTTPRequestHandler):
                 pass  # Headers already sent, can't send error response
 
 if __name__ == '__main__':
-    # BUG 1: Binding to localhost instead of 0.0.0.0
-    server_address = ('localhost', 8765)  # Should be ('0.0.0.0', 8765)
+    # BUG 1: Binding to 0.0.0.0 instead of 0.0.0.0
+    server_address = ('0.0.0.0', 8765)  # Should be ('0.0.0.0', 8765)
     httpd = HTTPServer(server_address, SimpleHTTPRequestHandler)
     logger.info(f'Server running on {server_address[0]}:{server_address[1]}')
     httpd.serve_forever()

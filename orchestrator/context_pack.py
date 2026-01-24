@@ -6,23 +6,22 @@ from datetime import datetime
 
 DEFAULT_INCLUDE = [
     "README.md",
+    "CLAUDE.md",
     "requirements.txt",
     "assistant.py",
     "api_server.py",
     "streamlit_assistant.py",
-    "test_runner.sh",
     "start_apiserver.sh",
     ".gitignore",
-    "config.json",
     "config_template.json",
-    "current.yaml",
-    "current_deployment.yaml",
-    "current_pod.yaml",
-    "updated_deployment.yaml",
-    "wrong_interface.yaml",
-    "test.yaml",
+    "debug_assistant_latest/main.py",
+    "debug_assistant_latest/agents.py",
+    "debug_assistant_latest/kube_test.py",
+    "debug_assistant_latest/teardownenv.py",
     "debug_assistant_latest/troubleshooting/**/*.yaml",
     "debug_assistant_latest/troubleshooting/**/readme.txt",
+    "debug_assistant_latest/troubleshooting/**/config_step.json",
+    "orchestrator/*.sh",
 ]
 
 def expand_globs(root: pathlib.Path, patterns):

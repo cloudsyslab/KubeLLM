@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-KUBECONFIG_PATH="${KUBECONFIG_PATH:-$HOME/.kube/vindhya2-admin.conf}"
+KUBECONFIG_PATH="${KUBECONFIG_PATH:-$HOME/.kube/minh-admin.conf}"
 OUT_DIR=".local/diagnostics/$(date -u +%Y%m%d_%H%M%S)"
 mkdir -p "$OUT_DIR"
 
