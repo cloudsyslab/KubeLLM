@@ -1,0 +1,338 @@
+"""
+Report generation module for KubeLLM test runner.
+
+Provides functions to generate per-test summary.json files and
+aggregate reports across test runs.
+"""
+
+import json
+from dataclasses import dataclass, field, asdict
+from datetime import datetime
+from pathlib import Path
+from typing import Dict, List, Optional, Any
+
+
+@dataclass
+class AgentMetrics:
+    """Metrics for a single agent execution."""
+    model: str = ""
+    input_tokens: int = 0
+    output_tokens: int = 0
+    total_tokens: int = 0
+    cost: float = 0.0
+    duration_s: float = 0.0
+
+
+@dataclass
+class TestSummary:
+    """Summary of a single test execution."""
+    test_name: str
+    technique: str
+    status: str  # PASS, FAIL, ERROR, TIMEOUT
+    verified: bool
+    debug_self_report: Optional[bool] = None
+    started_at: str = ""
+    finished_at: str = ""
+    duration_s: float = 0.0
+    error_message: Optional[str] = None
+    metrics: Dict[str, AgentMetrics] = field(default_factory=dict)
+    config_overrides_applied: Dict[str, Any] = field(default_factory=dict)
+
+    def to_dict(self) -> dict:
+        """Convert to dictionary for JSON serialization."""
+        result = {
+            "test_name": self.test_name,
+            "technique": self.technique,
+            "status": self.status,
+            "verified": self.verified,
+            "debug_self_report": self.debug_self_report,
+            "started_at": self.started_at,
+            "finished_at": self.finished_at,
+            "duration_s": round(self.duration_s, 3),
+            "error_message": self.error_message,
+            "metrics": {},
+            "config_overrides_applied": self.config_overrides_applied,
+        }
+        for agent_name, agent_metrics in self.metrics.items():
+            if isinstance(agent_metrics, AgentMetrics):
+                result["metrics"][agent_name] = asdict(agent_metrics)
+            else:
+                result["metrics"][agent_name] = agent_metrics
+        return result
+
+
+def save_test_summary(summary: TestSummary, output_dir: Path) -> Path:
+    """
+    Save a test summary to summary.json in the test output directory.
+
+    Args:
+        summary: TestSummary object
+        output_dir: Directory to save summary.json (usually .local/test_runs/<ts>/<test_name>/)
+
+    Returns:
+        Path to saved summary.json
+    """
+    output_dir.mkdir(parents=True, exist_ok=True)
+    summary_path = output_dir / "summary.json"
+
+    with open(summary_path, "w") as f:
+        json.dump(summary.to_dict(), f, indent=2)
+
+    return summary_path
+
+
+def load_test_summary(summary_path: Path) -> TestSummary:
+    """
+    Load a test summary from a summary.json file.
+
+    Args:
+        summary_path: Path to summary.json
+
+    Returns:
+        TestSummary object
+    """
+    with open(summary_path) as f:
+        data = json.load(f)
+
+    metrics = {}
+    for agent_name, agent_data in data.get("metrics", {}).items():
+        metrics[agent_name] = AgentMetrics(**agent_data)
+
+    return TestSummary(
+        test_name=data["test_name"],
+        technique=data["technique"],
+        status=data["status"],
+        verified=data["verified"],
+        debug_self_report=data.get("debug_self_report"),
+        started_at=data.get("started_at", ""),
+        finished_at=data.get("finished_at", ""),
+        duration_s=data.get("duration_s", 0.0),
+        error_message=data.get("error_message"),
+        metrics=metrics,
+        config_overrides_applied=data.get("config_overrides_applied", {}),
+    )
+
+
+@dataclass
+class AggregateReport:
+    """Aggregate report across a test run."""
+    run_id: str
+    generated_at: str
+    run_config: Dict[str, Any]
+    total_tests: int = 0
+    passed: int = 0
+    failed: int = 0
+    errors: int = 0
+    verified: int = 0
+    pass_rate: float = 0.0
+    verified_rate: float = 0.0
+    total_duration_s: float = 0.0
+    wall_clock_s: float = 0.0
+    total_cost: float = 0.0
+    total_debug_cost: float = 0.0
+    total_verification_cost: float = 0.0
+    total_tokens: int = 0
+    tests: List[Dict] = field(default_factory=list)
+    failed_tests: List[str] = field(default_factory=list)
+    error_tests: List[str] = field(default_factory=list)
+
+
+def generate_aggregate_report(
+    summaries: List[TestSummary],
+    run_config: Dict[str, Any],
+    run_id: str,
+    wall_clock_s: float = 0.0,
+) -> AggregateReport:
+    """
+    Generate an aggregate report from individual test summaries.
+
+    Args:
+        summaries: List of TestSummary objects
+        run_config: Configuration used for the run (CLI args, overrides)
+        run_id: Unique identifier for the run (usually timestamp)
+        wall_clock_s: Total wall-clock time for the run
+
+    Returns:
+        AggregateReport object
+    """
+    total = len(summaries)
+    passed = sum(1 for s in summaries if s.status == "PASS")
+    failed = sum(1 for s in summaries if s.status == "FAIL")
+    errors = sum(1 for s in summaries if s.status in ("ERROR", "TIMEOUT"))
+    verified_count = sum(1 for s in summaries if s.verified)
+
+    total_duration = sum(s.duration_s for s in summaries)
+
+    total_cost = 0.0
+    debug_cost = 0.0
+    verification_cost = 0.0
+    total_tokens = 0
+
+    for s in summaries:
+        for agent_name, m in s.metrics.items():
+            if isinstance(m, AgentMetrics):
+                total_cost += m.cost
+                total_tokens += m.total_tokens
+                if "debug" in agent_name:
+                    debug_cost += m.cost
+                elif "verification" in agent_name:
+                    verification_cost += m.cost
+
+    tests = [
+        {
+            "name": s.test_name,
+            "status": s.status,
+            "verified": s.verified,
+            "duration_s": round(s.duration_s, 2),
+            "error": s.error_message,
+        }
+        for s in sorted(summaries, key=lambda x: x.test_name)
+    ]
+
+    failed_tests = [s.test_name for s in summaries if s.status == "FAIL"]
+    error_tests = [s.test_name for s in summaries if s.status in ("ERROR", "TIMEOUT")]
+
+    return AggregateReport(
+        run_id=run_id,
+        generated_at=datetime.now().isoformat(),
+        run_config=run_config,
+        total_tests=total,
+        passed=passed,
+        failed=failed,
+        errors=errors,
+        verified=verified_count,
+        pass_rate=round(passed / total * 100, 1) if total > 0 else 0.0,
+        verified_rate=round(verified_count / total * 100, 1) if total > 0 else 0.0,
+        total_duration_s=round(total_duration, 2),
+        wall_clock_s=round(wall_clock_s, 2),
+        total_cost=round(total_cost, 4),
+        total_debug_cost=round(debug_cost, 4),
+        total_verification_cost=round(verification_cost, 4),
+        total_tokens=total_tokens,
+        tests=tests,
+        failed_tests=failed_tests,
+        error_tests=error_tests,
+    )
+
+
+def save_aggregate_report(report: AggregateReport, output_dir: Path) -> Path:
+    """
+    Save aggregate report to aggregate.json.
+
+    Args:
+        report: AggregateReport object
+        output_dir: Run output directory
+
+    Returns:
+        Path to saved aggregate.json
+    """
+    output_dir.mkdir(parents=True, exist_ok=True)
+    aggregate_path = output_dir / "aggregate.json"
+
+    with open(aggregate_path, "w") as f:
+        json.dump(asdict(report), f, indent=2)
+
+    return aggregate_path
+
+
+def save_run_config(run_config: Dict[str, Any], output_dir: Path) -> Path:
+    """
+    Save run configuration for audit trail.
+
+    Args:
+        run_config: Dictionary of CLI arguments and settings
+        output_dir: Run output directory
+
+    Returns:
+        Path to saved run_config.json
+    """
+    output_dir.mkdir(parents=True, exist_ok=True)
+    config_path = output_dir / "run_config.json"
+
+    with open(config_path, "w") as f:
+        json.dump(run_config, f, indent=2)
+
+    return config_path
+
+
+def print_console_summary(report: AggregateReport, output_dir: Path) -> None:
+    """
+    Print a human-readable summary to the console.
+
+    Args:
+        report: AggregateReport object
+        output_dir: Run output directory
+    """
+    print("\n" + "=" * 80)
+    print(f"TEST RUN COMPLETE: {report.run_id}")
+    print("=" * 80)
+    print()
+    print(f"Tests: {report.total_tests} total | {report.passed} passed | {report.failed} failed | {report.errors} error")
+    print(f"Verified: {report.verified}/{report.total_tests} ({report.verified_rate}%)")
+    print(f"Duration: {report.total_duration_s}s (wall: {report.wall_clock_s}s)")
+
+    if report.total_cost > 0:
+        print(f"Cost: ${report.total_cost:.4f} (debug: ${report.total_debug_cost:.4f}, verification: ${report.total_verification_cost:.4f})")
+
+    if report.failed_tests:
+        print()
+        print("FAILED:")
+        for name in report.failed_tests:
+            print(f"  - {name}")
+
+    if report.error_tests:
+        print()
+        print("ERRORS:")
+        for name in report.error_tests:
+            print(f"  - {name}")
+
+    print()
+    print(f"Logs: {output_dir}/")
+    print(f"Report: {output_dir}/aggregate.json")
+    print()
+
+
+def collect_summaries_from_run(run_dir: Path) -> List[TestSummary]:
+    """
+    Collect all test summaries from a run directory.
+
+    Args:
+        run_dir: Path to run directory (e.g., .local/test_runs/2026-01-24T15-30-00/)
+
+    Returns:
+        List of TestSummary objects
+    """
+    summaries = []
+    for test_dir in run_dir.iterdir():
+        if test_dir.is_dir():
+            summary_path = test_dir / "summary.json"
+            if summary_path.exists():
+                summaries.append(load_test_summary(summary_path))
+    return summaries
+
+
+if __name__ == "__main__":
+    # Quick test of the module
+    summary = TestSummary(
+        test_name="wrong_port",
+        technique="allStepsAtOnce",
+        status="PASS",
+        verified=True,
+        debug_self_report=True,
+        started_at="2026-01-24T15:30:00.000Z",
+        finished_at="2026-01-24T15:32:45.123Z",
+        duration_s=165.123,
+        metrics={
+            "debug_agent": AgentMetrics(
+                model="gpt-5-nano",
+                input_tokens=12500,
+                output_tokens=3200,
+                total_tokens=15700,
+                cost=0.0134,
+                duration_s=45.2,
+            )
+        },
+    )
+
+    print("Test Summary:")
+    print(json.dumps(summary.to_dict(), indent=2))
