@@ -1,37 +1,27 @@
 import kube_test
 import sys
 
-TESTS = [
-    "correct_app",
-    "incorrect_selector",
-    "no_pod_ip",
-    "port_mismatch",
-    "readiness_failure",
-    "wrong_interface",
-    "wrong_port",
-    "environment_variable",
-    "liveness_probe",
-    "missing_dependency",
-    "port_mismatch_wrong_interface",
-    "readiness_missing_dependency",
-    "selector_env_variable",
-    "resource_limits_oom",
-    "volume_mount",
-]
+# Use TEARDOWN_CONFIG as single source of truth for valid test cases
+TESTS = list(kube_test.TEARDOWN_CONFIG.keys())
 
 if len(sys.argv) < 2:
-    print("provide a testcase name or 'all'")
+    print("Usage: python teardownenv.py <testcase_name|all>")
+    print(f"Available: {', '.join(TESTS)}")
     sys.exit(1)
 
 test_env_name = sys.argv[1].lower()
 
+
 def teardown_one(name: str) -> int:
     try:
+        print(f"Tearing down: {name}")
         kube_test.tearDownEnviornment(name)
+        print(f"  Done: {name}")
         return 0
     except Exception as exc:
-        print(f"teardown failed for {name}: {exc}")
+        print(f"  Failed: {name} - {exc}")
         return 1
+
 
 if test_env_name == "all":
     exit_code = 0
@@ -40,7 +30,8 @@ if test_env_name == "all":
     sys.exit(exit_code)
 
 if test_env_name not in TESTS:
-    print("provide a valid testcase name or 'all'")
+    print(f"Unknown test case: {test_env_name}")
+    print(f"Available: {', '.join(TESTS)}")
     sys.exit(1)
 
 sys.exit(teardown_one(test_env_name))
