@@ -124,15 +124,21 @@ def run_single_test_in_process(
             try:
                 if technique == "allStepsAtOnce":
                     result = allStepsAtOnce(configFile=str(config_path), config_overrides=overrides)
+                    # allStepsAtOnce runs verification agent, so verified = result
+                    success = result is True
+                    verified = result is True
                 elif technique == "stepByStep":
                     result = stepByStep(configFile=str(config_path), config_overrides=overrides)
+                    # stepByStep has no verification agent
+                    success = result is True
+                    verified = None  # No verification performed
                 elif technique == "singleAgent":
                     result = singleAgentApproach(configFile=str(config_path), config_overrides=overrides)
+                    # singleAgent has no verification agent
+                    success = result is True
+                    verified = None  # No verification performed
                 else:
                     raise ValueError(f"Unknown technique: {technique}")
-
-                success = result is True
-                verified = result is True
             finally:
                 sys.stdout, sys.stderr = old_stdout, old_stderr
 
@@ -225,15 +231,21 @@ def run_single_test(
             try:
                 if technique == "allStepsAtOnce":
                     result = allStepsAtOnce(configFile=str(config_path), config_overrides=overrides)
+                    # allStepsAtOnce runs verification agent, so verified = result
+                    success = result is True
+                    verified = result is True
                 elif technique == "stepByStep":
                     result = stepByStep(configFile=str(config_path), config_overrides=overrides)
+                    # stepByStep has no verification agent
+                    success = result is True
+                    verified = None  # No verification performed
                 elif technique == "singleAgent":
                     result = singleAgentApproach(configFile=str(config_path), config_overrides=overrides)
+                    # singleAgent has no verification agent
+                    success = result is True
+                    verified = None  # No verification performed
                 else:
                     raise ValueError(f"Unknown technique: {technique}")
-
-                success = result is True
-                verified = result is True
             finally:
                 sys.stdout, sys.stderr = old_stdout, old_stderr
 
