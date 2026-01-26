@@ -307,6 +307,9 @@ def run_tests_parallel(
     else:
         # Parallel execution
         print(f"Running {len(test_names)} tests with {max_workers} workers...")
+        print("WARNING: Parallel execution may cause K8s resource conflicts if tests")
+        print("         use overlapping resource names. Use --jobs 1 for isolation.")
+        print()
 
         with ProcessPoolExecutor(max_workers=max_workers) as executor:
             futures = {
@@ -528,7 +531,8 @@ Examples:
         "--jobs", "-j",
         type=int,
         default=1,
-        help="Number of parallel test workers (default: 1)",
+        help="Number of parallel test workers (default: 1). "
+             "WARNING: >1 may cause K8s resource conflicts between tests",
     )
 
     # Config overrides
