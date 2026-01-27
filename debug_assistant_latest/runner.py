@@ -104,6 +104,7 @@ def run_single_test_in_process(
     debug_self_report = None
     error = None
     metrics = {}
+    test_started = False  # Guard: only teardown if test actually started
 
     try:
         # Import here to avoid circular imports in worker process
@@ -111,15 +112,24 @@ def run_single_test_in_process(
         from config_merge import load_config_with_overrides, save_effective_config
         from kube_test import backupEnviornment, tearDownEnviornment
 
-        # Opt-in backup before run
+        # Opt-in backup before run (fail fast if backup fails)
         if backup_before_run:
-            backupEnviornment(test_name)
+            try:
+                backupEnviornment(test_name)
+            except Exception as backup_err:
+                error = f"Backup failed: {backup_err}"
+                with open(stderr_log, "a") as f:
+                    f.write(f"BACKUP FAILED:\n{traceback.format_exc()}")
+                raise  # Abort test - don't proceed without backup
 
         config_path = get_config_path(test_name)
         config = load_config_with_overrides(config_path, overrides)
 
         # Save effective config for audit trail
         save_effective_config(config, log_dir / "config_effective.json")
+
+        # Mark test as started (backup succeeded, about to run test)
+        test_started = True
 
         # Capture stdout/stderr
         with open(stdout_log, "w") as stdout_f, open(stderr_log, "w") as stderr_f:
@@ -150,17 +160,21 @@ def run_single_test_in_process(
                 sys.stdout, sys.stderr = old_stdout, old_stderr
 
     except Exception as e:
-        error = str(e)
+        if error is None:  # Don't overwrite backup error
+            error = str(e)
         with open(stderr_log, "a") as f:
             f.write(f"\n\nEXCEPTION:\n{traceback.format_exc()}")
 
-    # Opt-in teardown after run (with warning on failure)
-    if teardown_after_run:
+    # Opt-in teardown after run (only if test started; log warnings to stderr.log)
+    if teardown_after_run and test_started:
         try:
             from kube_test import tearDownEnviornment
             tearDownEnviornment(test_name)
         except Exception as teardown_err:
-            print(f"[WARNING] Teardown failed for {test_name}: {teardown_err}", file=sys.stderr)
+            # Route warning to per-test stderr.log
+            with open(stderr_log, "a") as f:
+                f.write(f"\n\n[WARNING] Teardown failed for {test_name}: {teardown_err}\n")
+                f.write(traceback.format_exc())
 
     duration = time.perf_counter() - start_time
     finished_at = datetime.now().isoformat()
@@ -207,6 +221,7 @@ def run_single_test(
     debug_self_report = None
     error = None
     metrics = {}
+    test_started = False  # Guard: only teardown if test actually started
 
     if verbose:
         print(f"[RUNNING] {test_name} ({technique})")
@@ -215,17 +230,28 @@ def run_single_test(
         from main import allStepsAtOnce, stepByStep, singleAgentApproach
         from kube_test import backupEnviornment, tearDownEnviornment
 
-        # Opt-in backup before run
+        # Opt-in backup before run (fail fast if backup fails)
         if backup_before_run:
             if verbose:
                 print(f"[BACKUP] Creating backup for {test_name}")
-            backupEnviornment(test_name)
+            try:
+                backupEnviornment(test_name)
+            except Exception as backup_err:
+                error = f"Backup failed: {backup_err}"
+                if verbose:
+                    print(f"[ERROR] Backup failed for {test_name}: {backup_err}")
+                with open(stderr_log, "a") as f:
+                    f.write(f"BACKUP FAILED:\n{traceback.format_exc()}")
+                raise  # Abort test - don't proceed without backup
 
         config_path = get_config_path(test_name)
         config = load_config_with_overrides(config_path, overrides)
 
         # Save effective config for audit trail
         save_effective_config(config, log_dir / "config_effective.json")
+
+        # Mark test as started (backup succeeded, about to run test)
+        test_started = True
 
         # For single test, we tee output to both console and file
         # Open log files for writing
@@ -274,21 +300,27 @@ def run_single_test(
                 sys.stdout, sys.stderr = old_stdout, old_stderr
 
     except Exception as e:
-        error = str(e)
+        if error is None:  # Don't overwrite backup error
+            error = str(e)
         if verbose:
             print(f"[ERROR] {test_name}: {error}")
         with open(stderr_log, "a") as f:
             f.write(f"\n\nEXCEPTION:\n{traceback.format_exc()}")
 
-    # Opt-in teardown after run (with warning on failure)
-    if teardown_after_run:
+    # Opt-in teardown after run (only if test started; log warnings to stderr.log)
+    if teardown_after_run and test_started:
         try:
-            from kube_test import tearDownEnviornment
             if verbose:
                 print(f"[TEARDOWN] Running teardown for {test_name}")
             tearDownEnviornment(test_name)
         except Exception as teardown_err:
-            print(f"[WARNING] Teardown failed for {test_name}: {teardown_err}", file=sys.stderr)
+            warning_msg = f"[WARNING] Teardown failed for {test_name}: {teardown_err}"
+            if verbose:
+                print(warning_msg, file=sys.stderr)
+            # Also log to per-test stderr.log
+            with open(stderr_log, "a") as f:
+                f.write(f"\n\n{warning_msg}\n")
+                f.write(traceback.format_exc())
 
     duration = time.perf_counter() - start_time
     finished_at = datetime.now().isoformat()
@@ -449,6 +481,11 @@ def cmd_run_single(args, test_name: str):
     backup_before_run = args.backup_before_run
     teardown_after_run = args.teardown_after_run
 
+    # Enforce backup when teardown is enabled (prevent file loss)
+    if teardown_after_run and not backup_before_run:
+        backup_before_run = True
+        print("[WARNING] --teardown-after-run requires backup; auto-enabling --backup-before-run")
+
     # Save run config
     run_config = {
         "test_names": [test_name],
@@ -511,6 +548,11 @@ def cmd_run_many(args):
     jobs = args.jobs
     backup_before_run = args.backup_before_run
     teardown_after_run = args.teardown_after_run
+
+    # Enforce backup when teardown is enabled (prevent file loss)
+    if teardown_after_run and not backup_before_run:
+        backup_before_run = True
+        print("[WARNING] --teardown-after-run requires backup; auto-enabling --backup-before-run")
 
     # Save run config
     run_config = {
