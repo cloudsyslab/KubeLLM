@@ -84,6 +84,7 @@ def run_single_test_in_process(
     output_dir: Path,
     backup_before_run: bool = False,
     teardown_after_run: bool = False,
+    forced_backup_warning: bool = False,
 ) -> TestResult:
     """
     Run a single test case - worker function for parallel execution.
@@ -95,6 +96,11 @@ def run_single_test_in_process(
 
     stdout_log = log_dir / "stdout.log"
     stderr_log = log_dir / "stderr.log"
+
+    # Log forced backup warning to per-test stderr.log
+    if forced_backup_warning:
+        with open(stderr_log, "a") as f:
+            f.write("[WARNING] --teardown-after-run requires backup; auto-enabling --backup-before-run\n")
 
     started_at = datetime.now().isoformat()
     start_time = time.perf_counter()
@@ -168,7 +174,6 @@ def run_single_test_in_process(
     # Opt-in teardown after run (only if test started; log warnings to stderr.log)
     if teardown_after_run and test_started:
         try:
-            from kube_test import tearDownEnviornment
             tearDownEnviornment(test_name)
         except Exception as teardown_err:
             # Route warning to per-test stderr.log
@@ -201,6 +206,7 @@ def run_single_test(
     verbose: bool = True,
     backup_before_run: bool = False,
     teardown_after_run: bool = False,
+    forced_backup_warning: bool = False,
 ) -> TestResult:
     """
     Run a single test case (in the current process).
@@ -212,6 +218,11 @@ def run_single_test(
 
     stdout_log = log_dir / "stdout.log"
     stderr_log = log_dir / "stderr.log"
+
+    # Log forced backup warning to per-test stderr.log
+    if forced_backup_warning:
+        with open(stderr_log, "a") as f:
+            f.write("[WARNING] --teardown-after-run requires backup; auto-enabling --backup-before-run\n")
 
     started_at = datetime.now().isoformat()
     start_time = time.perf_counter()
@@ -351,6 +362,7 @@ def run_tests_parallel(
     max_workers: int = 1,
     backup_before_run: bool = False,
     teardown_after_run: bool = False,
+    forced_backup_warning: bool = False,
 ) -> List[TestResult]:
     """
     Run multiple tests in parallel using ProcessPoolExecutor.
@@ -363,6 +375,7 @@ def run_tests_parallel(
         max_workers: Maximum number of parallel workers
         backup_before_run: Create backup of test files before running
         teardown_after_run: Run teardown after test completes
+        forced_backup_warning: If True, log warning about auto-enabled backup
 
     Returns:
         List of TestResult objects
@@ -377,6 +390,7 @@ def run_tests_parallel(
                 verbose=True,
                 backup_before_run=backup_before_run,
                 teardown_after_run=teardown_after_run,
+                forced_backup_warning=forced_backup_warning,
             )
             results.append(result)
     else:
@@ -396,6 +410,7 @@ def run_tests_parallel(
                     output_dir,
                     backup_before_run,
                     teardown_after_run,
+                    forced_backup_warning,
                 ): name
                 for name in test_names
             }
@@ -480,10 +495,12 @@ def cmd_run_single(args, test_name: str):
     technique = args.technique
     backup_before_run = args.backup_before_run
     teardown_after_run = args.teardown_after_run
+    forced_backup_warning = False
 
     # Enforce backup when teardown is enabled (prevent file loss)
     if teardown_after_run and not backup_before_run:
         backup_before_run = True
+        forced_backup_warning = True
         print("[WARNING] --teardown-after-run requires backup; auto-enabling --backup-before-run")
 
     # Save run config
@@ -507,6 +524,7 @@ def cmd_run_single(args, test_name: str):
         verbose=True,
         backup_before_run=backup_before_run,
         teardown_after_run=teardown_after_run,
+        forced_backup_warning=forced_backup_warning,
     )
     wall_end = time.perf_counter()
 
@@ -548,10 +566,12 @@ def cmd_run_many(args):
     jobs = args.jobs
     backup_before_run = args.backup_before_run
     teardown_after_run = args.teardown_after_run
+    forced_backup_warning = False
 
     # Enforce backup when teardown is enabled (prevent file loss)
     if teardown_after_run and not backup_before_run:
         backup_before_run = True
+        forced_backup_warning = True
         print("[WARNING] --teardown-after-run requires backup; auto-enabling --backup-before-run")
 
     # Save run config
@@ -576,6 +596,7 @@ def cmd_run_many(args):
         matched, technique, overrides, output_dir, jobs,
         backup_before_run=backup_before_run,
         teardown_after_run=teardown_after_run,
+        forced_backup_warning=forced_backup_warning,
     )
     wall_end = time.perf_counter()
 
