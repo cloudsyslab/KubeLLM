@@ -82,6 +82,8 @@ def run_single_test_in_process(
     technique: str,
     overrides: dict,
     output_dir: Path,
+    backup_before_run: bool = False,
+    teardown_after_run: bool = False,
 ) -> TestResult:
     """
     Run a single test case - worker function for parallel execution.
@@ -107,6 +109,11 @@ def run_single_test_in_process(
         # Import here to avoid circular imports in worker process
         from main import allStepsAtOnce, stepByStep, singleAgentApproach
         from config_merge import load_config_with_overrides, save_effective_config
+        from kube_test import backupEnviornment, tearDownEnviornment
+
+        # Opt-in backup before run
+        if backup_before_run:
+            backupEnviornment(test_name)
 
         config_path = get_config_path(test_name)
         config = load_config_with_overrides(config_path, overrides)
@@ -147,6 +154,14 @@ def run_single_test_in_process(
         with open(stderr_log, "a") as f:
             f.write(f"\n\nEXCEPTION:\n{traceback.format_exc()}")
 
+    # Opt-in teardown after run (with warning on failure)
+    if teardown_after_run:
+        try:
+            from kube_test import tearDownEnviornment
+            tearDownEnviornment(test_name)
+        except Exception as teardown_err:
+            print(f"[WARNING] Teardown failed for {test_name}: {teardown_err}", file=sys.stderr)
+
     duration = time.perf_counter() - start_time
     finished_at = datetime.now().isoformat()
 
@@ -170,6 +185,8 @@ def run_single_test(
     overrides: dict,
     output_dir: Path,
     verbose: bool = True,
+    backup_before_run: bool = False,
+    teardown_after_run: bool = False,
 ) -> TestResult:
     """
     Run a single test case (in the current process).
@@ -196,6 +213,13 @@ def run_single_test(
 
     try:
         from main import allStepsAtOnce, stepByStep, singleAgentApproach
+        from kube_test import backupEnviornment, tearDownEnviornment
+
+        # Opt-in backup before run
+        if backup_before_run:
+            if verbose:
+                print(f"[BACKUP] Creating backup for {test_name}")
+            backupEnviornment(test_name)
 
         config_path = get_config_path(test_name)
         config = load_config_with_overrides(config_path, overrides)
@@ -256,6 +280,16 @@ def run_single_test(
         with open(stderr_log, "a") as f:
             f.write(f"\n\nEXCEPTION:\n{traceback.format_exc()}")
 
+    # Opt-in teardown after run (with warning on failure)
+    if teardown_after_run:
+        try:
+            from kube_test import tearDownEnviornment
+            if verbose:
+                print(f"[TEARDOWN] Running teardown for {test_name}")
+            tearDownEnviornment(test_name)
+        except Exception as teardown_err:
+            print(f"[WARNING] Teardown failed for {test_name}: {teardown_err}", file=sys.stderr)
+
     duration = time.perf_counter() - start_time
     finished_at = datetime.now().isoformat()
 
@@ -283,6 +317,8 @@ def run_tests_parallel(
     overrides: dict,
     output_dir: Path,
     max_workers: int = 1,
+    backup_before_run: bool = False,
+    teardown_after_run: bool = False,
 ) -> List[TestResult]:
     """
     Run multiple tests in parallel using ProcessPoolExecutor.
@@ -293,6 +329,8 @@ def run_tests_parallel(
         overrides: Config overrides to apply
         output_dir: Base output directory for this run
         max_workers: Maximum number of parallel workers
+        backup_before_run: Create backup of test files before running
+        teardown_after_run: Run teardown after test completes
 
     Returns:
         List of TestResult objects
@@ -302,7 +340,12 @@ def run_tests_parallel(
     if max_workers == 1:
         # Sequential execution
         for name in test_names:
-            result = run_single_test(name, technique, overrides, output_dir, verbose=True)
+            result = run_single_test(
+                name, technique, overrides, output_dir,
+                verbose=True,
+                backup_before_run=backup_before_run,
+                teardown_after_run=teardown_after_run,
+            )
             results.append(result)
     else:
         # Parallel execution
@@ -319,6 +362,8 @@ def run_tests_parallel(
                     technique,
                     overrides,
                     output_dir,
+                    backup_before_run,
+                    teardown_after_run,
                 ): name
                 for name in test_names
             }
@@ -401,6 +446,8 @@ def cmd_run_single(args, test_name: str):
 
     overrides = build_overrides_from_args(args)
     technique = args.technique
+    backup_before_run = args.backup_before_run
+    teardown_after_run = args.teardown_after_run
 
     # Save run config
     run_config = {
@@ -409,6 +456,8 @@ def cmd_run_single(args, test_name: str):
         "overrides": overrides,
         "jobs": 1,
         "run_id": run_id,
+        "backup_before_run": backup_before_run,
+        "teardown_after_run": teardown_after_run,
     }
     save_run_config(run_config, output_dir)
 
@@ -416,7 +465,12 @@ def cmd_run_single(args, test_name: str):
     print()
 
     wall_start = time.perf_counter()
-    result = run_single_test(test_name, technique, overrides, output_dir, verbose=True)
+    result = run_single_test(
+        test_name, technique, overrides, output_dir,
+        verbose=True,
+        backup_before_run=backup_before_run,
+        teardown_after_run=teardown_after_run,
+    )
     wall_end = time.perf_counter()
 
     # Generate summary
@@ -455,6 +509,8 @@ def cmd_run_many(args):
     overrides = build_overrides_from_args(args)
     technique = args.technique
     jobs = args.jobs
+    backup_before_run = args.backup_before_run
+    teardown_after_run = args.teardown_after_run
 
     # Save run config
     run_config = {
@@ -464,6 +520,8 @@ def cmd_run_many(args):
         "overrides": overrides,
         "jobs": jobs,
         "run_id": run_id,
+        "backup_before_run": backup_before_run,
+        "teardown_after_run": teardown_after_run,
     }
     save_run_config(run_config, output_dir)
 
@@ -472,7 +530,11 @@ def cmd_run_many(args):
     print()
 
     wall_start = time.perf_counter()
-    results = run_tests_parallel(matched, technique, overrides, output_dir, jobs)
+    results = run_tests_parallel(
+        matched, technique, overrides, output_dir, jobs,
+        backup_before_run=backup_before_run,
+        teardown_after_run=teardown_after_run,
+    )
     wall_end = time.perf_counter()
 
     # Generate summaries
@@ -573,6 +635,18 @@ Examples:
         "--verbose", "-v",
         action="store_true",
         help="Verbose output",
+    )
+
+    # Backup/teardown hooks (opt-in)
+    parser.add_argument(
+        "--backup-before-run",
+        action="store_true",
+        help="Create backup of test files before running (opt-in)",
+    )
+    parser.add_argument(
+        "--teardown-after-run",
+        action="store_true",
+        help="Run teardown after test completes (opt-in). Warnings emitted on failure.",
     )
 
     args = parser.parse_args()
