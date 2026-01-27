@@ -51,7 +51,7 @@ def readTheJSONConfigFile(configFile):
 
         # If test-directory is empty, derive it from config file location
         if not parsedConfig.get("test-directory") or parsedConfig.get("test-directory") == "":
-            config_dir = Path(config_file_path).parent.absolute()
+            config_dir = Path(config_file_path).expanduser().resolve().parent
             parsedConfig["test-directory"] = str(config_dir) + "/"
             print(f"DEBUG: Derived test-directory from config location: {parsedConfig['test-directory']}")
 
