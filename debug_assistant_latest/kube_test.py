@@ -175,9 +175,10 @@ def tearDownEnviornment(testEnvName):
     for manifest in config["k8s_manifests"]:
         # Replace {name} placeholder with test case name
         manifest_file = manifest.format(name=testEnvName)
+        manifest_path = SCRIPT_DIR / "troubleshooting" / testEnvName / manifest_file
         subprocess.run(
-            f"kubectl delete -f ./troubleshooting/{testEnvName}/{manifest_file} --grace-period=5",
-            shell=True, check=False
+            ["kubectl", "delete", "-f", str(manifest_path), "--grace-period=5", "--ignore-not-found=true"],
+            check=False
         )
 
 def selectTestFunc(testName):
