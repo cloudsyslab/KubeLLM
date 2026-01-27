@@ -14,6 +14,7 @@ Usage:
 
 import argparse
 import json
+import multiprocessing
 import os
 import sys
 import time
@@ -23,8 +24,12 @@ from contextlib import redirect_stdout, redirect_stderr
 from dataclasses import dataclass
 from datetime import datetime
 from io import StringIO
+from multiprocessing import Process, Queue
 from pathlib import Path
 from typing import Dict, List, Optional, Any, Tuple
+
+# Per-test timeout for parallel execution (seconds)
+PARALLEL_TEST_TIMEOUT = 600
 
 # Script directory - all paths relative to this
 SCRIPT_DIR = Path(__file__).parent.absolute()
@@ -106,7 +111,7 @@ def run_single_test_in_process(
     start_time = time.perf_counter()
 
     success = False
-    verified = False
+    verified = None
     debug_self_report = None
     error = None
     metrics = {}
@@ -228,7 +233,7 @@ def run_single_test(
     start_time = time.perf_counter()
 
     success = False
-    verified = False
+    verified = None
     debug_self_report = None
     error = None
     metrics = {}
@@ -354,6 +359,32 @@ def run_single_test(
     )
 
 
+def _worker_wrapper(
+    result_queue: Queue,
+    test_name: str,
+    technique: str,
+    overrides: dict,
+    output_dir: Path,
+    backup_before_run: bool,
+    teardown_after_run: bool,
+    forced_backup_warning: bool,
+) -> None:
+    """
+    Worker wrapper that runs a test and puts the result in a Queue.
+
+    This allows the parent process to enforce a hard timeout by terminating
+    the worker process if it exceeds the limit.
+    """
+    try:
+        result = run_single_test_in_process(
+            test_name, technique, overrides, output_dir,
+            backup_before_run, teardown_after_run, forced_backup_warning,
+        )
+        result_queue.put(("success", result))
+    except Exception as e:
+        result_queue.put(("error", (test_name, str(e), traceback.format_exc())))
+
+
 def run_tests_parallel(
     test_names: List[str],
     technique: str,
@@ -365,7 +396,7 @@ def run_tests_parallel(
     forced_backup_warning: bool = False,
 ) -> List[TestResult]:
     """
-    Run multiple tests in parallel using ProcessPoolExecutor.
+    Run multiple tests in parallel with hard per-test timeout.
 
     Args:
         test_names: List of test case names to run
@@ -394,50 +425,131 @@ def run_tests_parallel(
             )
             results.append(result)
     else:
-        # Parallel execution
+        # Parallel execution with hard per-test timeout
         print(f"Running {len(test_names)} tests with {max_workers} workers...")
+        print(f"Hard timeout: {PARALLEL_TEST_TIMEOUT}s per test")
         print("WARNING: Parallel execution may cause K8s resource conflicts if tests")
         print("         use overlapping resource names. Use --jobs 1 for isolation.")
         print()
 
-        with ProcessPoolExecutor(max_workers=max_workers) as executor:
-            futures = {
-                executor.submit(
-                    run_single_test_in_process,
-                    name,
-                    technique,
-                    overrides,
-                    output_dir,
-                    backup_before_run,
-                    teardown_after_run,
-                    forced_backup_warning,
-                ): name
-                for name in test_names
-            }
+        # Track active processes: {test_name: (process, queue, start_time)}
+        active: Dict[str, tuple] = {}
+        pending = list(test_names)
 
-            for future in as_completed(futures):
-                test_name = futures[future]
-                try:
-                    result = future.result(timeout=600)  # 10 min per test
-                    results.append(result)
-                    status = "PASS" if result.success else ("ERROR" if result.error else "FAIL")
-                    print(f"[{status}] {test_name} ({result.duration_s:.1f}s)")
-                except Exception as e:
-                    print(f"[ERROR] {test_name}: Worker exception: {e}")
+        while pending or active:
+            # Launch new processes up to max_workers
+            while pending and len(active) < max_workers:
+                test_name = pending.pop(0)
+                result_queue = Queue()
+                proc = Process(
+                    target=_worker_wrapper,
+                    args=(
+                        result_queue,
+                        test_name,
+                        technique,
+                        overrides,
+                        output_dir,
+                        backup_before_run,
+                        teardown_after_run,
+                        forced_backup_warning,
+                    ),
+                )
+                proc.start()
+                active[test_name] = (proc, result_queue, time.perf_counter())
+
+            # Check for completed or timed-out processes
+            completed = []
+            for test_name, (proc, result_queue, start_time) in active.items():
+                elapsed = time.perf_counter() - start_time
+
+                if not proc.is_alive():
+                    # Process finished - collect result
+                    try:
+                        if not result_queue.empty():
+                            status_type, payload = result_queue.get_nowait()
+                            if status_type == "success":
+                                result = payload
+                                results.append(result)
+                                status = "PASS" if result.success else ("ERROR" if result.error else "FAIL")
+                                print(f"[{status}] {test_name} ({result.duration_s:.1f}s)")
+                            else:
+                                # Error during execution
+                                _, err_msg, _ = payload
+                                print(f"[ERROR] {test_name}: {err_msg}")
+                                results.append(
+                                    TestResult(
+                                        test_name=test_name,
+                                        success=False,
+                                        verified=None,
+                                        debug_self_report=None,
+                                        duration_s=elapsed,
+                                        error=f"Worker error: {err_msg}",
+                                        metrics={},
+                                        log_dir=output_dir / test_name,
+                                        started_at=datetime.now().isoformat(),
+                                        finished_at=datetime.now().isoformat(),
+                                    )
+                                )
+                        else:
+                            # Process ended but no result (crash)
+                            print(f"[ERROR] {test_name}: Worker crashed without result")
+                            results.append(
+                                TestResult(
+                                    test_name=test_name,
+                                    success=False,
+                                    verified=None,
+                                    debug_self_report=None,
+                                    duration_s=elapsed,
+                                    error="Worker crashed without result",
+                                    metrics={},
+                                    log_dir=output_dir / test_name,
+                                    started_at=datetime.now().isoformat(),
+                                    finished_at=datetime.now().isoformat(),
+                                )
+                            )
+                    finally:
+                        proc.join(timeout=1)
+                        completed.append(test_name)
+
+                elif elapsed > PARALLEL_TEST_TIMEOUT:
+                    # Hard timeout - terminate the process
+                    print(f"[TIMEOUT] {test_name}: Exceeded {PARALLEL_TEST_TIMEOUT}s, terminating...")
+                    proc.terminate()
+                    proc.join(timeout=5)
+                    if proc.is_alive():
+                        proc.kill()
+                        proc.join(timeout=1)
+
+                    # Log timeout to per-test stderr.log
+                    log_dir = output_dir / test_name
+                    log_dir.mkdir(parents=True, exist_ok=True)
+                    stderr_log = log_dir / "stderr.log"
+                    with open(stderr_log, "a") as f:
+                        f.write(f"\n\n[TIMEOUT] Test exceeded {PARALLEL_TEST_TIMEOUT}s and was terminated.\n")
+
                     results.append(
                         TestResult(
                             test_name=test_name,
                             success=False,
-                            verified=False,
+                            verified=None,
                             debug_self_report=None,
-                            duration_s=0,
-                            error=f"Worker exception: {e}",
+                            duration_s=elapsed,
+                            error=f"Timeout: exceeded {PARALLEL_TEST_TIMEOUT}s",
                             metrics={},
-                            log_dir=output_dir / test_name,
+                            log_dir=log_dir,
                             started_at=datetime.now().isoformat(),
                             finished_at=datetime.now().isoformat(),
                         )
                     )
+                    completed.append(test_name)
+
+            # Remove completed tests from active
+            for test_name in completed:
+                del active[test_name]
+
+            # Brief sleep to avoid busy-waiting
+            if active:
+                time.sleep(0.5)
 
     return results
 
