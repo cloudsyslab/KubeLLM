@@ -16,6 +16,7 @@ import argparse
 import json
 import multiprocessing
 import os
+import queue
 import sys
 import time
 import traceback
@@ -464,35 +465,19 @@ def run_tests_parallel(
 
                 if not proc.is_alive():
                     # Process finished - collect result
+                    proc.join(timeout=1)
                     try:
-                        if not result_queue.empty():
-                            status_type, payload = result_queue.get_nowait()
-                            if status_type == "success":
-                                result = payload
-                                results.append(result)
-                                status = "PASS" if result.success else ("ERROR" if result.error else "FAIL")
-                                print(f"[{status}] {test_name} ({result.duration_s:.1f}s)")
-                            else:
-                                # Error during execution
-                                _, err_msg, _ = payload
-                                print(f"[ERROR] {test_name}: {err_msg}")
-                                results.append(
-                                    TestResult(
-                                        test_name=test_name,
-                                        success=False,
-                                        verified=None,
-                                        debug_self_report=None,
-                                        duration_s=elapsed,
-                                        error=f"Worker error: {err_msg}",
-                                        metrics={},
-                                        log_dir=output_dir / test_name,
-                                        started_at=datetime.now().isoformat(),
-                                        finished_at=datetime.now().isoformat(),
-                                    )
-                                )
+                        # Use get with short timeout to avoid race with empty()
+                        status_type, payload = result_queue.get(timeout=0.1)
+                        if status_type == "success":
+                            result = payload
+                            results.append(result)
+                            status = "PASS" if result.success else ("ERROR" if result.error else "FAIL")
+                            print(f"[{status}] {test_name} ({result.duration_s:.1f}s)")
                         else:
-                            # Process ended but no result (crash)
-                            print(f"[ERROR] {test_name}: Worker crashed without result")
+                            # Error during execution
+                            _, err_msg, _ = payload
+                            print(f"[ERROR] {test_name}: {err_msg}")
                             results.append(
                                 TestResult(
                                     test_name=test_name,
@@ -500,15 +485,34 @@ def run_tests_parallel(
                                     verified=None,
                                     debug_self_report=None,
                                     duration_s=elapsed,
-                                    error="Worker crashed without result",
+                                    error=f"Worker error: {err_msg}",
                                     metrics={},
                                     log_dir=output_dir / test_name,
                                     started_at=datetime.now().isoformat(),
                                     finished_at=datetime.now().isoformat(),
                                 )
                             )
+                    except queue.Empty:
+                        # Process ended but no result (crash)
+                        print(f"[ERROR] {test_name}: Worker crashed without result")
+                        results.append(
+                            TestResult(
+                                test_name=test_name,
+                                success=False,
+                                verified=None,
+                                debug_self_report=None,
+                                duration_s=elapsed,
+                                error="Worker crashed without result",
+                                metrics={},
+                                log_dir=output_dir / test_name,
+                                started_at=datetime.now().isoformat(),
+                                finished_at=datetime.now().isoformat(),
+                            )
+                        )
                     finally:
-                        proc.join(timeout=1)
+                        # Cleanup queue to prevent resource leaks
+                        result_queue.close()
+                        result_queue.cancel_join_thread()
                         completed.append(test_name)
 
                 elif elapsed > PARALLEL_TEST_TIMEOUT:
@@ -519,6 +523,10 @@ def run_tests_parallel(
                     if proc.is_alive():
                         proc.kill()
                         proc.join(timeout=1)
+
+                    # Cleanup queue to prevent resource leaks
+                    result_queue.close()
+                    result_queue.cancel_join_thread()
 
                     # Log timeout to per-test stderr.log
                     log_dir = output_dir / test_name
