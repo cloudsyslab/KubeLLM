@@ -465,10 +465,9 @@ def run_tests_parallel(
 
                 if not proc.is_alive():
                     # Process finished - collect result
-                    proc.join(timeout=1)
                     try:
                         # Use get with short timeout to avoid race with empty()
-                        status_type, payload = result_queue.get(timeout=0.1)
+                        status_type, payload = result_queue.get(timeout=1.0)
                         if status_type == "success":
                             result = payload
                             results.append(result)
@@ -510,6 +509,7 @@ def run_tests_parallel(
                             )
                         )
                     finally:
+                        proc.join(timeout=1)
                         # Cleanup queue to prevent resource leaks
                         result_queue.close()
                         result_queue.cancel_join_thread()
