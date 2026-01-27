@@ -24,16 +24,51 @@ bash start_apiserver.sh
 ```
 
 ### Running Tests
+
+#### Using runner.py (Recommended)
 ```bash
-# Run single test case
-python3 debug_assistant_latest/main.py debug_assistant_latest/troubleshooting/TEST_CASE_NAME/config_step.json
+# List available test cases
+python3 debug_assistant_latest/runner.py --list
 
-# Run full test suite
-python3 debug_assistant_latest/kube_test.py
+# Run single test
+python3 debug_assistant_latest/runner.py wrong_port
 
-# Teardown after test
+# Run single test with config overrides
+python3 debug_assistant_latest/runner.py wrong_port --debug-model gpt-4o --technique stepByStep
+
+# Run multiple tests by pattern (parallel)
+python3 debug_assistant_latest/runner.py --run-many "port_*" --jobs 4
+
+# Run all tests with 8 workers
+python3 debug_assistant_latest/runner.py --run-many all --jobs 8
+
+# Dry run (show what would execute)
+python3 debug_assistant_latest/runner.py --run-many "wrong_*" --dry-run
+```
+
+#### Using main.py (Legacy - single test only)
+```bash
+# Run single test case (original interface)
+python3 debug_assistant_latest/main.py debug_assistant_latest/troubleshooting/TEST_CASE_NAME/config_step.json [test_type]
+```
+
+#### Teardown
+```bash
 python3 debug_assistant_latest/teardownenv.py TEST_CASE_NAME
 python3 debug_assistant_latest/teardownenv.py all  # teardown all
+```
+
+### Test Output Structure
+Test runs produce structured output in `.local/test_runs/<timestamp>/`:
+```
+.local/test_runs/2026-01-24T15-30-00/
+  wrong_port/
+    stdout.log              # Captured stdout
+    stderr.log              # Captured stderr
+    summary.json            # Per-test result
+    config_effective.json   # Config with overrides applied
+  aggregate.json            # Run-level summary
+  run_config.json           # CLI args and overrides used
 ```
 
 ### Lab Server Commands
@@ -62,12 +97,16 @@ config_step.json → Knowledge Agent (RAG) → Debug Agent (kubectl/file ops) �
 ```
 
 ### Key Files
-- `debug_assistant_latest/main.py`: Entry point with three execution strategies
+- `debug_assistant_latest/runner.py`: **Recommended** CLI for running tests with parallelism and config overrides
+- `debug_assistant_latest/main.py`: Entry point with three execution strategies (legacy single-test interface)
 - `debug_assistant_latest/agents.py`: Agent implementations (AgentAPI, AgentDebug, AgentDebugStepByStep, SingleAgent, AgentVerification_v1/v2)
 - `debug_assistant_latest/kube_test.py`: Test harness with `TEARDOWN_CONFIG` and `tearDownEnviornment()`
 - `debug_assistant_latest/teardownenv.py`: CLI wrapper for teardown operations
 - `debug_assistant_latest/metrics_db.py`: SQLite metrics tracking (tokens, cost, duration per agent)
 - `debug_assistant_latest/utils.py`: Config reading, file traversal, LLM identification
+- `debug_assistant_latest/test_discovery.py`: Test case enumeration and pattern matching
+- `debug_assistant_latest/config_merge.py`: Config override merge logic
+- `debug_assistant_latest/report.py`: Summary and aggregate report generation
 - `api_server.py`: FastAPI server for RAG knowledge base
 
 ## Test Cases
@@ -122,3 +161,22 @@ Key functions in `metrics_db.py`:
 - Backup files created during tests, restored on teardown
 - No memory docs, prompt transcripts, logs, or db files committed
 - Minimal, scoped changes preferred over big reorganizations
+
+## Lab Environment Enumeration
+
+**Constraint (lab-only):** This repo is developed locally and deployed to a remote lab server via `git pull`. All environment enumeration commands must be run on the lab server by the user—Claude Code cannot execute them locally. The local environment is for development only.
+
+When discovering lab state, ask the user to run these commands on the lab server:
+
+| Command | Expected Output |
+|---------|-----------------|
+| `minikube -p minh status` | host/kubelet/apiserver: Running |
+| `docker ps --format 'table {{.Names}}\t{{.Status}}'` | `minh` and `pgvector` containers Up |
+| `ls -la ~/.kube/*.conf` | `minh-admin.conf` exists |
+| `kubectl --kubeconfig ~/.kube/minh-admin.conf get nodes -o wide` | Node `minh` Ready |
+| `kubectl --kubeconfig ~/.kube/minh-admin.conf get pods -A` | kube-system pods Running |
+| `bash orchestrator/preflight.sh` | `preflight: ... API ready` |
+| `docker logs pgvector --tail=10` | Checkpoint logs, no fatal errors |
+| `pgrep -af "uvicorn.*api_server"` | Process running (or start with `bash start_apiserver.sh`) |
+
+Use this checklist before modifying orchestrator scripts or kubeconfig paths.

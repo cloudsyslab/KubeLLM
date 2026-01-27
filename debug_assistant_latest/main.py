@@ -4,6 +4,7 @@ import sys, os
 from metrics_db import store_metrics_entry, calculate_cost, calculate_totals
 import time
 from pathlib import Path
+from typing import Optional, Dict, Any
 
 # Use relative path from script location
 SCRIPT_DIR = Path(__file__).parent.absolute()
@@ -16,17 +17,44 @@ if not SCRIPT_DIR.parent.exists():
         f"This script should be run from within the repository structure."
     )
 
-def allStepsAtOnce(configFile = None):
+
+def _apply_config_overrides(config: dict, overrides: Optional[Dict[str, Any]]) -> dict:
+    """Apply dotted-path config overrides to config dictionary."""
+    if not overrides:
+        return config
+
+    import copy
+    merged = copy.deepcopy(config)
+
+    for dotted_key, value in overrides.items():
+        if value is None:
+            continue
+        keys = dotted_key.split(".")
+        target = merged
+        for k in keys[:-1]:
+            target = target.setdefault(k, {})
+        target[keys[-1]] = value
+
+    return merged
+
+
+def allStepsAtOnce(configFile=None, config_overrides: Optional[Dict[str, Any]] = None):
     """
-        This function will run the knowledge agent and debug agent. 
+        This function will run the knowledge agent and debug agent.
         When the debug agent receives the response from the knowledge
         agent, the debug agent will run all the commands all at once.
 
         Approach by: William Clifford
+
+        Args:
+            configFile: Path to config_step.json file
+            config_overrides: Optional dict of dotted-path overrides
+                              e.g. {"debug-agent.model": "gpt-4o"}
     """
 
     #read config to initilize enviornment
     config = readTheJSONConfigFile(configFile = configFile)
+    config = _apply_config_overrides(config, config_overrides)
     setUpEnvironment(config)
     #initilize needed LLMs
     apiAgent = AgentAPI("api-agent" , config)
@@ -91,18 +119,23 @@ def allStepsAtOnce(configFile = None):
 
     return verificationAgent.verificationStatus  # Return verification result instead of debug agent's self-report
 
-def stepByStep( configFile = None ):
+def stepByStep(configFile=None, config_overrides: Optional[Dict[str, Any]] = None):
     """
-        This function will run the knowledge and debug agent. 
+        This function will run the knowledge and debug agent.
         The knowledge agent will return the response with steps to run
         with a bash script for each step nicely formatted for the debug agent
-        to then breakdown the steps and run it step by step, while trying to 
+        to then breakdown the steps and run it step by step, while trying to
         fix issues with each step if any.
 
         Approach by: Aaron Perez
+
+        Args:
+            configFile: Path to config_step.json file
+            config_overrides: Optional dict of dotted-path overrides
     """
     #read config to initilize enviornment
-    config = readTheJSONConfigFile( configFile = configFile)
+    config = readTheJSONConfigFile(configFile=configFile)
+    config = _apply_config_overrides(config, config_overrides)
     setUpEnvironment(config)
     #initilize needed LLMs
     apiAgent = AgentAPI("api-agent" , config)
@@ -121,13 +154,18 @@ def stepByStep( configFile = None ):
     return debugAgent.debugStatus
 
 
-def singleAgentApproach( configFile = None ):
+def singleAgentApproach(configFile=None, config_overrides: Optional[Dict[str, Any]] = None):
     """
         This function will run a single agent which will do the
         reasoning on top of the actioning
+
+        Args:
+            configFile: Path to config_step.json file
+            config_overrides: Optional dict of dotted-path overrides
     """
     #read config to initilize enviornment
-    config = readTheJSONConfigFile( configFile = configFile)
+    config = readTheJSONConfigFile(configFile=configFile)
+    config = _apply_config_overrides(config, config_overrides)
     setUpEnvironment(config)
     #initilize needed LLMs
     agent = SingleAgent("single-agent", config)
