@@ -14,6 +14,9 @@ import subprocess
 import timeout_decorator
 from pathlib import Path
 
+SCRIPT_DIR = Path(__file__).resolve().parent
+REPO_ROOT = SCRIPT_DIR.parent
+
 from rag_api import (
     BASE_URL,
     initialize_assistant,
@@ -95,11 +98,9 @@ def update_debug_agent_model(json_file_path: str, new_model: str) -> None:
 def setUpEnvironment(config):
     """ Setup the enviornment using the set up commands specified in the config"""
     try:
-        test_dir = Path(config.get("test-directory", "")).expanduser().resolve()
         # Run setup commands from repo root so repo-root-relative paths work regardless of CWD.
-        repo_root = test_dir.parents[2] if len(test_dir.parents) >= 3 else test_dir
         for command in config.get("setup-commands", []):
-            subprocess.run(command, shell=True, check=True, cwd=str(repo_root))
+            subprocess.run(command, shell=True, check=True, cwd=str(REPO_ROOT))
     except Exception as e:
         print(f"Error running setup command: {e}")
 
