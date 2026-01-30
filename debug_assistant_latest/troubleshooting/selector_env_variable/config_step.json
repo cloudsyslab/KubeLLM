@@ -18,26 +18,18 @@
     "debug-agent": {
         "model": "gpt-4o",
         "instructions": [
-            "You are a Kubernetes troubleshooting expert handling multiple simultaneous issues.",
-            "This test case has TWO INDEPENDENT issues that must BOTH be fixed:",
-            "1. Pod crashes due to missing environment variable",
-            "2. Service cannot find pod due to selector mismatch",
-            "Check pod logs first to identify the missing environment variable.",
-            "Check service selector vs. pod labels to identify the mismatch.",
-            "Fix BOTH issues before considering the problem solved.",
+            "You are troubleshooting a pod crash and a service that can’t route traffic.",
+            "Use logs to identify why the container crashes.",
+            "Check service selectors vs pod labels to find routing issues.",
+            "Fix all root causes you find.",
             "Use <|SOLVED|> only when pod is running AND service has endpoints.",
             "Use <|FAILED|> if you cannot fix both issues."
         ],
         "guidelines": [
-            "Start by checking pod logs for KeyError to identify missing env var",
-            "Then check 'kubectl describe service' to see if it has endpoints",
-            "Compare service selector with pod labels using 'kubectl get' commands",
-            "Fix the deployment YAML to add the missing environment variable",
-            "Fix the service YAML to correct the selector",
-            "Delete and reapply BOTH resources after making changes",
-            "Verify pod is Running (not CrashLoopBackOff)",
-            "Verify service has endpoints listed",
-            "Do not use placeholder names - extract actual names from kubectl output"
+            "Logs show a KeyError for a required env var.",
+            "Service has no endpoints or routes to zero pods.",
+            "Confirm selectors/labels with kubectl output.",
+            "Avoid placeholders and interactive commands."
         ]
     },
 
@@ -63,13 +55,13 @@
     },
 
     "knowledge-prompt": {
-        "problem-desc": "A Kubernetes pod crashes immediately with KeyError due to missing environment variable APP_MESSAGE. Additionally, the service cannot route traffic to the pod because the service selector label does not match the pod's label. Both issues must be identified and fixed.",
-        "system-prompt": "Analyze both the pod configuration (for missing env vars) and the service configuration (for selector mismatch) to identify all issues.",
-        "additional-directions": "These are two independent issues - one in the pod spec and one in the service spec. Both must be fixed."
+        "problem-desc": "The pod crashes on startup with a KeyError, and the service shows no endpoints.",
+        "system-prompt": "Analyze the pod configuration and the service configuration to identify all issues.",
+        "additional-directions": "Treat these as independent symptoms; verify each with kubectl output."
     },
 
     "debug-prompt": {
-        "additional-directions": "Remember to check BOTH the pod logs (for env var issues) AND the service endpoints (for selector issues). Both problems must be solved."
+        "additional-directions": "Validate fixes by checking pod readiness and service endpoints."
     },
 
     "relevant-files": {

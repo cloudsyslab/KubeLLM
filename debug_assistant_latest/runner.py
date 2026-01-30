@@ -739,6 +739,114 @@ def cmd_run_many(args):
     return 1 if failed > 0 else 0
 
 
+def _apply_repeat_overrides(args):
+    """
+    When --repeat N (N>1) is set, enforce serial execution with teardown.
+
+    Mutates args in place and prints warnings about overridden flags.
+    Returns True if repeat mode is active.
+    """
+    if args.repeat < 1:
+        print("[ERROR] --repeat must be >= 1")
+        sys.exit(1)
+
+    if args.repeat == 1:
+        return False
+
+    if args.jobs != 1:
+        print(f"[WARNING] --repeat forces --jobs 1 (was {args.jobs})")
+        args.jobs = 1
+
+    if not args.teardown_after_run:
+        print("[WARNING] --repeat forces --teardown-after-run")
+        args.teardown_after_run = True
+
+    if not args.backup_before_run:
+        print("[WARNING] --repeat forces --backup-before-run (required by teardown)")
+        args.backup_before_run = True
+
+    return True
+
+
+def _run_repeat_queue(args, run_func):
+    """
+    Run *run_func* up to args.repeat times serially with a stall watchdog.
+
+    run_func(iteration: int) -> int   # returns exit code of one iteration.
+
+    Prints a queue summary at the end and returns the final exit code.
+    """
+    total = args.repeat
+    stall_limit = args.stall_limit_s
+    results = []  # list of (iteration, exit_code, duration_s)
+
+    print(f"[REPEAT] Queue: {total} iteration(s), stall limit {stall_limit}s")
+    print()
+
+    queue_start = time.perf_counter()
+
+    for i in range(1, total + 1):
+        iter_start = time.perf_counter()
+        print(f"{'=' * 60}")
+        print(f"[REPEAT] Iteration {i}/{total}")
+        print(f"{'=' * 60}")
+
+        # Stall watchdog: run the iteration in a child thread so we can
+        # enforce wall-clock limits without depending on the inner code.
+        from threading import Thread
+
+        exit_code_box = [None]
+        exception_box = [None]
+
+        def _target():
+            try:
+                exit_code_box[0] = run_func(i)
+            except Exception as exc:
+                exception_box[0] = exc
+
+        t = Thread(target=_target, daemon=True)
+        t.start()
+        t.join(timeout=stall_limit)
+
+        iter_duration = time.perf_counter() - iter_start
+
+        if t.is_alive():
+            # Stall detected
+            print()
+            print(f"[STALL] Iteration {i} exceeded stall limit of {stall_limit}s — aborting queue.")
+            results.append((i, None, iter_duration))
+            break
+
+        if exception_box[0] is not None:
+            print(f"[ERROR] Iteration {i} raised: {exception_box[0]}")
+            results.append((i, 1, iter_duration))
+        else:
+            results.append((i, exit_code_box[0], iter_duration))
+
+        print()
+
+    # Queue summary
+    queue_duration = time.perf_counter() - queue_start
+    print()
+    print(f"{'=' * 60}")
+    print(f"[REPEAT] Queue summary ({len(results)}/{total} iterations)")
+    print(f"{'=' * 60}")
+    passed = sum(1 for _, ec, _ in results if ec == 0)
+    failed = sum(1 for _, ec, _ in results if ec is not None and ec != 0)
+    stalled = sum(1 for _, ec, _ in results if ec is None)
+    for iteration, ec, dur in results:
+        tag = "PASS" if ec == 0 else ("STALL" if ec is None else "FAIL")
+        print(f"  Iteration {iteration}: {tag} ({dur:.1f}s)")
+    print()
+    print(f"  Passed: {passed}  Failed: {failed}  Stalled: {stalled}")
+    print(f"  Total wall clock: {queue_duration:.1f}s")
+
+    # Return non-zero if any iteration failed/stalled
+    if failed > 0 or stalled > 0:
+        return 1
+    return 0
+
+
 def main():
     parser = argparse.ArgumentParser(
         description="KubeLLM Test Runner - orchestrate Kubernetes troubleshooting tests",
@@ -832,12 +940,44 @@ Examples:
         help="Run teardown after test completes (opt-in). Warnings emitted on failure.",
     )
 
+    # Serial repeat queue
+    parser.add_argument(
+        "--repeat",
+        type=int,
+        default=1,
+        metavar="N",
+        help="Run the test(s) N times serially. Forces --teardown-after-run and --jobs 1.",
+    )
+    parser.add_argument(
+        "--stall-limit-s",
+        type=int,
+        default=900,
+        metavar="SECONDS",
+        help="Abort repeat queue if no run completes within this many seconds (default: 900).",
+    )
+
     args = parser.parse_args()
 
     # Determine which command to run
     if args.list:
         return cmd_list(args)
-    elif args.run_many:
+
+    # Apply repeat overrides before dispatching
+    repeat_active = _apply_repeat_overrides(args)
+
+    if args.run_many:
+        if repeat_active:
+            if args.dry_run:
+                matched = match_pattern(args.run_many)
+                if not matched:
+                    print(f"No test cases match pattern: {args.run_many}")
+                    return 1
+                print(f"Dry run - would execute {len(matched)} tests x {args.repeat} iterations:")
+                for tc in matched:
+                    print(f"  {tc}")
+                print(f"\nRepeat: {args.repeat} iterations, stall limit: {args.stall_limit_s}s")
+                return 0
+            return _run_repeat_queue(args, lambda _i: cmd_run_many(args))
         return cmd_run_many(args)
     elif args.test_case:
         # Validate test case exists
@@ -846,6 +986,12 @@ Examples:
             print(f"Unknown test case: {args.test_case}")
             print(f"Available: {', '.join(available)}")
             return 1
+        if repeat_active:
+            if args.dry_run:
+                print(f"Dry run - would execute: {args.test_case} x {args.repeat} iterations")
+                print(f"\nRepeat: {args.repeat} iterations, stall limit: {args.stall_limit_s}s")
+                return 0
+            return _run_repeat_queue(args, lambda _i: cmd_run_single(args, args.test_case))
         return cmd_run_single(args, args.test_case)
     else:
         parser.print_help()
