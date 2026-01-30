@@ -14,6 +14,9 @@ import subprocess
 import timeout_decorator
 from pathlib import Path
 
+SCRIPT_DIR = Path(__file__).resolve().parent
+REPO_ROOT = SCRIPT_DIR.parent
+
 from rag_api import (
     BASE_URL,
     initialize_assistant,
@@ -51,7 +54,7 @@ def readTheJSONConfigFile(configFile):
 
         # If test-directory is empty, derive it from config file location
         if not parsedConfig.get("test-directory") or parsedConfig.get("test-directory") == "":
-            config_dir = Path(config_file_path).parent.absolute()
+            config_dir = Path(config_file_path).expanduser().resolve().parent
             parsedConfig["test-directory"] = str(config_dir) + "/"
             print(f"DEBUG: Derived test-directory from config location: {parsedConfig['test-directory']}")
 
@@ -95,8 +98,9 @@ def update_debug_agent_model(json_file_path: str, new_model: str) -> None:
 def setUpEnvironment(config):
     """ Setup the enviornment using the set up commands specified in the config"""
     try:
+        # Run setup commands from repo root so repo-root-relative paths work regardless of CWD.
         for command in config.get("setup-commands", []):
-            subprocess.run(command, shell=True, check=True)
+            subprocess.run(command, shell=True, check=True, cwd=str(REPO_ROOT))
     except Exception as e:
         print(f"Error running setup command: {e}")
 
