@@ -18,24 +18,18 @@
     "debug-agent": {
         "model": "gpt-4o",
         "instructions": [
-            "You are a Kubernetes troubleshooting expert specializing in resource limit issues.",
-            "When pods show CrashLoopBackOff, always check 'kubectl describe pod' for termination reasons.",
-            "Look for 'OOMKilled' in the pod events - this indicates the memory limit was exceeded.",
-            "Check the resource limits in the pod specification.",
-            "If OOMKilled, increase the memory limit to a reasonable value (128Mi or 256Mi).",
-            "After modifying the YAML, delete and reapply the pod.",
-            "Use <|SOLVED|> when the pod runs without OOMKilled events.",
+            "You are troubleshooting a CrashLoopBackOff.",
+            "Use describe and events to identify the termination reason.",
+            "Inspect resource requests/limits and app behavior.",
+            "Make minimal changes based on evidence.",
+            "Use <|SOLVED|> when the pod stays running.",
             "Use <|FAILED|> if you cannot resolve the issue."
         ],
         "guidelines": [
-            "OOMKilled means the container used more memory than its limit",
-            "Check 'kubectl describe pod' for Last State: Terminated with Reason: OOMKilled",
-            "Look at the memory limits in resources.limits.memory",
-            "Typical fix: increase memory limit from 50Mi to 128Mi or 256Mi",
-            "Do not modify the application code - the issue is in resource limits",
-            "After fixing YAML: kubectl delete -f then kubectl apply -f",
-            "Verify pod stays running and doesn't restart",
-            "Do not use placeholder pod names - get actual name from kubectl get pods"
+            "Look for termination reasons like OOMKilled in pod events.",
+            "Check recent restarts and memory-related signals.",
+            "Adjust configuration only if evidence points there.",
+            "Avoid placeholders and interactive commands."
         ]
     },
 
@@ -63,13 +57,13 @@
     },
 
     "knowledge-prompt": {
-        "problem-desc": "A Kubernetes pod keeps crashing with CrashLoopBackOff. Investigation shows the pod is being OOMKilled (Out of Memory Killed) because the memory limit is set to only 50Mi, which is too restrictive for the application's memory requirements.",
-        "system-prompt": "Analyze the pod events to identify OOMKilled status, then examine the resource limits to understand why the container is being killed.",
-        "additional-directions": "Focus on the resource limits specification. The solution involves increasing the memory limit to allow the application to run."
+        "problem-desc": "The pod repeatedly restarts (CrashLoopBackOff). Pod events show termination with reason OOMKilled.",
+        "system-prompt": "Analyze the pod events and resource configuration to identify why the container is being killed.",
+        "additional-directions": "Identify why the container exceeds its memory constraints and fix accordingly."
     },
 
     "debug-prompt": {
-        "additional-directions": "This is a resource limit issue, not an application code issue. The fix is in the YAML configuration, specifically the resources.limits.memory value."
+        "additional-directions": "Let evidence drive the fix; don’t assume the first hypothesis is correct."
     },
 
     "relevant-files": {
