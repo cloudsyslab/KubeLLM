@@ -1,11 +1,6 @@
 {
-    "test-name": "port_mismatch_wrong_interface",
-    "test-directory": "",
-    "yaml-file-name": "port_mismatch_wrong_interface.yaml",
-    "minikube-profile": "lamap",
-
     "api-agent": {
-        "model": "llama3.1:70b",
+        "model": "gpt-5-mini",
         "embedder": "nomic-embed-text",
         "clear-knowledge": true,
         "new-run": true,
@@ -14,74 +9,58 @@
             "https://learnk8s.io/troubleshooting-deployments"
         ]
     },
-
     "debug-agent": {
-        "model": "gpt-4o",
+        "model": "gpt-5-nano",
+        "api-key": "",
         "instructions": [
-            "You are a Kubernetes troubleshooting expert. Diagnose and fix issues with this deployment.",
-            "Gather evidence with kubectl (pods, services, endpoints, events, logs).",
-            "Check app behavior and service routing; identify the root cause from evidence.",
-            "Make minimal changes to fix the root cause.",
-            "Rebuild/redeploy only if you changed app code or the Dockerfile.",
-            "Use <|SOLVED|> when the app is reachable and the pod is healthy.",
-            "Use <|FAILED|> if you cannot fix the issue.",
-            "Use <|ERROR|> if you encounter unexpected errors."
+            "If all and only all commands fail to execute, declare error with <|ERROR|>.",
+            "You have solved this issue when this goal is met: The status of all pods say 'RUNNING'.",
+            "After every step, check to see if you have met the goal.",
+            "If you believe you have met the goal, declare solved with <|SOLVED|>.",
+            "If steps do not solve or need info, declare <|FAILED|>.",
+            "Do not use live feed flags like kubectl logs -f.",
+            "Do not use commands like vim or vi.",
+            "Do not use commands that open editors like kubectl edit."
         ],
         "guidelines": [
-            "Start with 'kubectl get pods,svc,endpoints' and inspect the actual names.",
-            "Use logs and describe to confirm why traffic fails.",
-            "Avoid placeholders; discover names with 'kubectl get' first.",
-            "Do not use interactive commands like 'kubectl edit'.",
-            "Do not use live feed flags like 'kubectl logs -f'.",
-            "If you change files, reapply and confirm status."
+            "If command succeeds with no output, that is expected.",
+            "If placeholder <pod_name> appears, run kubectl get first.",
+            "Do not use live feed flags like kubectl logs -f.",
+            "If you do not conclude on an answer or a code then try again please.",
+            "Do not use commands like vim or vi.",
+            "Do not use commands that open editors like kubectl edit."
         ]
     },
-
     "verification-agent": {
-        "model": "gpt-4o",
-        "temperature": 0.3,
-        "instructions": [
-            "You are a verification agent. Your task is to independently verify that BOTH issues have been fixed.",
-            "Run diagnostic commands to check the actual state of the cluster.",
-            "Verify that the application is accessible both directly (pod IP) and through the service.",
-            "Do not trust what the debug agent claimed - verify everything yourself.",
-            "Use <|VERIFIED|> if BOTH issues are completely resolved",
-            "Use <|FAILED|> if ANY issue remains unfixed",
-            "Use <|VERIFICATION_ERROR|> if you cannot perform verification"
-        ],
-        "guidelines": [
-            "IMPORTANT: Wait 10-15 seconds after the debug agent completes to allow resources to stabilize",
-            "Use 'sleep 15' before starting verification if needed",
-            "Check that the pod is Running with 1/1 ready",
-            "Verify the application code binds to 0.0.0.0 (not localhost) by examining server.py",
-            "Verify the service targetPort matches the container port by examining app_service.yaml",
-            "Test pod direct access: curl <POD_IP>:8765 should work",
-            "If curl fails initially, wait 5 seconds and retry once",
-            "Test service access: use 'minikube -p lamap service port-mismatch-app-service --url' then curl the URL",
-            "Both direct and service access must work for <|VERIFIED|>"
-        ]
+        "model": "gpt-5-nano",
+        "temperature": 1
     },
-
     "knowledge-prompt": {
         "problem-desc": "The pod appears to be running, but accessing the service returns connection errors (e.g., timeout/connection refused). The service shows no working route to the app.",
-        "system-prompt": "Analyze the deployment, service, and app behavior to find why traffic is not reaching the app.",
-        "additional-directions": "Treat symptoms as clues; verify with kubectl outputs before changing anything."
+        "system-prompt": "Give specific commands to fix this issue. If modifying file contents is necessary, use the sed command to achieve this. If providing a file path, make sure to keep the full file path. Suggest only the essential steps needed to solve the issue. Be frugal.",
+        "additional-directions": ""
     },
-
     "debug-prompt": {
-        "additional-directions": "Treat symptoms as clues; verify with kubectl outputs before changing anything."
+        "additional-directions": "If any deployment files are modified, reapply the deployment to the cluster."
     },
-
     "relevant-files": {
-        "deployment": ["port_mismatch_wrong_interface.yaml"],
-        "application": ["server.py"],
-        "service": ["app_service.yaml"],
+        "deployment": [
+            "port_mismatch_wrong_interface.yaml"
+        ],
+        "application": [
+            "server.py"
+        ],
+        "service": [
+            "app_service.yaml"
+        ],
         "dockerfile": true
     },
-
     "setup-commands": [
         "docker build -t kube-port-mismatch-wrong-interface-app -f debug_assistant_latest/troubleshooting/port_mismatch_wrong_interface/Dockerfile debug_assistant_latest/troubleshooting/port_mismatch_wrong_interface",
         "kubectl apply -f debug_assistant_latest/troubleshooting/port_mismatch_wrong_interface/port_mismatch_wrong_interface.yaml",
         "kubectl apply -f debug_assistant_latest/troubleshooting/port_mismatch_wrong_interface/app_service.yaml"
-    ]
+    ],
+    "test-name": "port_mismatch_wrong_interface",
+    "test-directory": "",
+    "yaml-file-name": "port_mismatch_wrong_interface.yaml"
 }

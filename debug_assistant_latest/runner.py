@@ -910,6 +910,12 @@ Examples:
         default="allStepsAtOnce",
         help="Execution technique (default: allStepsAtOnce)",
     )
+    parser.add_argument(
+        "--minikube-profile",
+        dest="minikube_profile",
+        default=os.environ.get("MINIKUBE_PROFILE", "minikube"),
+        help="Minikube profile name (default: MINIKUBE_PROFILE env var or 'minikube')",
+    )
 
     # Output control
     parser.add_argument(
