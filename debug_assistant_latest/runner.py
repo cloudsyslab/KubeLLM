@@ -768,17 +768,35 @@ def _apply_repeat_overrides(args):
     return True
 
 
+def _repeat_iteration_worker(result_queue, run_func, iteration):
+    """
+    Worker target for a single repeat iteration.
+
+    Runs run_func(iteration) in a child process and puts the exit code
+    (or exception info) onto result_queue.
+    """
+    try:
+        exit_code = run_func(iteration)
+        result_queue.put(("ok", exit_code))
+    except Exception as exc:
+        result_queue.put(("error", str(exc)))
+
+
 def _run_repeat_queue(args, run_func):
     """
-    Run *run_func* up to args.repeat times serially with a stall watchdog.
+    Run *run_func* up to args.repeat times serially with a hard-kill stall watchdog.
 
     run_func(iteration: int) -> int   # returns exit code of one iteration.
+
+    Each iteration runs in a subprocess (multiprocessing.Process).  If an
+    iteration exceeds --stall-limit-s, the process is terminated (SIGTERM),
+    given 5 s to clean up, then killed (SIGKILL).  The queue stops on stall.
 
     Prints a queue summary at the end and returns the final exit code.
     """
     total = args.repeat
     stall_limit = args.stall_limit_s
-    results = []  # list of (iteration, exit_code, duration_s)
+    results = []  # list of (iteration, exit_code | None, duration_s)
 
     print(f"[REPEAT] Queue: {total} iteration(s), stall limit {stall_limit}s")
     print()
@@ -791,38 +809,55 @@ def _run_repeat_queue(args, run_func):
         print(f"[REPEAT] Iteration {i}/{total}")
         print(f"{'=' * 60}")
 
-        # Stall watchdog: run the iteration in a child thread so we can
-        # enforce wall-clock limits without depending on the inner code.
-        from threading import Thread
+        result_q = Queue()
+        proc = Process(
+            target=_repeat_iteration_worker,
+            args=(result_q, run_func, i),
+        )
+        proc.start()
 
-        exit_code_box = [None]
-        exception_box = [None]
-
-        def _target():
-            try:
-                exit_code_box[0] = run_func(i)
-            except Exception as exc:
-                exception_box[0] = exc
-
-        t = Thread(target=_target, daemon=True)
-        t.start()
-        t.join(timeout=stall_limit)
-
+        # Wait for the process with stall timeout
+        proc.join(timeout=stall_limit)
         iter_duration = time.perf_counter() - iter_start
 
-        if t.is_alive():
-            # Stall detected
+        if proc.is_alive():
+            # Stall detected — hard-kill the iteration
             print()
-            print(f"[STALL] Iteration {i} exceeded stall limit of {stall_limit}s — aborting queue.")
+            print(f"[STALL] Iteration {i} exceeded stall limit of {stall_limit}s — terminating process.")
+            proc.terminate()
+            proc.join(timeout=5)
+            if proc.is_alive():
+                print(f"[STALL] Process did not exit after SIGTERM, sending SIGKILL.")
+                proc.kill()
+                proc.join(timeout=2)
+
+            # Cleanup queue resources
+            result_q.close()
+            result_q.cancel_join_thread()
+
             results.append((i, None, iter_duration))
+            print(f"[STALL] Aborting queue — no further iterations will run.")
             break
 
-        if exception_box[0] is not None:
-            print(f"[ERROR] Iteration {i} raised: {exception_box[0]}")
-            results.append((i, 1, iter_duration))
-        else:
-            results.append((i, exit_code_box[0], iter_duration))
+        # Process finished — collect result from queue
+        exit_code = 1  # default to failure
+        try:
+            status_type, payload = result_q.get(timeout=2.0)
+            if status_type == "ok":
+                exit_code = payload if payload is not None else 1
+            else:
+                print(f"[ERROR] Iteration {i} raised: {payload}")
+                exit_code = 1
+        except queue.Empty:
+            print(f"[ERROR] Iteration {i}: worker finished but produced no result")
+            exit_code = 1
 
+        # Cleanup queue resources
+        proc.join(timeout=1)
+        result_q.close()
+        result_q.cancel_join_thread()
+
+        results.append((i, exit_code, iter_duration))
         print()
 
     # Queue summary
@@ -983,7 +1018,20 @@ Examples:
                     print(f"  {tc}")
                 print(f"\nRepeat: {args.repeat} iterations, stall limit: {args.stall_limit_s}s")
                 return 0
-            return _run_repeat_queue(args, lambda _i: cmd_run_many(args))
+
+            # Generate a base run_id for the repeat queue
+            base_run_id = get_timestamp_id()
+            base_output_dir = args.output_dir  # may be None
+
+            def _iter_run_many(iteration):
+                # Per-iteration output dir to avoid overwrites
+                if base_output_dir is not None:
+                    args.output_dir = base_output_dir / f"{base_run_id}-{iteration:03d}"
+                else:
+                    args.output_dir = None  # let cmd_run_many generate its own timestamped dir
+                return cmd_run_many(args)
+
+            return _run_repeat_queue(args, _iter_run_many)
         return cmd_run_many(args)
     elif args.test_case:
         # Validate test case exists
@@ -997,7 +1045,20 @@ Examples:
                 print(f"Dry run - would execute: {args.test_case} x {args.repeat} iterations")
                 print(f"\nRepeat: {args.repeat} iterations, stall limit: {args.stall_limit_s}s")
                 return 0
-            return _run_repeat_queue(args, lambda _i: cmd_run_single(args, args.test_case))
+
+            # Generate a base run_id for the repeat queue
+            base_run_id = get_timestamp_id()
+            base_output_dir = args.output_dir  # may be None
+
+            def _iter_run_single(iteration):
+                # Per-iteration output dir to avoid overwrites
+                if base_output_dir is not None:
+                    args.output_dir = base_output_dir / f"{base_run_id}-{iteration:03d}"
+                else:
+                    args.output_dir = None  # let cmd_run_single generate its own timestamped dir
+                return cmd_run_single(args, args.test_case)
+
+            return _run_repeat_queue(args, _iter_run_single)
         return cmd_run_single(args, args.test_case)
     else:
         parser.print_help()
