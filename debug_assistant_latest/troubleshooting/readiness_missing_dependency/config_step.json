@@ -1,11 +1,6 @@
 {
-    "test-name": "readiness_missing_dependency",
-    "test-directory": "",
-    "yaml-file-name": "readiness_missing_dependency.yaml",
-    "minikube-profile": "lamap",
-
     "api-agent": {
-        "model": "llama3.1:70b",
+        "model": "gpt-5-mini",
         "embedder": "nomic-embed-text",
         "clear-knowledge": true,
         "new-run": true,
@@ -14,71 +9,55 @@
             "https://learnk8s.io/troubleshooting-deployments"
         ]
     },
-
     "debug-agent": {
-        "model": "gpt-4o",
+        "model": "gpt-5-nano",
         "instructions": [
-            "You are a Kubernetes troubleshooting expert focused on application startup and readiness issues.",
-            "Execute kubectl commands to gather diagnostic information.",
-            "Always check pod logs first to identify application errors.",
-            "Examine Dockerfile and application code to find missing dependencies.",
-            "The readiness probe failure is a SYMPTOM, not the root cause - find what's preventing the app from starting.",
-            "After fixing the Dockerfile, rebuild the container image and redeploy.",
-            "Use <|SOLVED|> when the pod is Running AND ready (1/1).",
-            "Use <|FAILED|> if you cannot identify or fix the issue."
+            "If all and only all commands fail to execute, declare that there was an error in trying to solve the issue, and end that statement with this token: <|ERROR|>.",
+            "You have solved this issue when this goal is met: The status of all pods say 'RUNNING'",
+            "After every step, check to see if you have met the goal",
+            "If you believe you have met the goal, declare that you have solved the user's issue, and end that statement with this token: <|SOLVED|>.",
+            "If the steps do not solve the issue, or if you need more information, declare that you cannot solve the issue, and end that statement with this token: <|FAILED|>.",
+            "Do not use live feed flags when checking the logs such as 'kubectl logs -f'",
+            "Do not use commands like vim or vi",
+            "Do not use commands that open up editors like 'kubectl edit'"
         ],
+        "api-key": "",
         "guidelines": [
-            "This test has a root cause (missing dependency) and a symptom (readiness failure)",
-            "Always check 'kubectl logs' first to see ImportError or ModuleNotFoundError",
-            "The readiness probe configuration is correct - don't modify it",
-            "Focus on fixing the Dockerfile to install missing packages",
-            "After modifying Dockerfile: rebuild with --no-cache, delete pod, reapply",
-            "Verify success by checking pod status shows 1/1 READY",
-            "Do not use placeholder names - get actual pod name from 'kubectl get pods'",
-            "Do not use interactive or blocking commands"
+            "If a command invocation is successful but gives no stdout nor stderr, then that is because that invocation resulted in no output to stdout or stderr.",
+            "If a command contains a placeholder name surrounded in angle brackets such as <pod_name>, for example, then **do not** run that command as-is. First run a `kubectl get` command to find a real name to replace the placeholder name, then run the suggested command with the replaced name of the resource. For example, if you see `kubectl logs <pod_name> -n example_namespace`, first run `kubectl get pods -n example_namespace` and use the name of the first pod you see.",
+            "Do not use live feed flags when checking the logs such as 'kubectl logs -f'",
+            "If you do not conclude on an answer or a code then try again please.",
+            "Do not use commands like vim or vi",
+            "Do not use commands that open up editors like 'kubectl edit'"
         ]
     },
-
     "verification-agent": {
-        "model": "gpt-4o",
-        "temperature": 0.3,
-        "instructions": [
-            "Verify that the application starts successfully and the readiness probe passes.",
-            "Check pod logs for any ImportError or startup errors.",
-            "Verify the pod status shows 1/1 READY.",
-            "Use <|VERIFIED|> only if pod is fully ready and application responds.",
-            "Use <|FAILED|> if the pod is not ready or application has errors."
-        ],
-        "guidelines": [
-            "IMPORTANT: Wait 10-15 seconds after debug agent completes for container rebuild and restart",
-            "Allow time for image pull and pod restart after container rebuild",
-            "Pod must show Running status AND 1/1 ready",
-            "Check logs show no ImportError or ModuleNotFoundError",
-            "Readiness probe must be passing (may take a few seconds after pod starts)",
-            "If pod not ready immediately, wait up to 20 seconds for readiness probe to succeed",
-            "Application must respond to HTTP requests on port 8080"
-        ]
+        "model": "gpt-5-nano",
+        "temperature": 1
     },
-
     "knowledge-prompt": {
-        "problem-desc": "A Kubernetes pod is not becoming ready (0/1). The application requires a Python package (requests) that is not installed in the Dockerfile, causing the application to crash on startup with ImportError. The readiness probe fails because the application never starts successfully.",
-        "system-prompt": "Analyze the pod logs to identify missing dependencies, then examine the Dockerfile to understand why those dependencies are not installed.",
-        "additional-directions": "Focus on the root cause (missing dependency) rather than just the symptom (readiness probe failure)."
+        "problem-desc": "The pod stays at 0/1 Ready and repeatedly restarts. Logs show a startup exception (ImportError/ModuleNotFoundError).",
+        "system-prompt": "Give specific commands to fix this issue. If modifying file contents is necessary, use the sed command to achieve this. If providing a file path, make sure to keep the full file path. Suggest only the essential steps needed to solve the issue. Be frugal.",
+        "additional-directions": ""
     },
-
     "debug-prompt": {
-        "additional-directions": "Remember: the readiness probe configuration is correct. The issue is that the application crashes before it can respond to the probe."
+        "additional-directions": "If any deployment files are modified, reapply the deployment to the cluster."
     },
-
     "relevant-files": {
-        "deployment": ["readiness_missing_dependency.yaml"],
-        "application": ["server.py"],
+        "deployment": [
+            "readiness_missing_dependency.yaml"
+        ],
+        "application": [
+            "server.py"
+        ],
         "service": [],
         "dockerfile": true
     },
-
     "setup-commands": [
         "docker build -t kube-readiness-missing-dependency-app -f debug_assistant_latest/troubleshooting/readiness_missing_dependency/Dockerfile debug_assistant_latest/troubleshooting/readiness_missing_dependency",
         "kubectl apply -f debug_assistant_latest/troubleshooting/readiness_missing_dependency/readiness_missing_dependency.yaml"
-    ]
+    ],
+    "test-name": "readiness_missing_dependency",
+    "test-directory": "",
+    "yaml-file-name": "readiness_missing_dependency.yaml"
 }

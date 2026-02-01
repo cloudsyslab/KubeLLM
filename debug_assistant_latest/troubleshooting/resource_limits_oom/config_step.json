@@ -1,11 +1,6 @@
 {
-    "test-name": "resource_limits_oom",
-    "test-directory": "",
-    "yaml-file-name": "resource_limits_oom.yaml",
-    "minikube-profile": "lamap",
-
     "api-agent": {
-        "model": "llama3.1:70b",
+        "model": "gpt-5-mini",
         "embedder": "nomic-embed-text",
         "clear-knowledge": true,
         "new-run": true,
@@ -14,73 +9,55 @@
             "https://learnk8s.io/troubleshooting-deployments"
         ]
     },
-
     "debug-agent": {
-        "model": "gpt-4o",
+        "model": "gpt-5-nano",
         "instructions": [
-            "You are a Kubernetes troubleshooting expert specializing in resource limit issues.",
-            "When pods show CrashLoopBackOff, always check 'kubectl describe pod' for termination reasons.",
-            "Look for 'OOMKilled' in the pod events - this indicates the memory limit was exceeded.",
-            "Check the resource limits in the pod specification.",
-            "If OOMKilled, increase the memory limit to a reasonable value (128Mi or 256Mi).",
-            "After modifying the YAML, delete and reapply the pod.",
-            "Use <|SOLVED|> when the pod runs without OOMKilled events.",
-            "Use <|FAILED|> if you cannot resolve the issue."
+            "If all and only all commands fail to execute, declare that there was an error in trying to solve the issue, and end that statement with this token: <|ERROR|>.",
+            "You have solved this issue when this goal is met: The status of all pods say 'RUNNING'",
+            "After every step, check to see if you have met the goal",
+            "If you believe you have met the goal, declare that you have solved the user's issue, and end that statement with this token: <|SOLVED|>.",
+            "If the steps do not solve the issue, or if you need more information, declare that you cannot solve the issue, and end that statement with this token: <|FAILED|>.",
+            "Do not use live feed flags when checking the logs such as 'kubectl logs -f'",
+            "Do not use commands like vim or vi",
+            "Do not use commands that open up editors like 'kubectl edit'"
         ],
+        "api-key": "",
         "guidelines": [
-            "OOMKilled means the container used more memory than its limit",
-            "Check 'kubectl describe pod' for Last State: Terminated with Reason: OOMKilled",
-            "Look at the memory limits in resources.limits.memory",
-            "Typical fix: increase memory limit from 50Mi to 128Mi or 256Mi",
-            "Do not modify the application code - the issue is in resource limits",
-            "After fixing YAML: kubectl delete -f then kubectl apply -f",
-            "Verify pod stays running and doesn't restart",
-            "Do not use placeholder pod names - get actual name from kubectl get pods"
+            "If a command invocation is successful but gives no stdout nor stderr, then that is because that invocation resulted in no output to stdout or stderr.",
+            "If a command contains a placeholder name surrounded in angle brackets such as <pod_name>, for example, then **do not** run that command as-is. First run a `kubectl get` command to find a real name to replace the placeholder name, then run the suggested command with the replaced name of the resource. For example, if you see `kubectl logs <pod_name> -n example_namespace`, first run `kubectl get pods -n example_namespace` and use the name of the first pod you see.",
+            "Do not use live feed flags when checking the logs such as 'kubectl logs -f'",
+            "If you do not conclude on an answer or a code then try again please.",
+            "Do not use commands like vim or vi",
+            "Do not use commands that open up editors like 'kubectl edit'"
         ]
     },
-
     "verification-agent": {
-        "model": "gpt-4o",
-        "temperature": 0.3,
-        "instructions": [
-            "Verify that the pod is running without OOMKilled events.",
-            "Check pod status is Running with 1/1 ready.",
-            "Check 'kubectl describe pod' shows no OOMKilled in recent events.",
-            "Verify restart count is not increasing.",
-            "Use <|VERIFIED|> if pod runs successfully without memory issues.",
-            "Use <|FAILED|> if pod still shows OOMKilled or keeps restarting."
-        ],
-        "guidelines": [
-            "IMPORTANT: Wait 15-20 seconds after the debug agent completes to allow pod to restart and stabilize",
-            "Check pod events for RECENT OOMKilled events (not just current status)",
-            "Pod must be in Running state",
-            "Restart count should be stable (not increasing over 30 seconds)",
-            "Monitor the pod for at least 30 seconds to ensure it doesn't restart",
-            "No OOMKilled events in recent pod description",
-            "Memory limit should be reasonable (128Mi or higher)",
-            "Application should respond to HTTP requests"
-        ]
+        "model": "gpt-5-nano",
+        "temperature": 1
     },
-
     "knowledge-prompt": {
-        "problem-desc": "A Kubernetes pod keeps crashing with CrashLoopBackOff. Investigation shows the pod is being OOMKilled (Out of Memory Killed) because the memory limit is set to only 50Mi, which is too restrictive for the application's memory requirements.",
-        "system-prompt": "Analyze the pod events to identify OOMKilled status, then examine the resource limits to understand why the container is being killed.",
-        "additional-directions": "Focus on the resource limits specification. The solution involves increasing the memory limit to allow the application to run."
+        "problem-desc": "The pod repeatedly restarts (CrashLoopBackOff). Pod events show termination with reason OOMKilled.",
+        "system-prompt": "Give specific commands to fix this issue. If modifying file contents is necessary, use the sed command to achieve this. If providing a file path, make sure to keep the full file path. Suggest only the essential steps needed to solve the issue. Be frugal.",
+        "additional-directions": ""
     },
-
     "debug-prompt": {
-        "additional-directions": "This is a resource limit issue, not an application code issue. The fix is in the YAML configuration, specifically the resources.limits.memory value."
+        "additional-directions": "If any deployment files are modified, reapply the deployment to the cluster."
     },
-
     "relevant-files": {
-        "deployment": ["resource_limits_oom.yaml"],
-        "application": ["server.py"],
+        "deployment": [
+            "resource_limits_oom.yaml"
+        ],
+        "application": [
+            "server.py"
+        ],
         "service": [],
         "dockerfile": true
     },
-
     "setup-commands": [
         "docker build -t kube-resource-limits-oom-app -f debug_assistant_latest/troubleshooting/resource_limits_oom/Dockerfile debug_assistant_latest/troubleshooting/resource_limits_oom",
         "kubectl apply -f debug_assistant_latest/troubleshooting/resource_limits_oom/resource_limits_oom.yaml"
-    ]
+    ],
+    "test-name": "resource_limits_oom",
+    "test-directory": "",
+    "yaml-file-name": "resource_limits_oom.yaml"
 }
