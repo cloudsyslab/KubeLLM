@@ -7,7 +7,6 @@ without modifying the original JSON files.
 
 import copy
 import json
-import os
 from pathlib import Path
 from typing import Dict, Any, Optional
 
