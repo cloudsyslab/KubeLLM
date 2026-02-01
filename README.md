@@ -5,8 +5,8 @@ KubeLLM is an LLM-based multi-agent framework that manages your kubernetes clust
 ---
 
 ### Lab vs Local Execution
-- All environment enumeration and cluster commands must be run on the lab server by the user.
-- The local environment is for development only; do not run lab commands locally.
+- ALL tests and operational commands must be run on the lab server.
+- Local environment is for development/editing only (AI access and code changes).
 
 ---
 

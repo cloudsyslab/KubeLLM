@@ -1,65 +1,121 @@
-## Runbook
+## Runbook (Lab-Only)
 
-  1. List available tests
+LAB-ONLY EXECUTION: All tests and operational commands must be run on the lab server.
+Local runs are for development/editing only.
 
-  python3 debug_assistant_latest/runner.py --list
+### 0) After SSH to the lab server
 
-  2. Run tests
+1) Go to the repo:
+```
+cd ~/kubellm-minh-testing
+```
 
-  Single test:
-  python3 debug_assistant_latest/runner.py wrong_port
+2) Confirm repo is up to date:
+```
+git status -sb
+git pull
+```
 
-  Multiple tests (parallel):
-  python3 debug_assistant_latest/runner.py --run-many "port_*" --jobs 4
+### 1) Preflight (always required before any test run)
 
-  With config override:
-  python3 debug_assistant_latest/runner.py wrong_port --debug-model gpt-4o
+```
+bash orchestrator/preflight.sh
+```
 
-  Repeat queue (serial with teardown + hard-kill on stall):
-  python3 debug_assistant_latest/runner.py wrong_port --repeat 10 --stall-limit-s 900
+Expected: API ready and `kubectl get nodes` succeeds.
 
-  Repeat queue with explicit output dir:
-  python3 debug_assistant_latest/runner.py wrong_port --repeat 10 --output-dir /tmp/kubellm_runs
+### 2) List tests
 
-  Minikube profile override (only applied when explicitly passed):
-  python3 debug_assistant_latest/runner.py wrong_port --minikube-profile minh
+```
+python3 debug_assistant_latest/runner.py --list
+```
 
-  3. View results
+### 3) Run tests (recommended: runner.py)
 
-  Aggregate summary (printed automatically after run):
-  cat .local/test_runs/*/aggregate.json | jq
+Single test:
+```
+python3 debug_assistant_latest/runner.py wrong_port
+```
 
-  Specific test summary:
-  cat .local/test_runs/*/<test_name>/summary.json | jq
+Multiple tests (parallel):
+```
+python3 debug_assistant_latest/runner.py --run-many "port_*" --jobs 4
+```
 
-  Full logs for a test:
-  cat .local/test_runs/*/<test_name>/stdout.log
+With config override:
+```
+python3 debug_assistant_latest/runner.py wrong_port --debug-model gpt-4o
+```
 
-  Repeat queue summary:
-  cat .local/test_runs/<queue_id>/queue_summary.json | jq
+Repeat queue (serial with teardown + hard-kill on stall):
+```
+python3 debug_assistant_latest/runner.py wrong_port --repeat 10 --stall-limit-s 900
+```
 
-  4. Cleanup
+Repeat queue with explicit output dir:
+```
+python3 debug_assistant_latest/runner.py wrong_port --repeat 10 --output-dir /tmp/kubellm_runs
+```
 
-  python3 debug_assistant_latest/teardownenv.py <test_name>
-  # or
-  python3 debug_assistant_latest/teardownenv.py all
+Minikube profile override (only applied when explicitly passed):
+```
+python3 debug_assistant_latest/runner.py wrong_port --minikube-profile minh
+```
 
-  5. Find latest run
+### 4) View results
 
-  ls -lt .local/test_runs/ | head -5
+Aggregate summary (printed automatically after run):
+```
+cat .local/test_runs/*/aggregate.json | jq
+```
 
-  6. Repeat queue output layout
+Specific test summary:
+```
+cat .local/test_runs/*/<test_name>/summary.json | jq
+```
 
-  Without --output-dir:
-  .local/test_runs/<queue_id>/
-    queue_summary.json
-    iter-001/
-    iter-002/
-    ...
+Full logs for a test:
+```
+cat .local/test_runs/*/<test_name>/stdout.log
+```
 
-  With --output-dir /some/path:
-  /some/path/<queue_id>/
-    queue_summary.json
-    iter-001/
-    iter-002/
-    ...
+Repeat queue summary:
+```
+cat .local/test_runs/<queue_id>/queue_summary.json | jq
+```
+
+### 5) Cleanup
+
+```
+python3 debug_assistant_latest/teardownenv.py <test_name>
+```
+or:
+```
+python3 debug_assistant_latest/teardownenv.py all
+```
+
+### 6) Find latest run
+
+```
+ls -lt .local/test_runs/ | head -5
+```
+
+### 7) Repeat queue output layout
+
+Without --output-dir:
+```
+.local/test_runs/<queue_id>/
+  queue_summary.json
+  iter-001/
+  iter-002/
+  ...
+```
+
+With --output-dir /some/path:
+```
+/some/path/<queue_id>/
+  queue_summary.json
+  iter-001/
+  iter-002/
+  ...
+```
