@@ -1,11 +1,6 @@
 {
-    "test-name": "resource_limits_oom",
-    "test-directory": "",
-    "yaml-file-name": "resource_limits_oom.yaml",
-    "minikube-profile": "lamap",
-
     "api-agent": {
-        "model": "llama3.1:70b",
+        "model": "gpt-5-mini",
         "embedder": "nomic-embed-text",
         "clear-knowledge": true,
         "new-run": true,
@@ -14,67 +9,55 @@
             "https://learnk8s.io/troubleshooting-deployments"
         ]
     },
-
     "debug-agent": {
-        "model": "gpt-4o",
+        "model": "gpt-5-nano",
+        "api-key": "",
         "instructions": [
-            "You are troubleshooting a CrashLoopBackOff.",
-            "Use describe and events to identify the termination reason.",
-            "Inspect resource requests/limits and app behavior.",
-            "Make minimal changes based on evidence.",
-            "Use <|SOLVED|> when the pod stays running.",
-            "Use <|FAILED|> if you cannot resolve the issue."
+            "If all and only all commands fail to execute, declare error with <|ERROR|>.",
+            "You have solved this issue when this goal is met: The status of all pods say 'RUNNING'.",
+            "After every step, check to see if you have met the goal.",
+            "If you believe you have met the goal, declare solved with <|SOLVED|>.",
+            "If steps do not solve or need info, declare <|FAILED|>.",
+            "Do not use live feed flags like kubectl logs -f.",
+            "Do not use commands like vim or vi.",
+            "Do not use commands that open editors like kubectl edit."
         ],
         "guidelines": [
-            "Look for termination reasons like OOMKilled in pod events.",
-            "Check recent restarts and memory-related signals.",
-            "Adjust configuration only if evidence points there.",
-            "Avoid placeholders and interactive commands."
+            "If command succeeds with no output, that is expected.",
+            "If placeholder <pod_name> appears, run kubectl get first.",
+            "Do not use live feed flags like kubectl logs -f.",
+            "If you do not conclude on an answer or a code then try again please.",
+            "Do not use commands like vim or vi.",
+            "Do not use commands that open editors like kubectl edit."
         ]
     },
-
     "verification-agent": {
-        "model": "gpt-4o",
-        "temperature": 0.3,
-        "instructions": [
-            "Verify that the pod is running without OOMKilled events.",
-            "Check pod status is Running with 1/1 ready.",
-            "Check 'kubectl describe pod' shows no OOMKilled in recent events.",
-            "Verify restart count is not increasing.",
-            "Use <|VERIFIED|> if pod runs successfully without memory issues.",
-            "Use <|FAILED|> if pod still shows OOMKilled or keeps restarting."
-        ],
-        "guidelines": [
-            "IMPORTANT: Wait 15-20 seconds after the debug agent completes to allow pod to restart and stabilize",
-            "Check pod events for RECENT OOMKilled events (not just current status)",
-            "Pod must be in Running state",
-            "Restart count should be stable (not increasing over 30 seconds)",
-            "Monitor the pod for at least 30 seconds to ensure it doesn't restart",
-            "No OOMKilled events in recent pod description",
-            "Memory limit should be reasonable (128Mi or higher)",
-            "Application should respond to HTTP requests"
-        ]
+        "model": "gpt-5-nano",
+        "temperature": 1
     },
-
     "knowledge-prompt": {
         "problem-desc": "The pod repeatedly restarts (CrashLoopBackOff). Pod events show termination with reason OOMKilled.",
-        "system-prompt": "Analyze the pod events and resource configuration to identify why the container is being killed.",
-        "additional-directions": "Identify why the container exceeds its memory constraints and fix accordingly."
+        "system-prompt": "Give specific commands to fix this issue. If modifying file contents is necessary, use the sed command to achieve this. If providing a file path, make sure to keep the full file path. Suggest only the essential steps needed to solve the issue. Be frugal.",
+        "additional-directions": ""
     },
-
     "debug-prompt": {
-        "additional-directions": "Let evidence drive the fix; don’t assume the first hypothesis is correct."
+        "additional-directions": "If any deployment files are modified, reapply the deployment to the cluster."
     },
-
     "relevant-files": {
-        "deployment": ["resource_limits_oom.yaml"],
-        "application": ["server.py"],
+        "deployment": [
+            "resource_limits_oom.yaml"
+        ],
+        "application": [
+            "server.py"
+        ],
         "service": [],
         "dockerfile": true
     },
-
     "setup-commands": [
         "docker build -t kube-resource-limits-oom-app -f debug_assistant_latest/troubleshooting/resource_limits_oom/Dockerfile debug_assistant_latest/troubleshooting/resource_limits_oom",
         "kubectl apply -f debug_assistant_latest/troubleshooting/resource_limits_oom/resource_limits_oom.yaml"
-    ]
+    ],
+    "test-name": "resource_limits_oom",
+    "test-directory": "",
+    "yaml-file-name": "resource_limits_oom.yaml"
 }

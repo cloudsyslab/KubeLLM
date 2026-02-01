@@ -1,11 +1,6 @@
 {
-    "test-name": "readiness_missing_dependency",
-    "test-directory": "",
-    "yaml-file-name": "readiness_missing_dependency.yaml",
-    "minikube-profile": "lamap",
-
     "api-agent": {
-        "model": "llama3.1:70b",
+        "model": "gpt-5-mini",
         "embedder": "nomic-embed-text",
         "clear-knowledge": true,
         "new-run": true,
@@ -14,65 +9,55 @@
             "https://learnk8s.io/troubleshooting-deployments"
         ]
     },
-
     "debug-agent": {
-        "model": "gpt-4o",
+        "model": "gpt-5-nano",
+        "api-key": "",
         "instructions": [
-            "You are troubleshooting a pod that never becomes Ready.",
-            "Start with logs and events to identify the failure.",
-            "Determine whether the app is failing to start and why.",
-            "Apply the minimal fix and redeploy if needed.",
-            "Use <|SOLVED|> when the pod is Running and Ready (1/1).",
-            "Use <|FAILED|> if you cannot identify or fix the issue."
+            "If all and only all commands fail to execute, declare error with <|ERROR|>.",
+            "You have solved this issue when this goal is met: The status of all pods say 'RUNNING'.",
+            "After every step, check to see if you have met the goal.",
+            "If you believe you have met the goal, declare solved with <|SOLVED|>.",
+            "If steps do not solve or need info, declare <|FAILED|>.",
+            "Do not use live feed flags like kubectl logs -f.",
+            "Do not use commands like vim or vi.",
+            "Do not use commands that open editors like kubectl edit."
         ],
         "guidelines": [
-            "Check logs for startup exceptions (e.g., ImportError/ModuleNotFoundError).",
-            "Use describe to verify probe status and events.",
-            "Do not assume probes are wrong; verify from evidence.",
-            "Avoid placeholders and interactive commands."
+            "If command succeeds with no output, that is expected.",
+            "If placeholder <pod_name> appears, run kubectl get first.",
+            "Do not use live feed flags like kubectl logs -f.",
+            "If you do not conclude on an answer or a code then try again please.",
+            "Do not use commands like vim or vi.",
+            "Do not use commands that open editors like kubectl edit."
         ]
     },
-
     "verification-agent": {
-        "model": "gpt-4o",
-        "temperature": 0.3,
-        "instructions": [
-            "Verify that the application starts successfully and the readiness probe passes.",
-            "Check pod logs for any ImportError or startup errors.",
-            "Verify the pod status shows 1/1 READY.",
-            "Use <|VERIFIED|> only if pod is fully ready and application responds.",
-            "Use <|FAILED|> if the pod is not ready or application has errors."
-        ],
-        "guidelines": [
-            "IMPORTANT: Wait 10-15 seconds after debug agent completes for container rebuild and restart",
-            "Allow time for image pull and pod restart after container rebuild",
-            "Pod must show Running status AND 1/1 ready",
-            "Check logs show no ImportError or ModuleNotFoundError",
-            "Readiness probe must be passing (may take a few seconds after pod starts)",
-            "If pod not ready immediately, wait up to 20 seconds for readiness probe to succeed",
-            "Application must respond to HTTP requests on port 8080"
-        ]
+        "model": "gpt-5-nano",
+        "temperature": 1
     },
-
     "knowledge-prompt": {
         "problem-desc": "The pod stays at 0/1 Ready and repeatedly restarts. Logs show a startup exception (ImportError/ModuleNotFoundError).",
-        "system-prompt": "Analyze the pod logs and deployment configuration to identify why the app fails to start.",
-        "additional-directions": "Focus on why the app fails to start, not just the readiness symptom."
+        "system-prompt": "Give specific commands to fix this issue. If modifying file contents is necessary, use the sed command to achieve this. If providing a file path, make sure to keep the full file path. Suggest only the essential steps needed to solve the issue. Be frugal.",
+        "additional-directions": ""
     },
-
     "debug-prompt": {
-        "additional-directions": "Use logs to identify the missing component; fix based on evidence."
+        "additional-directions": "If any deployment files are modified, reapply the deployment to the cluster."
     },
-
     "relevant-files": {
-        "deployment": ["readiness_missing_dependency.yaml"],
-        "application": ["server.py"],
+        "deployment": [
+            "readiness_missing_dependency.yaml"
+        ],
+        "application": [
+            "server.py"
+        ],
         "service": [],
         "dockerfile": true
     },
-
     "setup-commands": [
         "docker build -t kube-readiness-missing-dependency-app -f debug_assistant_latest/troubleshooting/readiness_missing_dependency/Dockerfile debug_assistant_latest/troubleshooting/readiness_missing_dependency",
         "kubectl apply -f debug_assistant_latest/troubleshooting/readiness_missing_dependency/readiness_missing_dependency.yaml"
-    ]
+    ],
+    "test-name": "readiness_missing_dependency",
+    "test-directory": "",
+    "yaml-file-name": "readiness_missing_dependency.yaml"
 }
