@@ -540,18 +540,24 @@ class AgentVerification_v2(Agent):
             for relevantFileType in ["deployment", "application", "service"]:
                 self.prompt = traverseRelevantFiles(self.config, relevantFileType, self.prompt)  # prefer including YAML snippets
             
+            minikube_profile = (
+                self.config.get("minikube-profile")
+                or os.environ.get("MINIKUBE_PROFILE")
+                or "minikube"
+            )
+
             self.prompt += f"""
             ### CURRENT CONTEXT
             - Working directory: {self.config['test-directory']}
             - Main configuration file: {self.config.get('yaml-file-name', 'N/A')}
-            - Minikube profile: {self.config.get('minikube-profile', 'lamap')}
+            - Minikube profile: {minikube_profile}
             
             ### STEP-BY-STEP VERIFICATION PROCEDURE (follow exactly in order)
             1. Run `kubectl get pods` → confirm all expected pods exist and are in Running state with 1/1 (or expected) ready containers.
             2. For each expected pod, run `kubectl describe pod <pod-name>` and check Events for errors (CrashLoopBackOff, ImagePullBackOff, OOM, etc.).
             3. If relevant service YAML exists, run `kubectl get service <service-name>` → confirm expected Service exists and has ClusterIP assigned.
             4. If a Service is running:
-               - Run: `minikube -p {self.config.get('minikube-profile', 'minikube')} service <service-name> --url`
+               - Run: `minikube -p {minikube_profile} service <service-name> --url`
                - Take the URL(s) returned and test with `curl -v <url>` 
             5. If Ingress exists, get the ingress address and test the hostname/path with curl.
             """

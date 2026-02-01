@@ -1,11 +1,6 @@
 {
-    "test-name": "selector_env_variable",
-    "test-directory": "",
-    "yaml-file-name": "selector_env_variable.yaml",
-    "minikube-profile": "lamap",
-
     "api-agent": {
-        "model": "llama3.1:70b",
+        "model": "gpt-5-mini",
         "embedder": "nomic-embed-text",
         "clear-knowledge": true,
         "new-run": true,
@@ -14,74 +9,58 @@
             "https://learnk8s.io/troubleshooting-deployments"
         ]
     },
-
     "debug-agent": {
-        "model": "gpt-4o",
+        "model": "gpt-5-nano",
         "instructions": [
-            "You are a Kubernetes troubleshooting expert handling multiple simultaneous issues.",
-            "This test case has TWO INDEPENDENT issues that must BOTH be fixed:",
-            "1. Pod crashes due to missing environment variable",
-            "2. Service cannot find pod due to selector mismatch",
-            "Check pod logs first to identify the missing environment variable.",
-            "Check service selector vs. pod labels to identify the mismatch.",
-            "Fix BOTH issues before considering the problem solved.",
-            "Use <|SOLVED|> only when pod is running AND service has endpoints.",
-            "Use <|FAILED|> if you cannot fix both issues."
+            "If all and only all commands fail to execute, declare that there was an error in trying to solve the issue, and end that statement with this token: <|ERROR|>.",
+            "You have solved this issue when this goal is met: The status of all pods say 'RUNNING'",
+            "After every step, check to see if you have met the goal",
+            "If you believe you have met the goal, declare that you have solved the user's issue, and end that statement with this token: <|SOLVED|>.",
+            "If the steps do not solve the issue, or if you need more information, declare that you cannot solve the issue, and end that statement with this token: <|FAILED|>.",
+            "Do not use live feed flags when checking the logs such as 'kubectl logs -f'",
+            "Do not use commands like vim or vi",
+            "Do not use commands that open up editors like 'kubectl edit'"
         ],
+        "api-key": "",
         "guidelines": [
-            "Start by checking pod logs for KeyError to identify missing env var",
-            "Then check 'kubectl describe service' to see if it has endpoints",
-            "Compare service selector with pod labels using 'kubectl get' commands",
-            "Fix the deployment YAML to add the missing environment variable",
-            "Fix the service YAML to correct the selector",
-            "Delete and reapply BOTH resources after making changes",
-            "Verify pod is Running (not CrashLoopBackOff)",
-            "Verify service has endpoints listed",
-            "Do not use placeholder names - extract actual names from kubectl output"
+            "If a command invocation is successful but gives no stdout nor stderr, then that is because that invocation resulted in no output to stdout or stderr.",
+            "If a command contains a placeholder name surrounded in angle brackets such as <pod_name>, for example, then **do not** run that command as-is. First run a `kubectl get` command to find a real name to replace the placeholder name, then run the suggested command with the replaced name of the resource. For example, if you see `kubectl logs <pod_name> -n example_namespace`, first run `kubectl get pods -n example_namespace` and use the name of the first pod you see.",
+            "Do not use live feed flags when checking the logs such as 'kubectl logs -f'",
+            "If you do not conclude on an answer or a code then try again please.",
+            "Do not use commands like vim or vi",
+            "Do not use commands that open up editors like 'kubectl edit'"
         ]
     },
-
     "verification-agent": {
-        "model": "gpt-4o",
-        "temperature": 0.3,
-        "instructions": [
-            "Verify that BOTH issues are fixed:",
-            "1. Pod must be running without errors (environment variable is set)",
-            "2. Service must have endpoints (selector matches pod labels)",
-            "Check pod logs for any KeyError messages.",
-            "Check service endpoints with 'kubectl describe service'.",
-            "Use <|VERIFIED|> only if both issues are resolved.",
-            "Use <|FAILED|> if either issue remains."
-        ],
-        "guidelines": [
-            "Pod status must be Running with 1/1 ready",
-            "Pod logs must not show KeyError for APP_MESSAGE",
-            "Service must have at least one endpoint listed",
-            "kubectl describe service should show the pod IP as an endpoint",
-            "Both direct pod access and service access should work"
-        ]
+        "model": "gpt-5-nano",
+        "temperature": 1
     },
-
     "knowledge-prompt": {
-        "problem-desc": "A Kubernetes pod crashes immediately with KeyError due to missing environment variable APP_MESSAGE. Additionally, the service cannot route traffic to the pod because the service selector label does not match the pod's label. Both issues must be identified and fixed.",
-        "system-prompt": "Analyze both the pod configuration (for missing env vars) and the service configuration (for selector mismatch) to identify all issues.",
-        "additional-directions": "These are two independent issues - one in the pod spec and one in the service spec. Both must be fixed."
+        "problem-desc": "The pod crashes on startup with a KeyError, and the service shows no endpoints.",
+        "system-prompt": "Give specific commands to fix this issue. If modifying file contents is necessary, use the sed command to achieve this. If providing a file path, make sure to keep the full file path. Suggest only the essential steps needed to solve the issue. Be frugal.",
+        "additional-directions": ""
     },
-
     "debug-prompt": {
-        "additional-directions": "Remember to check BOTH the pod logs (for env var issues) AND the service endpoints (for selector issues). Both problems must be solved."
+        "additional-directions": "If any deployment files are modified, reapply the deployment to the cluster."
     },
-
     "relevant-files": {
-        "deployment": ["selector_env_variable.yaml"],
-        "application": ["server.py"],
-        "service": ["app_service.yaml"],
+        "deployment": [
+            "selector_env_variable.yaml"
+        ],
+        "application": [
+            "server.py"
+        ],
+        "service": [
+            "app_service.yaml"
+        ],
         "dockerfile": true
     },
-
     "setup-commands": [
         "docker build -t kube-selector-env-app -f debug_assistant_latest/troubleshooting/selector_env_variable/Dockerfile debug_assistant_latest/troubleshooting/selector_env_variable",
         "kubectl apply -f debug_assistant_latest/troubleshooting/selector_env_variable/selector_env_variable.yaml",
         "kubectl apply -f debug_assistant_latest/troubleshooting/selector_env_variable/app_service.yaml"
-    ]
+    ],
+    "test-name": "selector_env_variable",
+    "test-directory": "",
+    "yaml-file-name": "selector_env_variable.yaml"
 }
