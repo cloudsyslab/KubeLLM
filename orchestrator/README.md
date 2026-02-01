@@ -252,6 +252,8 @@ Deliverables:
 
 ## Lab Playbook (Exact Commands)
 
+LAB-ONLY EXECUTION: All tests and operational commands must be run on the lab server. Local runs are for development/editing only.
+
 1) Preflight (always first):
 ```bash
 bash orchestrator/preflight.sh
