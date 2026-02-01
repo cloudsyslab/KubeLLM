@@ -789,8 +789,9 @@ def _repeat_iteration_worker(result_queue, payload):
     # Build a fresh Namespace from the serialised args
     iter_args = argparse.Namespace(**args_dict)
 
-    # Per-iteration output dir (always deterministic)
-    iter_dir = Path(base_output_dir) / f"{base_run_id}-{iteration:03d}"
+    # Per-iteration output dir nested under the queue directory
+    queue_dir = Path(base_output_dir) / base_run_id
+    iter_dir = queue_dir / f"iter-{iteration:03d}"
     iter_args.output_dir = iter_dir
     output_dir_str = str(iter_dir)
 
@@ -888,7 +889,7 @@ def _run_repeat_queue(args, mode, base_run_id, base_output_dir):
             result_q.cancel_join_thread()
 
             # Output dir for this iteration (always deterministic)
-            iter_out = str(Path(base_output_dir) / f"{base_run_id}-{i:03d}")
+            iter_out = str(Path(base_output_dir) / base_run_id / f"iter-{i:03d}")
 
             results.append((i, None, iter_duration, iter_out))
             print(f"[STALL] Aborting queue — no further iterations will run.")
@@ -959,8 +960,8 @@ def _run_repeat_queue(args, mode, base_run_id, base_output_dir):
             "output_dir": out_dir,
         })
 
-    # Write summary alongside the iteration dirs
-    summary_dir = Path(base_output_dir)
+    # Write summary in the queue-scoped directory alongside iteration dirs
+    summary_dir = Path(base_output_dir) / base_run_id
     summary_dir.mkdir(parents=True, exist_ok=True)
     summary_path = summary_dir / "queue_summary.json"
     with open(summary_path, "w") as f:
