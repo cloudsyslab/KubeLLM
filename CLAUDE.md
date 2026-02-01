@@ -8,6 +8,8 @@ KubeLLM is an LLM-based multi-agent framework for automated Kubernetes cluster t
 
 ## Commands
 
+LAB-ONLY EXECUTION: All tests and operational commands must be run on the lab server. Local runs are for development/editing only.
+
 ### Environment Setup
 ```bash
 pip install -r requirements.txt
