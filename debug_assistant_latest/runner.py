@@ -768,39 +768,91 @@ def _apply_repeat_overrides(args):
     return True
 
 
-def _repeat_iteration_worker(result_queue, run_func, iteration):
+def _repeat_iteration_worker(result_queue, payload):
     """
-    Worker target for a single repeat iteration.
+    Spawn-safe worker for a single repeat iteration.
 
-    Runs run_func(iteration) in a child process and puts the exit code
-    (or exception info) onto result_queue.
+    Receives a plain-dict *payload* (fully picklable) and reconstructs a
+    fresh argparse.Namespace per iteration so there are no shared-state
+    side-effects.
+
+    Puts ("ok", exit_code, output_dir_str) or ("error", msg, output_dir_str)
+    onto *result_queue*.
     """
+    mode = payload["mode"]
+    iteration = payload["iteration"]
+    base_run_id = payload["base_run_id"]
+    base_output_dir = payload.get("base_output_dir")  # str or None
+    args_dict = payload["args"]
+
+    # Build a fresh Namespace from the serialised args
+    iter_args = argparse.Namespace(**args_dict)
+
+    # Per-iteration output dir
+    if base_output_dir is not None:
+        iter_dir = Path(base_output_dir) / f"{base_run_id}-{iteration:03d}"
+    else:
+        iter_dir = None  # cmd_run_single / cmd_run_many will generate one
+    iter_args.output_dir = iter_dir
+
+    output_dir_str = str(iter_dir) if iter_dir is not None else ""
+
     try:
-        exit_code = run_func(iteration)
-        result_queue.put(("ok", exit_code))
+        if mode == "single":
+            exit_code = cmd_run_single(iter_args, payload["test_case"])
+        else:
+            exit_code = cmd_run_many(iter_args)
+        result_queue.put(("ok", exit_code, output_dir_str))
     except Exception as exc:
-        result_queue.put(("error", str(exc)))
+        result_queue.put(("error", str(exc), output_dir_str))
 
 
-def _run_repeat_queue(args, run_func):
+def _build_repeat_payload(args, mode, iteration, base_run_id, base_output_dir):
     """
-    Run *run_func* up to args.repeat times serially with a hard-kill stall watchdog.
+    Build a picklable payload dict for _repeat_iteration_worker.
 
-    run_func(iteration: int) -> int   # returns exit code of one iteration.
+    Converts args to a plain dict, replacing Path values with strings
+    so the payload survives pickle (spawn start-method).
+    """
+    args_dict = {}
+    for k, v in vars(args).items():
+        args_dict[k] = str(v) if isinstance(v, Path) else v
+    # output_dir will be overridden by the worker; set to None to be explicit
+    args_dict["output_dir"] = None
 
-    Each iteration runs in a subprocess (multiprocessing.Process).  If an
-    iteration exceeds --stall-limit-s, the process is terminated (SIGTERM),
-    given 5 s to clean up, then killed (SIGKILL).  The queue stops on stall.
+    payload = {
+        "mode": mode,
+        "iteration": iteration,
+        "base_run_id": base_run_id,
+        "base_output_dir": str(base_output_dir) if base_output_dir is not None else None,
+        "args": args_dict,
+    }
+    if mode == "single":
+        payload["test_case"] = args.test_case
+    return payload
 
-    Prints a queue summary at the end and returns the final exit code.
+
+def _run_repeat_queue(args, mode, base_run_id, base_output_dir):
+    """
+    Run iterations serially with a hard-kill stall watchdog.
+
+    Each iteration runs in a child process (multiprocessing.Process) using
+    the spawn-safe _repeat_iteration_worker.  If an iteration exceeds
+    --stall-limit-s the process is terminated (SIGTERM), given 5 s to
+    clean up, then killed (SIGKILL).  The queue stops on stall.
+
+    Writes queue_summary.json and prints a queue summary at the end.
+    Returns a non-zero exit code if any iteration failed or stalled.
     """
     total = args.repeat
     stall_limit = args.stall_limit_s
-    results = []  # list of (iteration, exit_code | None, duration_s)
+    # (iteration, exit_code | None, duration_s, output_dir_str)
+    results: List[Tuple[int, Optional[int], float, str]] = []
 
     print(f"[REPEAT] Queue: {total} iteration(s), stall limit {stall_limit}s")
     print()
 
+    queue_started_at = datetime.now().isoformat()
     queue_start = time.perf_counter()
 
     for i in range(1, total + 1):
@@ -809,10 +861,11 @@ def _run_repeat_queue(args, run_func):
         print(f"[REPEAT] Iteration {i}/{total}")
         print(f"{'=' * 60}")
 
+        payload = _build_repeat_payload(args, mode, i, base_run_id, base_output_dir)
         result_q = Queue()
         proc = Process(
             target=_repeat_iteration_worker,
-            args=(result_q, run_func, i),
+            args=(result_q, payload),
         )
         proc.start()
 
@@ -835,18 +888,25 @@ def _run_repeat_queue(args, run_func):
             result_q.close()
             result_q.cancel_join_thread()
 
-            results.append((i, None, iter_duration))
+            # Try to determine the output dir for this iteration
+            iter_out = ""
+            if base_output_dir is not None:
+                iter_out = str(Path(base_output_dir) / f"{base_run_id}-{i:03d}")
+
+            results.append((i, None, iter_duration, iter_out))
             print(f"[STALL] Aborting queue — no further iterations will run.")
             break
 
         # Process finished — collect result from queue
-        exit_code = 1  # default to failure
+        exit_code = 1
+        output_dir_str = ""
         try:
-            status_type, payload = result_q.get(timeout=2.0)
+            status_type, ec_or_msg, out_dir = result_q.get(timeout=2.0)
+            output_dir_str = out_dir
             if status_type == "ok":
-                exit_code = payload if payload is not None else 1
+                exit_code = ec_or_msg if ec_or_msg is not None else 1
             else:
-                print(f"[ERROR] Iteration {i} raised: {payload}")
+                print(f"[ERROR] Iteration {i} raised: {ec_or_msg}")
                 exit_code = 1
         except queue.Empty:
             print(f"[ERROR] Iteration {i}: worker finished but produced no result")
@@ -857,24 +917,55 @@ def _run_repeat_queue(args, run_func):
         result_q.close()
         result_q.cancel_join_thread()
 
-        results.append((i, exit_code, iter_duration))
+        results.append((i, exit_code, iter_duration, output_dir_str))
         print()
 
-    # Queue summary
+    # Queue summary (console)
     queue_duration = time.perf_counter() - queue_start
+    queue_finished_at = datetime.now().isoformat()
     print()
     print(f"{'=' * 60}")
     print(f"[REPEAT] Queue summary ({len(results)}/{total} iterations)")
     print(f"{'=' * 60}")
-    passed = sum(1 for _, ec, _ in results if ec == 0)
-    failed = sum(1 for _, ec, _ in results if ec is not None and ec != 0)
-    stalled = sum(1 for _, ec, _ in results if ec is None)
-    for iteration, ec, dur in results:
+    passed = sum(1 for _, ec, _, _ in results if ec == 0)
+    failed = sum(1 for _, ec, _, _ in results if ec is not None and ec != 0)
+    stalled = sum(1 for _, ec, _, _ in results if ec is None)
+    for iteration, ec, dur, _ in results:
         tag = "PASS" if ec == 0 else ("STALL" if ec is None else "FAIL")
         print(f"  Iteration {iteration}: {tag} ({dur:.1f}s)")
     print()
     print(f"  Passed: {passed}  Failed: {failed}  Stalled: {stalled}")
     print(f"  Total wall clock: {queue_duration:.1f}s")
+
+    # Write queue_summary.json
+    summary_obj = {
+        "queue_id": base_run_id,
+        "total_iterations": total,
+        "completed_iterations": len(results),
+        "stall_limit_s": stall_limit,
+        "started_at": queue_started_at,
+        "finished_at": queue_finished_at,
+        "results": [],
+    }
+    for iteration, ec, dur, out_dir in results:
+        tag = "PASS" if ec == 0 else ("STALL" if ec is None else "FAIL")
+        summary_obj["results"].append({
+            "iteration": iteration,
+            "status": tag,
+            "duration_s": round(dur, 2),
+            "output_dir": out_dir,
+        })
+
+    # Determine where to write the summary
+    if base_output_dir is not None:
+        summary_dir = Path(base_output_dir)
+    else:
+        summary_dir = REPO_ROOT / ".local" / "test_runs" / base_run_id
+    summary_dir.mkdir(parents=True, exist_ok=True)
+    summary_path = summary_dir / "queue_summary.json"
+    with open(summary_path, "w") as f:
+        json.dump(summary_obj, f, indent=2)
+    print(f"\n  Queue summary written to: {summary_path}")
 
     # Return non-zero if any iteration failed/stalled
     if failed > 0 or stalled > 0:
@@ -1019,19 +1110,9 @@ Examples:
                 print(f"\nRepeat: {args.repeat} iterations, stall limit: {args.stall_limit_s}s")
                 return 0
 
-            # Generate a base run_id for the repeat queue
             base_run_id = get_timestamp_id()
-            base_output_dir = args.output_dir  # may be None
-
-            def _iter_run_many(iteration):
-                # Per-iteration output dir to avoid overwrites
-                if base_output_dir is not None:
-                    args.output_dir = base_output_dir / f"{base_run_id}-{iteration:03d}"
-                else:
-                    args.output_dir = None  # let cmd_run_many generate its own timestamped dir
-                return cmd_run_many(args)
-
-            return _run_repeat_queue(args, _iter_run_many)
+            base_output_dir = args.output_dir  # Path or None
+            return _run_repeat_queue(args, "many", base_run_id, base_output_dir)
         return cmd_run_many(args)
     elif args.test_case:
         # Validate test case exists
@@ -1046,19 +1127,9 @@ Examples:
                 print(f"\nRepeat: {args.repeat} iterations, stall limit: {args.stall_limit_s}s")
                 return 0
 
-            # Generate a base run_id for the repeat queue
             base_run_id = get_timestamp_id()
-            base_output_dir = args.output_dir  # may be None
-
-            def _iter_run_single(iteration):
-                # Per-iteration output dir to avoid overwrites
-                if base_output_dir is not None:
-                    args.output_dir = base_output_dir / f"{base_run_id}-{iteration:03d}"
-                else:
-                    args.output_dir = None  # let cmd_run_single generate its own timestamped dir
-                return cmd_run_single(args, args.test_case)
-
-            return _run_repeat_queue(args, _iter_run_single)
+            base_output_dir = args.output_dir  # Path or None
+            return _run_repeat_queue(args, "single", base_run_id, base_output_dir)
         return cmd_run_single(args, args.test_case)
     else:
         parser.print_help()
