@@ -276,6 +276,15 @@ python3 debug_assistant_latest/runner.py --run-many all --jobs 8
 
 # Dry run
 python3 debug_assistant_latest/runner.py --run-many "wrong_*" --dry-run
+
+# Repeat queue (serial, teardown forced, hard-kill on stall)
+python3 debug_assistant_latest/runner.py wrong_port --repeat 10 --stall-limit-s 900
+
+# Repeat queue with explicit output dir
+python3 debug_assistant_latest/runner.py wrong_port --repeat 10 --output-dir /tmp/kubellm_runs
+
+# Minikube profile override (only applied when explicitly passed)
+python3 debug_assistant_latest/runner.py wrong_port --minikube-profile minh
 ```
 
 3) Manual test case application (alternative):
@@ -295,6 +304,9 @@ cat .local/test_runs/*/aggregate.json | jq
 
 # Per-test summary
 cat .local/test_runs/*/<CASE>/summary.json | jq
+
+# Repeat queue summary
+cat .local/test_runs/<QUEUE_ID>/queue_summary.json | jq
 ```
 
 6) Rollback:
@@ -305,6 +317,26 @@ kubectl --kubeconfig ~/.kube/minh-admin.conf delete -f debug_assistant_latest/tr
 7) Teardown all test cases:
 ```bash
 cd debug_assistant_latest && python3 teardownenv.py all
+```
+
+## Repeat Queue Output Layout
+
+Without --output-dir:
+```
+.local/test_runs/<queue_id>/
+  queue_summary.json
+  iter-001/
+  iter-002/
+  ...
+```
+
+With --output-dir /some/path:
+```
+/some/path/<queue_id>/
+  queue_summary.json
+  iter-001/
+  iter-002/
+  ...
 ```
 
 ## Orchestrator Usage Pattern
