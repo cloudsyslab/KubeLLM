@@ -7,6 +7,7 @@ without modifying the original JSON files.
 
 import copy
 import json
+import os
 from pathlib import Path
 from typing import Dict, Any, Optional
 
@@ -17,6 +18,7 @@ CLI_TO_CONFIG_MAP = {
     "api_model": "api-agent.model",
     "verification_model": "verification-agent.model",
     "embedder": "api-agent.embedder",
+    "minikube_profile": "minikube-profile",
 }
 
 
