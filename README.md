@@ -55,9 +55,14 @@ All troubleshooting test cases are located in `debug_assistant_latest/troublesho
 ---
 
 ### Instructions to Run Tests 📝
-Simply navigate to the kube_test.py file in debug_assistant_latest folder and run the test.
+Recommended: use the test runner.
 ```
-  python3 kube_test.py
+python3 debug_assistant_latest/runner.py --list
+python3 debug_assistant_latest/runner.py wrong_port
+python3 debug_assistant_latest/runner.py --run-many "port_*" --jobs 4
+
+# Repeat queue (serial, teardown forced, hard-kill on stall)
+python3 debug_assistant_latest/runner.py wrong_port --repeat 10 --stall-limit-s 900
 ```
 
 ---

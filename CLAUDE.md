@@ -44,7 +44,20 @@ python3 debug_assistant_latest/runner.py --run-many all --jobs 8
 
 # Dry run (show what would execute)
 python3 debug_assistant_latest/runner.py --run-many "wrong_*" --dry-run
+
+# Repeat queue (serial, teardown forced, hard-kill on stall)
+python3 debug_assistant_latest/runner.py wrong_port --repeat 10 --stall-limit-s 900
+
+# Repeat queue with explicit output dir
+python3 debug_assistant_latest/runner.py wrong_port --repeat 10 --output-dir /tmp/kubellm_runs
+
+# Minikube profile override (only applied when explicitly passed)
+python3 debug_assistant_latest/runner.py wrong_port --minikube-profile minh
 ```
+
+Notes:
+- `--minikube-profile` only overrides config when explicitly provided.
+- Verification agent uses `minikube-profile` from config if present; otherwise falls back to `MINIKUBE_PROFILE` env or `minikube`.
 
 #### Using main.py (Legacy - single test only)
 ```bash
@@ -59,7 +72,7 @@ python3 debug_assistant_latest/teardownenv.py all  # teardown all
 ```
 
 ### Test Output Structure
-Test runs produce structured output in `.local/test_runs/<timestamp>/`:
+Single runs produce structured output in `.local/test_runs/<timestamp>/`:
 ```
 .local/test_runs/2026-01-24T15-30-00/
   wrong_port/
@@ -69,6 +82,22 @@ Test runs produce structured output in `.local/test_runs/<timestamp>/`:
     config_effective.json   # Config with overrides applied
   aggregate.json            # Run-level summary
   run_config.json           # CLI args and overrides used
+```
+
+Repeat queue output (serial):
+```
+.local/test_runs/<queue_id>/
+  queue_summary.json         # Queue-level summary
+  iter-001/
+    <test_name>/
+      stdout.log
+      stderr.log
+      summary.json
+      config_effective.json
+    aggregate.json
+    run_config.json
+  iter-002/
+    ...
 ```
 
 ### Lab Server Commands
@@ -113,8 +142,9 @@ config_step.json → Knowledge Agent (RAG) → Debug Agent (kubectl/file ops) �
 
 Canonical location: `debug_assistant_latest/troubleshooting/`
 
-15 test cases total:
-- **Basic**: correct_app, wrong_port, wrong_interface, incorrect_selector, port_mismatch, readiness_failure, liveness_probe, missing_dependency, environment_variable, no_pod_ip, volume_mount
+13 configured test cases (2 view-only examples without configs):
+- **Basic**: wrong_port, wrong_interface, incorrect_selector, port_mismatch, readiness_failure, liveness_probe, missing_dependency, environment_variable, volume_mount
+- **View-only (no configs)**: correct_app, no_pod_ip
 - **Combined**: port_mismatch_wrong_interface, readiness_missing_dependency, selector_env_variable, resource_limits_oom
 
 Each test case directory contains:
