@@ -768,6 +768,22 @@ def _apply_repeat_overrides(args):
     return True
 
 
+def _find_latest_run_dir_after(ts):
+    """
+    Return the newest directory under .local/test_runs/ whose mtime >= *ts*,
+    or None if nothing qualifies.  Used to discover the output dir when
+    --output-dir was not set and the child generated a timestamped dir.
+    """
+    runs_root = REPO_ROOT / ".local" / "test_runs"
+    if not runs_root.is_dir():
+        return None
+    candidates = [p for p in runs_root.iterdir() if p.is_dir() and p.stat().st_mtime >= ts]
+    if not candidates:
+        return None
+    # Return the most-recently modified
+    return max(candidates, key=lambda p: p.stat().st_mtime)
+
+
 def _repeat_iteration_worker(result_queue, payload):
     """
     Spawn-safe worker for a single repeat iteration.
@@ -797,13 +813,27 @@ def _repeat_iteration_worker(result_queue, payload):
 
     output_dir_str = str(iter_dir) if iter_dir is not None else ""
 
+    # Timestamp before run so we can discover the generated dir afterwards
+    pre_run_ts = time.time()
+
     try:
         if mode == "single":
             exit_code = cmd_run_single(iter_args, payload["test_case"])
         else:
             exit_code = cmd_run_many(iter_args)
+
+        # If no explicit output dir, discover the one the run created
+        if not output_dir_str:
+            found = _find_latest_run_dir_after(pre_run_ts)
+            if found is not None:
+                output_dir_str = str(found)
+
         result_queue.put(("ok", exit_code, output_dir_str))
     except Exception as exc:
+        if not output_dir_str:
+            found = _find_latest_run_dir_after(pre_run_ts)
+            if found is not None:
+                output_dir_str = str(found)
         result_queue.put(("error", str(exc), output_dir_str))
 
 
@@ -883,6 +913,8 @@ def _run_repeat_queue(args, mode, base_run_id, base_output_dir):
                 print(f"[STALL] Process did not exit after SIGTERM, sending SIGKILL.")
                 proc.kill()
                 proc.join(timeout=2)
+                if proc.is_alive():
+                    print(f"[WARNING] Process {proc.pid} still alive after SIGKILL — may need manual cleanup.")
 
             # Cleanup queue resources
             result_q.close()
@@ -897,18 +929,24 @@ def _run_repeat_queue(args, mode, base_run_id, base_output_dir):
             print(f"[STALL] Aborting queue — no further iterations will run.")
             break
 
-        # Process finished — collect result from queue
+        # Process finished — collect result from queue (retry up to 5 times)
         exit_code = 1
         output_dir_str = ""
-        try:
-            status_type, ec_or_msg, out_dir = result_q.get(timeout=2.0)
-            output_dir_str = out_dir
-            if status_type == "ok":
-                exit_code = ec_or_msg if ec_or_msg is not None else 1
-            else:
-                print(f"[ERROR] Iteration {i} raised: {ec_or_msg}")
-                exit_code = 1
-        except queue.Empty:
+        got_result = False
+        for _attempt in range(5):
+            try:
+                status_type, ec_or_msg, out_dir = result_q.get(timeout=1.0)
+                output_dir_str = out_dir
+                if status_type == "ok":
+                    exit_code = ec_or_msg if ec_or_msg is not None else 1
+                else:
+                    print(f"[ERROR] Iteration {i} raised: {ec_or_msg}")
+                    exit_code = 1
+                got_result = True
+                break
+            except queue.Empty:
+                continue
+        if not got_result:
             print(f"[ERROR] Iteration {i}: worker finished but produced no result")
             exit_code = 1
 
