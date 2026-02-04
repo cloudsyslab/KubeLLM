@@ -56,7 +56,7 @@
         "dockerfile": true
     },
     "setup-commands": [
-        "docker build -t kube-port-mismatch-app -f debug_assistant_latest/troubleshooting/port_mismatch/Dockerfile debug_assistant_latest/troubleshooting/port_mismatch",
+        "bash -lc 'PROFILE=${MINIKUBE_PROFILE:-minikube}; CTX=$(kubectl config current-context 2>/dev/null || true); if command -v minikube >/dev/null 2>&1 && [ \"$CTX\" = \"$PROFILE\" ] && minikube -p \"$PROFILE\" status --format \"{{.Host}}\" 2>/dev/null | grep -qi running; then minikube -p \"$PROFILE\" image build -t kube-port-mismatch-app -f debug_assistant_latest/troubleshooting/port_mismatch/Dockerfile debug_assistant_latest/troubleshooting/port_mismatch; else docker build -t kube-port-mismatch-app -f debug_assistant_latest/troubleshooting/port_mismatch/Dockerfile debug_assistant_latest/troubleshooting/port_mismatch; fi'",
         "kubectl apply -f debug_assistant_latest/troubleshooting/port_mismatch/port_mismatch.yaml",
         "kubectl apply -f debug_assistant_latest/troubleshooting/port_mismatch/app_service.yaml"
     ],
