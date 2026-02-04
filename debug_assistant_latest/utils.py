@@ -99,8 +99,12 @@ def setUpEnvironment(config):
     """ Setup the enviornment using the set up commands specified in the config"""
     try:
         # Run setup commands from repo root so repo-root-relative paths work regardless of CWD.
+        env = os.environ.copy()
+        minikube_profile = config.get("minikube-profile")
+        if minikube_profile:
+            env["MINIKUBE_PROFILE"] = minikube_profile
         for command in config.get("setup-commands", []):
-            subprocess.run(command, shell=True, check=True, cwd=str(REPO_ROOT))
+            subprocess.run(command, shell=True, check=True, cwd=str(REPO_ROOT), env=env)
     except Exception as e:
         print(f"Error running setup command: {e}")
 
