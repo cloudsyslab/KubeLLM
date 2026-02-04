@@ -52,7 +52,7 @@ TEARDOWN_CONFIG = {
     },
     "liveness_probe": {
         "docker_images": [],
-        "restore_files": ["yaml"],
+        "restore_files": ["yaml", "server.py", "Dockerfile"],
         "k8s_manifests": ["{name}.yaml"],
     },
     "missing_dependency": {
@@ -77,22 +77,22 @@ TEARDOWN_CONFIG = {
     },
     "port_mismatch_wrong_interface": {
         "docker_images": ["kube-port-mismatch-wrong-interface-app"],
-        "restore_files": [],
+        "restore_files": ["yaml", "server.py", "Dockerfile", "app_service.yaml"],
         "k8s_manifests": ["{name}.yaml", "app_service.yaml"],
     },
     "readiness_missing_dependency": {
         "docker_images": ["kube-readiness-missing-dependency-app"],
-        "restore_files": [],
+        "restore_files": ["yaml", "server.py", "Dockerfile"],
         "k8s_manifests": ["{name}.yaml"],
     },
     "selector_env_variable": {
         "docker_images": ["kube-selector-env-app"],
-        "restore_files": [],
+        "restore_files": ["yaml", "server.py", "Dockerfile", "app_service.yaml"],
         "k8s_manifests": ["{name}.yaml", "app_service.yaml"],
     },
     "resource_limits_oom": {
         "docker_images": ["kube-resource-limits-oom-app"],
-        "restore_files": [],
+        "restore_files": ["yaml", "server.py", "Dockerfile"],
         "k8s_manifests": ["{name}.yaml"],
     },
     "volume_mount": {
