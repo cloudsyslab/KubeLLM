@@ -6,13 +6,18 @@ import time
 
 db_path = os.path.expanduser("~/KubeLLM/token_metrics.db")
 
-def allStepsAtOnce(configFile = None):
+def allStepsAtOnce(configFile = None, model_override=None, temperature_override=None):
     """
         This function will run the knowledge agent and debug agent. 
         When the debug agent receives the response from the knowledge
         agent, the debug agent will run all the commands all at once.
 
         Approach by: William Clifford
+        
+        Args:
+            configFile: Path to config file
+            model_override: Optional model name to override config (for automation)
+            temperature_override: Optional temperature to override config (for automation)
     """
 
     #read config to initilize enviornment
@@ -20,7 +25,7 @@ def allStepsAtOnce(configFile = None):
     setUpEnvironment(config)
     #initilize needed LLMs
     apiAgent = AgentAPI("api-agent" , config)
-    debugAgent = AgentDebug("debug-agent" , config)
+    debugAgent = AgentDebug("debug-agent" , config, model_override=model_override, temperature_override=temperature_override)
     #set up the LLMs
     apiAgent.setupAgent()
     debugAgent.setupAgent()
@@ -33,6 +38,9 @@ def allStepsAtOnce(configFile = None):
     debug_end_time = time.perf_counter()
     debug_duration_s = debug_end_time - debug_start_time
 
+    # Get temperature from override or config
+    temperature = temperature_override if temperature_override is not None else config.get("debug-agent", {}).get("temperature", 0.0)
+    
     # Calculate the cost
     debug_cost = calculate_cost(debug_metrics.get("model"), debug_metrics.get("input_tokens"), debug_metrics.get("output_tokens"))
     
@@ -68,9 +76,10 @@ def allStepsAtOnce(configFile = None):
     # Calculate the cost
     verification_cost = calculate_cost(verification_metrics.get("model"), verification_metrics.get("input_tokens"), verification_metrics.get("output_tokens"))
 
-    # Update debug_metrics and verification_metrics
+    # Update debug_metrics and verification_metrics with temperature
     debug_metrics["duration_s"] = round(debug_duration_s, 2)
     debug_metrics["cost"] = round(debug_cost, 4)
+    debug_metrics["temperature"] = temperature
     verification_metrics["duration_s"] = round(verification_duration_s, 2)
     verification_metrics["cost"] = round(verification_cost, 4)
 
@@ -79,7 +88,14 @@ def allStepsAtOnce(configFile = None):
     store_metrics_entry(db_path, verification_metrics, verification_metrics.get("task_status"))
     printFinishMessage()
 
-    return verificationAgent.verificationStatus  # Return verification result instead of debug agent's self-report
+    # Ensure knowledge_response is stored as-is (dict or string) for reuse
+    return {
+        "verification_status": verificationAgent.verificationStatus,
+        "knowledge_response": apiAgent.response,  # Keep as-is (dict or string)
+        "debug_response": debugAgent.response if debugAgent.response else "",
+        "verification_report": verificationAgent.verificationReport if verificationAgent.verificationReport else "",
+        "debug_model_used": debug_metrics.get("model"),
+    }  # Return for automation (and for building next-iteration summary on failure)
 
 def stepByStep( configFile = None ):
     """
@@ -111,6 +127,103 @@ def stepByStep( configFile = None ):
     return debugAgent.debugStatus
 
 
+def allStepsAtOnceWithoutKnowledgeAgent(configFile=None, knowledge_response=None, model_override=None, temperature_override=None, previous_attempt_summary=None):
+    """
+        This function runs the debug agent and verification agent WITHOUT calling the knowledge agent.
+        It reuses a previously obtained knowledge response. This is used for automation when
+        we want to try different models/temperatures with the same knowledge plan.
+        Optionally passes a short summary of the last failed attempt so the next model can avoid repeating it.
+        
+        Args:
+            configFile: Path to config file
+            knowledge_response: The knowledge agent's response to reuse
+            model_override: Model name to use (overrides config)
+            temperature_override: Temperature to use (overrides config)
+            previous_attempt_summary: Optional short summary of the last failed attempt (for next model context)
+        
+        Returns:
+            dict with verification_status, knowledge_response, debug_response, verification_report
+    """
+    if knowledge_response is None:
+        raise ValueError("knowledge_response is required for allStepsAtOnceWithoutKnowledgeAgent")
+    
+    #read config to initialize environment
+    config = readTheJSONConfigFile(configFile=configFile)
+    setUpEnvironment(config)
+    
+    # Initialize debug agent with overrides
+    debugAgent = AgentDebug("debug-agent", config, model_override=model_override, temperature_override=temperature_override)
+    debugAgent.setupAgent()
+    
+    # Use the provided knowledge response; append summary of previous attempt so next model has context
+    # Handle both dict and string responses from knowledge agent
+    if isinstance(knowledge_response, dict):
+        knowledge_text = knowledge_response.get("response", str(knowledge_response))
+    else:
+        knowledge_text = str(knowledge_response)
+    
+    if previous_attempt_summary:
+        debugAgent.agentAPIResponse = knowledge_text + "\n\n---\nContext from previous attempt(s) (use to avoid repeating failed approaches):\n" + previous_attempt_summary
+    else:
+        debugAgent.agentAPIResponse = knowledge_text
+    
+    # Run debug agent
+    debug_start_time = time.perf_counter()
+    debug_metrics = debugAgent.askQuestion()
+    debug_end_time = time.perf_counter()
+    debug_duration_s = debug_end_time - debug_start_time
+    
+    # Get temperature from override or config
+    temperature = temperature_override if temperature_override is not None else config.get("debug-agent", {}).get("temperature", 0.0)
+    
+    # Calculate the cost
+    debug_cost = calculate_cost(debug_metrics.get("model"), debug_metrics.get("input_tokens"), debug_metrics.get("output_tokens"))
+    
+    # Call the verification agent
+    print("\n" + "="*80)
+    print("STARTING VERIFICATION PHASE")
+    print("="*80 + "\n")
+    
+    verificationAgent = AgentVerification_v2("verification-agent", config)
+    verificationAgent.setupAgent()
+    
+    # Pass the debug agent's response to the verification agent
+    verificationAgent.debugAgentResponse = debugAgent.response if debugAgent.response else "Debug agent completed execution"
+    
+    # Run verification
+    verification_start_time = time.perf_counter()
+    verification_metrics = verificationAgent.askQuestion()
+    verification_end_time = time.perf_counter()
+    verification_duration_s = verification_end_time - verification_start_time
+    
+    print(f"\nFinal Task Status: {'SUCCESS' if verificationAgent.verificationStatus else 'FAILURE'}")
+    print(f"Debug Agent Self-Report: {'SUCCESS' if debugAgent.debugStatus else 'FAILURE'}")
+    print(f"Verification Agent Report: {'VERIFIED' if verificationAgent.verificationStatus else 'FAILED' if verificationAgent.verificationStatus is False else 'UNKNOWN'}\n")
+    
+    # Calculate the cost
+    verification_cost = calculate_cost(verification_metrics.get("model"), verification_metrics.get("input_tokens"), verification_metrics.get("output_tokens"))
+    
+    # Update metrics with temperature
+    debug_metrics["duration_s"] = round(debug_duration_s, 2)
+    debug_metrics["cost"] = round(debug_cost, 4)
+    debug_metrics["temperature"] = temperature
+    verification_metrics["duration_s"] = round(verification_duration_s, 2)
+    verification_metrics["cost"] = round(verification_cost, 4)
+    
+    # Store metrics entry into the database
+    store_metrics_entry(db_path, debug_metrics, verification_metrics.get("task_status"))
+    store_metrics_entry(db_path, verification_metrics, verification_metrics.get("task_status"))
+    printFinishMessage()
+    
+    return {
+        "verification_status": verificationAgent.verificationStatus,
+        "knowledge_response": knowledge_response,
+        "debug_response": debugAgent.response if debugAgent.response else "",
+        "verification_report": verificationAgent.verificationReport if verificationAgent.verificationReport else "",
+        "debug_model_used": debug_metrics.get("model"),
+    }
+
+
 def singleAgentApproach( configFile = None ):
     """
         This function will run a single agent which will do the
@@ -134,7 +247,8 @@ def singleAgentApproach( configFile = None ):
 
 def run( debugType, configFile ):
     if debugType == "allStepsAtOnce":
-        allStepsAtOnce(configFile)
+        result = allStepsAtOnce(configFile)
+        return result.get("verification_status", False) if isinstance(result, dict) else result
     elif debugType == "stepByStep":
         stepByStep(configFile)
     elif debugType == "singleAgent":
