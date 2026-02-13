@@ -114,23 +114,27 @@ class AgentAPI(Agent):
 
 
 class AgentDebug(Agent):
-    def __init__(self, agentType, config):
+    def __init__(self, agentType, config, model_override=None, temperature_override=None):
         super().__init__(agentType, config)
         self.agentAPIResponse = None
         self.debugStatus = None
         self.response = None  # Store the debug agent's response for verification
+        self.model_override = model_override  # Allow model override for automation
+        self.temperature_override = temperature_override  # Allow temperature override for automation
 
     def prepareAgent(self):
         """ Prepare the debug assistant based on the config file """
         try:
+            # Use override if provided, otherwise use config
+            model_name = self.model_override if self.model_override else self.agentProperties["model"]
+            temperature = self.temperature_override if self.temperature_override is not None else self.agentProperties.get("temperature", 0.0)
             
-            model_name = self.agentProperties["model"]
             if any(token in model_name for token in ['gpt', 'o3', 'o4', 'o1']):
-                model = OpenAIChat(id=model_name)
+                model = OpenAIChat(id=model_name, temperature=temperature)
             elif 'llama' in model_name:
-                model = Ollama(id=model_name)
+                model = Ollama(id=model_name, temperature=temperature)
             elif 'gemini' in model_name:
-                model = Gemini(id=model_name)
+                model = Gemini(id=model_name, temperature=temperature)
             else:
                 raise Exception("Invalid model name provided.")
 
@@ -141,7 +145,7 @@ class AgentDebug(Agent):
                 instructions=[x for x in self.agentProperties["instructions"]],
                 show_tool_calls=True,
                 #read_chat_history=True,
-                # tool_call_limit=1
+                tool_call_limit=15,  # Limit tool calls to prevent infinite loops and improve efficiency
                 markdown=True,
                 guidelines=[x for x in self.agentProperties["guidelines"]]
                 #add_history_to_messages=True,
@@ -163,7 +167,7 @@ class AgentDebug(Agent):
             sys.exit()
 
     @withTimeout(False)
-    @timeout_decorator.timeout(480)
+    @timeout_decorator.timeout(180)  # Reduced from 480s to 180s (3 minutes) for better efficiency
     def askQuestion(self):
         """ Ask the formatted prepared question to the debug agent """
         try:
@@ -511,7 +515,8 @@ class AgentVerification_v2(Agent):
                 instructions=instructions,
                 show_tool_calls=True,
                 markdown=True,
-                guidelines=guidelines
+                guidelines=guidelines,
+                tool_call_limit=10  # Limit tool calls to prevent infinite loops and speed up verification
             )
         except Exception as e:
             print(f"Error preparing verification agent: {e}")
@@ -559,7 +564,7 @@ class AgentVerification_v2(Agent):
             print(f"Error creating verification agent prompt: {e}")
             sys.exit()
 
-    @timeout_decorator.timeout(480)
+    @timeout_decorator.timeout(180)  # Reduced from 480s to 180s (3 minutes) for better efficiency
     @withTimeout(None)
     def askQuestion(self):
         """ Ask the verification agent to verify the fix """

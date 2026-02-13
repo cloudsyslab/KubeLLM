@@ -40,6 +40,7 @@ def store_metrics_entry(db_path, metrics, task_status_verified):
             test_case TEXT NOT NULL,
             model TEXT,
             agent_type TEXT,
+            temperature REAL DEFAULT 0.0,
             input_tokens INTEGER DEFAULT 0,
             output_tokens INTEGER DEFAULT 0,
             total_tokens INTEGER DEFAULT 0,
@@ -49,13 +50,19 @@ def store_metrics_entry(db_path, metrics, task_status_verified):
             cost REAL DEFAULT 0.0
         )
     ''')
+    
+    # Add temperature column if it doesn't exist (migration for existing databases)
+    try:
+        cursor.execute('ALTER TABLE metrics ADD COLUMN temperature REAL DEFAULT 0.0')
+    except sqlite3.OperationalError:
+        pass  # Column already exists
 
     # Insert the entry
     timestamp = datetime.now().isoformat()
     cursor.execute('''
-        INSERT INTO metrics (timestamp, test_case, model, agent_type, input_tokens, output_tokens, total_tokens, task_status, task_status_verified, duration_s, cost)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    ''', (timestamp, metrics.get("test_case"), metrics.get("model"), metrics.get("agent_type"), metrics.get("input_tokens"), metrics.get("output_tokens"), metrics.get("total_tokens"), metrics.get("task_status"), task_status_verified, metrics.get("duration_s"), metrics.get("cost")))
+        INSERT INTO metrics (timestamp, test_case, model, agent_type, temperature, input_tokens, output_tokens, total_tokens, task_status, task_status_verified, duration_s, cost)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ''', (timestamp, metrics.get("test_case"), metrics.get("model"), metrics.get("agent_type"), metrics.get("temperature", 0.0), metrics.get("input_tokens"), metrics.get("output_tokens"), metrics.get("total_tokens"), metrics.get("task_status"), task_status_verified, metrics.get("duration_s"), metrics.get("cost")))
 
     conn.commit()
     conn.close()
@@ -129,3 +136,85 @@ def calculate_totals(db_path):
         "total_successes": total_successes,
         "total_verified_successes": total_verified_successes
     }
+
+def store_attempt_context(db_path, test_case, model_used, context_summary):
+    """Store context summary for a failed attempt. Used to pass context to next model iteration."""
+    os.makedirs(os.path.dirname(db_path), exist_ok=True)
+    
+    conn = sqlite3.connect(db_path)
+    cursor = conn.cursor()
+    
+    # Create table if not exists
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS attempt_context (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            timestamp TEXT NOT NULL,
+            test_case TEXT NOT NULL,
+            model_used TEXT,
+            context_summary TEXT
+        )
+    ''')
+    
+    # Insert the context
+    timestamp = datetime.now().isoformat()
+    cursor.execute('''
+        INSERT INTO attempt_context (timestamp, test_case, model_used, context_summary)
+        VALUES (?, ?, ?, ?)
+    ''', (timestamp, test_case, model_used, context_summary))
+    
+    conn.commit()
+    conn.close()
+
+def get_latest_attempt_context(db_path, test_case):
+    """Retrieve the most recent context summary for a test case. Returns None if none exists."""
+    os.makedirs(os.path.dirname(db_path), exist_ok=True)
+    
+    conn = sqlite3.connect(db_path)
+    cursor = conn.cursor()
+    
+    # Create table if not exists (in case it doesn't exist yet)
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS attempt_context (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            timestamp TEXT NOT NULL,
+            test_case TEXT NOT NULL,
+            model_used TEXT,
+            context_summary TEXT
+        )
+    ''')
+    
+    # Get most recent context for this test case
+    cursor.execute('''
+        SELECT context_summary FROM attempt_context
+        WHERE test_case = ?
+        ORDER BY timestamp DESC
+        LIMIT 1
+    ''', (test_case,))
+    
+    result = cursor.fetchone()
+    conn.close()
+    
+    return result[0] if result else None
+
+def clear_attempt_context(db_path, test_case):
+    """Clear all context entries for a test case (e.g., when test succeeds or starts fresh)."""
+    os.makedirs(os.path.dirname(db_path), exist_ok=True)
+    
+    conn = sqlite3.connect(db_path)
+    cursor = conn.cursor()
+    
+    # Create table if not exists (in case it doesn't exist yet)
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS attempt_context (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            timestamp TEXT NOT NULL,
+            test_case TEXT NOT NULL,
+            model_used TEXT,
+            context_summary TEXT
+        )
+    ''')
+    
+    cursor.execute('DELETE FROM attempt_context WHERE test_case = ?', (test_case,))
+    
+    conn.commit()
+    conn.close()
