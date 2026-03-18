@@ -13,9 +13,11 @@ import os
 import subprocess
 import timeout_decorator
 from pathlib import Path
+from dotenv import load_dotenv
 
 SCRIPT_DIR = Path(__file__).resolve().parent
 REPO_ROOT = SCRIPT_DIR.parent
+load_dotenv(REPO_ROOT / ".env")
 
 from rag_api import (
     BASE_URL,
@@ -117,7 +119,7 @@ def identifyLLM(debugAgent):
         model = OpenAIChat(id="gpt-4o")
         api_key = os.getenv("OPENAI_API_KEY")  # Returns None if not set
         if api_key is None:
-            print("Error: OPENAI_API_KEY is not set!")
+            print("Error: OPENAI_API_KEY is not set. Add it to the repo-level .env file or export it in your shell.")
             sys.exit()
         #os.environ["OPENAI_API_KEY"] = debugAgent["api-key"]
 

@@ -1,3 +1,5 @@
+import os
+from pathlib import Path
 from typing import Optional
 from phi.agent import Agent
 from phi.agent import AgentKnowledge
@@ -12,6 +14,10 @@ from phi.embedder.openai import OpenAIEmbedder
 from better_shell import BetterShellTools
 from statement import Model
 from phi.model.google import Gemini
+from dotenv import load_dotenv
+
+REPO_ROOT = Path(__file__).resolve().parent
+load_dotenv(REPO_ROOT / ".env")
 
 
 db_url = "postgresql+psycopg://ai:ai@localhost:5532/ai"
@@ -46,6 +52,13 @@ guidelines = [
     #"When writing out your commands, use the **real name** of the Kubernetes resource instead of placeholder names. For example, if the command you are about to suggest is `kubectl get pods -n <namespace>`, run `kubectl get namespaces` first to get available namespaces. Another example is if your command is `kubectl describe <node-name>`, then run `kubectl get nodes` first to get the available nodes.",
 ]
 
+
+def _require_openai_api_key(model_name: str) -> None:
+    if any(token in model_name for token in ["gpt", "o1", "o3", "o4"]) and not os.getenv("OPENAI_API_KEY"):
+        raise RuntimeError(
+            "OPENAI_API_KEY is not set. Add it to the repo-level .env file or export it in your shell."
+        )
+
 def get_rag_agent(
     model: Model, 
     use_rag: bool = True,
@@ -54,6 +67,7 @@ def get_rag_agent(
     debug_mode: bool = True
 ) -> Agent:
     """Get a Local RAG Agent."""
+    _require_openai_api_key(model.name)
 
 
     """ model = """
@@ -124,8 +138,8 @@ def get_rag_assistant(
     debug_mode: bool = True,
 ) -> Agent:
     """Get a Local RAG Agent."""
-    
-    
+    _require_openai_api_key(llm_model)
+
     if any(token in llm_model for token in ['gpt', 'o3', 'o4', 'o1']):
         llm = OpenAIChat(id=llm_model)
     elif 'gemini' in llm_model:
