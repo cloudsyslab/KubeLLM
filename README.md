@@ -23,47 +23,146 @@ KubeLLM is an LLM-based multi-agent framework that manages your kubernetes clust
 
 ---
 
-### Instructions to Run 🏃💨
-1. Navigate to KubeLLM directory and install software dependencies as follows:
-   pip install -r requirements.txt
-2. Make sure Kubernetes (MiniKube) is up and running.
-3. Start the PgVector database using the following command:
-   docker run -d \\   
-  -e POSTGRES_DB=ai \\   
-  -e POSTGRES_USER=ai \\   
-  -e POSTGRES_PASSWORD=ai \\   
-  -e PGDATA=/var/lib/postgresql/data/pgdata \\   
-  -v pgvolume:/var/lib/postgresql/data \\   
-  -p 5532:5432 \\   
-  --name pgvector \\   
-  phidata/pgvector:16
-
-4. Start the Knowledge Agent with RAG capability by running the **bash start_apiserver.sh**.
-5. Once you have the Knowledge Agent running in the background or another terminal, change directory to debug_assistant_latest.
-6. Optional: if you need to run a single test case only
-   ***python3 main.py ~/KubeLLM/debug_assistant_latest/troubleshooting/TEST_CASE_NAME/config_step.json.***
-7. You may need to update config to contain the right paths. *(Note : This will be updated in a future update)*
-8. Finally, just sit back and let KubeLLM do all of the work. Make sure to teardown the environment after each individual test case run.
-   ***python3 teardownenv.py TEST_CASE_NAME***
-    
-
----
-
 ### Test Cases 📁
 All troubleshooting test cases are located in `debug_assistant_latest/troubleshooting/`. This is the canonical location for test case definitions.
 
 ---
 
-### Instructions to Run Tests 📝
-Recommended: use the test runner.
-```
-python3 debug_assistant_latest/runner.py --list
-python3 debug_assistant_latest/runner.py wrong_port
-python3 debug_assistant_latest/runner.py --run-many "port_*" --jobs 4
+### Running KubeLLM 🏃💨
 
-# Repeat queue (serial, teardown forced, hard-kill on stall)
+#### Overview
+- Canonical test definitions live in `debug_assistant_latest/troubleshooting/`.
+- The recommended entrypoint is `debug_assistant_latest/runner.py`.
+- `debug_assistant_latest/main.py` is a lower-level legacy entrypoint for a single config file.
+
+#### Prerequisites
+Install Python dependencies:
+```bash
+pip install -r requirements.txt
+```
+
+You also need:
+- Docker available on the machine running tests
+- A working Kubernetes environment (Minikube on the lab server)
+- Access to the required model providers (for example `OPENAI_API_KEY` if you use OpenAI-backed agents)
+- PostgreSQL/pgvector running locally on port `5532`
+- The RAG API server running and reachable by the client code
+
+Start pgvector:
+```bash
+docker run -d \
+  -e POSTGRES_DB=ai \
+  -e POSTGRES_USER=ai \
+  -e POSTGRES_PASSWORD=ai \
+  -e PGDATA=/var/lib/postgresql/data/pgdata \
+  -v pgvolume:/var/lib/postgresql/data \
+  -p 5532:5432 \
+  --name pgvector \
+  phidata/pgvector:16
+```
+
+Start the RAG API server:
+```bash
+bash start_apiserver.sh
+```
+
+Note:
+- The current RAG API client in `debug_assistant_latest/rag_api.py` uses a fixed `BASE_URL`.
+- Confirm that the configured host matches the server you started before running tests.
+
+#### Lab Server Workflow
+Run all operational commands on the lab server. The normal flow is:
+
+1. Go to the repo:
+```bash
+cd ~/kubellm-minh-testing
+```
+
+2. Run preflight before any test:
+```bash
+bash orchestrator/preflight.sh
+```
+
+3. List available test cases:
+```bash
+python3 debug_assistant_latest/runner.py --list
+```
+
+4. Run one test case:
+```bash
+python3 debug_assistant_latest/runner.py wrong_port
+```
+
+5. Run multiple matching tests:
+```bash
+python3 debug_assistant_latest/runner.py --run-many "port_*" --jobs 4
+```
+
+6. Run a repeat queue for stability testing:
+```bash
 python3 debug_assistant_latest/runner.py wrong_port --repeat 10 --stall-limit-s 900
 ```
+
+#### Useful Runner Options
+Override models:
+```bash
+python3 debug_assistant_latest/runner.py wrong_port --debug-model gpt-4o
+python3 debug_assistant_latest/runner.py wrong_port --api-model gpt-5-mini
+python3 debug_assistant_latest/runner.py wrong_port --verification-model gpt-4o
+```
+
+Use a specific Minikube profile:
+```bash
+python3 debug_assistant_latest/runner.py wrong_port --minikube-profile minh
+```
+
+Run with automatic backup and teardown:
+```bash
+python3 debug_assistant_latest/runner.py wrong_port --backup-before-run --teardown-after-run
+```
+
+#### View Results
+Each run writes logs and reports under `.local/test_runs/`.
+
+Aggregate report:
+```bash
+cat .local/test_runs/*/aggregate.json | jq
+```
+
+Per-test summary:
+```bash
+cat .local/test_runs/*/wrong_port/summary.json | jq
+```
+
+Per-test stdout/stderr:
+```bash
+cat .local/test_runs/*/wrong_port/stdout.log
+cat .local/test_runs/*/wrong_port/stderr.log
+```
+
+Find the latest runs:
+```bash
+ls -lt .local/test_runs/ | head -5
+```
+
+#### Cleanup
+Teardown one test case:
+```bash
+python3 debug_assistant_latest/teardownenv.py wrong_port
+```
+
+Teardown all supported test cases:
+```bash
+python3 debug_assistant_latest/teardownenv.py all
+```
+
+#### Legacy Single-Config Entry Point
+If you need to run the lower-level script directly instead of the runner:
+```bash
+python3 debug_assistant_latest/main.py debug_assistant_latest/troubleshooting/wrong_port/config_step.json
+```
+
+Use this only when you explicitly want the raw single-config execution path. The runner is the preferred interface.
 
 ---
 
