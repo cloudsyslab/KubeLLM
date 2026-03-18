@@ -54,6 +54,13 @@ from report import (
     save_run_config,
     print_console_summary,
 )
+from ground_truth import (
+    run_all_checks as run_ground_truth_checks,
+    format_results as format_ground_truth_results,
+    save_ground_truth_result,
+    validate_ground_truth_config,
+    GroundTruthResult,
+)
 
 
 @dataclass
@@ -69,6 +76,7 @@ class TestResult:
     log_dir: Path
     started_at: str
     finished_at: str
+    ground_truth_passed: Optional[bool] = None  # None if no GT checks defined
 
 
 def get_timestamp_id() -> str:
@@ -117,6 +125,7 @@ def run_single_test_in_process(
     error = None
     metrics = {}
     test_started = False  # Guard: only teardown if test actually started
+    ground_truth_passed = None
 
     try:
         # Import here to avoid circular imports in worker process
@@ -168,6 +177,17 @@ def run_single_test_in_process(
                     verified = None  # No verification performed
                 else:
                     raise ValueError(f"Unknown technique: {technique}")
+
+                # Run ground truth verification if configured
+                if config.get("ground-truth"):
+                    print("\n" + "=" * 60)
+                    print("Running ground truth verification...")
+                    gt_result = run_ground_truth_checks(config)
+                    if gt_result:
+                        print(format_ground_truth_results(gt_result))
+                        save_ground_truth_result(gt_result, log_dir)
+                        ground_truth_passed = gt_result.passed
+
             finally:
                 sys.stdout, sys.stderr = old_stdout, old_stderr
 
@@ -201,6 +221,7 @@ def run_single_test_in_process(
         log_dir=log_dir,
         started_at=started_at,
         finished_at=finished_at,
+        ground_truth_passed=ground_truth_passed,
     )
 
 
@@ -239,6 +260,7 @@ def run_single_test(
     error = None
     metrics = {}
     test_started = False  # Guard: only teardown if test actually started
+    ground_truth_passed = None
 
     if verbose:
         print(f"[RUNNING] {test_name} ({technique})")
@@ -313,6 +335,17 @@ def run_single_test(
                     verified = None  # No verification performed
                 else:
                     raise ValueError(f"Unknown technique: {technique}")
+
+                # Run ground truth verification if configured
+                if config.get("ground-truth"):
+                    print("\n" + "=" * 60)
+                    print("Running ground truth verification...")
+                    gt_result = run_ground_truth_checks(config)
+                    if gt_result:
+                        print(format_ground_truth_results(gt_result))
+                        save_ground_truth_result(gt_result, log_dir)
+                        ground_truth_passed = gt_result.passed
+
             finally:
                 sys.stdout, sys.stderr = old_stdout, old_stderr
 
@@ -357,6 +390,7 @@ def run_single_test(
         log_dir=log_dir,
         started_at=started_at,
         finished_at=finished_at,
+        ground_truth_passed=ground_truth_passed,
     )
 
 
@@ -578,6 +612,7 @@ def result_to_summary(result: TestResult, technique: str, overrides: dict) -> Te
         error_message=result.error,
         metrics=result.metrics,
         config_overrides_applied=overrides,
+        ground_truth_passed=result.ground_truth_passed,
     )
 
 
@@ -603,6 +638,69 @@ def cmd_list(args):
             print(f"  {tc}")
 
     return 0
+
+
+def cmd_validate_ground_truth(args):
+    """Handle --validate-ground-truth command."""
+    test_cases = list_test_cases()
+    errors_found = False
+
+    print(f"Validating ground truth configs for {len(test_cases)} test cases...\n")
+
+    for tc in test_cases:
+        config_path = get_config_path(tc)
+        try:
+            config = load_config_with_overrides(config_path, {})
+            gt_errors = validate_ground_truth_config(config)
+
+            if gt_errors:
+                print(f"[INVALID] {tc}:")
+                for err in gt_errors:
+                    print(f"          {err}")
+                errors_found = True
+            elif config.get("ground-truth"):
+                checks = config["ground-truth"].get("checks", [])
+                print(f"[OK]      {tc} ({len(checks)} checks)")
+            else:
+                print(f"[NONE]    {tc} (no ground-truth configured)")
+        except Exception as e:
+            print(f"[ERROR]   {tc}: {e}")
+            errors_found = True
+
+    print()
+    if errors_found:
+        print("Validation FAILED - fix errors above")
+        return 1
+    else:
+        print("Validation PASSED")
+        return 0
+
+
+def cmd_verify_only(args, test_name: str):
+    """Handle --verify-only command - run ground truth checks without agents."""
+    config_path = get_config_path(test_name)
+    config = load_config_with_overrides(config_path, {})
+
+    if not config.get("ground-truth"):
+        print(f"No ground-truth configured for {test_name}")
+        return 1
+
+    print(f"Running ground truth verification for {test_name}...")
+
+    gt_result = run_ground_truth_checks(config)
+    if gt_result:
+        print(format_ground_truth_results(gt_result))
+
+        # Save results if output-dir specified
+        if args.output_dir:
+            output_dir = args.output_dir / test_name
+            save_ground_truth_result(gt_result, output_dir)
+            print(f"Results saved to: {output_dir}/ground_truth.json")
+
+        return 0 if gt_result.passed else 1
+    else:
+        print("Ground truth verification failed to run")
+        return 1
 
 
 def cmd_run_single(args, test_name: str):
@@ -1073,6 +1171,18 @@ Examples:
         help="Run teardown after test completes (opt-in). Warnings emitted on failure.",
     )
 
+    # Ground truth verification
+    parser.add_argument(
+        "--verify-only",
+        action="store_true",
+        help="Run only ground truth verification (no agent execution)",
+    )
+    parser.add_argument(
+        "--validate-ground-truth",
+        action="store_true",
+        help="Validate ground truth configs without executing (schema check only)",
+    )
+
     # Serial repeat queue
     parser.add_argument(
         "--repeat",
@@ -1094,6 +1204,20 @@ Examples:
     # Determine which command to run
     if args.list:
         return cmd_list(args)
+
+    if args.validate_ground_truth:
+        return cmd_validate_ground_truth(args)
+
+    if args.verify_only:
+        if not args.test_case:
+            print("Error: --verify-only requires a test case name")
+            return 1
+        available = list_test_cases()
+        if args.test_case not in available:
+            print(f"Unknown test case: {args.test_case}")
+            print(f"Available: {', '.join(available)}")
+            return 1
+        return cmd_verify_only(args, args.test_case)
 
     # Apply repeat overrides before dispatching
     repeat_active = _apply_repeat_overrides(args)
