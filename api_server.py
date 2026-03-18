@@ -20,6 +20,9 @@ from bs4 import BeautifulSoup
 from phi.document.base import Document
 from phi.agent import AgentKnowledge
 from phi.embedder.ollama import OllamaEmbedder
+from dotenv import load_dotenv
+
+load_dotenv(Path(__file__).resolve().parent / ".env")
 
 app = FastAPI()
 DB_URL = "postgresql+psycopg2://ai:ai@localhost:5532/ai"  # adjust your DB URL
@@ -271,4 +274,3 @@ async def new_run():
     session_state.rag_assistant = None
     session_state.messages = [{"role": "assistant", "content": "Upload a doc and ask me questions..."}]
     return {"status": "New run started"}
-

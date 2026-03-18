@@ -1,3 +1,4 @@
+from pathlib import Path
 from phi.assistant import Assistant
 from phi.agent import Agent as llmAgent
 from phi.llm.openai import OpenAIChat
@@ -22,6 +23,11 @@ from phi.agent import AgentKnowledge
 from phi.vectordb.pgvector import PgVector, SearchType
 from phi.storage.agent.postgres import PgAgentStorage
 from phi.knowledge.website import WebsiteKnowledgeBase
+from dotenv import load_dotenv
+
+SCRIPT_DIR = Path(__file__).resolve().parent
+REPO_ROOT = SCRIPT_DIR.parent
+load_dotenv(REPO_ROOT / ".env")
 
 
 from rag_api import (
@@ -40,6 +46,13 @@ STATUS_MAP = {
     False: 0,
     None: -1
 }
+
+
+def _require_openai_api_key(model_name):
+    if any(token in model_name for token in ["gpt", "o1", "o3", "o4"]) and not os.getenv("OPENAI_API_KEY"):
+        raise RuntimeError(
+            "OPENAI_API_KEY is not set. Add it to the repo-level .env file or export it in your shell."
+        )
 
 class Agent():
     def __init__(self, agentType, config):
@@ -125,6 +138,7 @@ class AgentDebug(Agent):
         try:
             
             model_name = self.agentProperties["model"]
+            _require_openai_api_key(model_name)
             if any(token in model_name for token in ['gpt', 'o3', 'o4', 'o1']):
                 model = OpenAIChat(id=model_name)
             elif 'llama' in model_name:
@@ -229,6 +243,7 @@ class AgentDebugStepByStep(Agent):
         try:
 
             model_name = self.agentProperties["model"]
+            _require_openai_api_key(model_name)
             if any(token in model_name for token in ['gpt', 'o3', 'o4', 'o1']):
                 model = OpenAIChat(id=model_name)
             elif 'llama' in model_name:
@@ -344,6 +359,7 @@ class SingleAgent(Agent):
         """ Prepare the debug assistant based on the config file """
         try:
             
+            _require_openai_api_key("o3-mini")
             model = OpenAIChat(id="o3-mini")
             #OpenAIChat(id="gpt-4o")
             #OpenAIChat(id="gpt-4o")
@@ -486,6 +502,7 @@ class AgentVerification_v2(Agent):
             else:
                 model_name = "gpt-4o"
                 temperature = 0.3
+            _require_openai_api_key(model_name)
             
             if any(token in model_name for token in ['gpt', 'o3', 'o4', 'o1']):
                 model = OpenAIChat(id=model_name, temperature=temperature)
@@ -704,6 +721,7 @@ class AgentVerification_v1(Agent):
             else:
                 model_name = "gpt-4o"
                 temperature = 0.3
+            _require_openai_api_key(model_name)
             
             if any(token in model_name for token in ['gpt', 'o3', 'o4', 'o1']):
                 model = OpenAIChat(id=model_name, temperature=temperature)
