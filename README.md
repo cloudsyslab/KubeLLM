@@ -41,10 +41,20 @@ Install Python dependencies:
 pip install -r requirements.txt
 ```
 
+Create a repo-level `.env` file from the example:
+```bash
+cp .env.example .env
+```
+
+Then add your OpenAI key to `.env`:
+```bash
+OPENAI_API_KEY=your_key_here
+```
+
 You also need:
 - Docker available on the machine running tests
 - A working Kubernetes environment (Minikube on the lab server)
-- Access to the required model providers (for example `OPENAI_API_KEY` if you use OpenAI-backed agents)
+- Access to the required model providers through `.env` or exported shell variables
 - PostgreSQL/pgvector running locally on port `5532`
 - The RAG API server running and reachable by the client code
 
