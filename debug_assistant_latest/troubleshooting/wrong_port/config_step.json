@@ -60,5 +60,35 @@
     ],
     "test-name": "wrong_port",
     "test-directory": "",
-    "yaml-file-name": "wrong_port.yaml"
+    "yaml-file-name": "wrong_port.yaml",
+    "ground-truth": {
+        "description": "Verify containerPort matches server listen port and server is reachable",
+        "timeout_seconds": 60,
+        "checks": [
+            {
+                "name": "pod_ready",
+                "cmd": "kubectl get pod kube-wrong-port -o jsonpath='{.status.conditions[?(@.type==\"Ready\")].status}'",
+                "expect": "True",
+                "poll_interval_s": 2,
+                "max_attempts": 15,
+                "description": "Pod is Ready (not just Running)"
+            },
+            {
+                "name": "port_aligned",
+                "cmd": "kubectl get pod kube-wrong-port -o jsonpath='{.spec.containers[0].ports[0].containerPort}'",
+                "expect": "8765",
+                "description": "Container port matches server.py listen port (8765)",
+                "depends_on": ["pod_ready"]
+            },
+            {
+                "name": "server_responding",
+                "cmd": "kubectl exec kube-wrong-port -- curl -s -o /dev/null -w '%{http_code}' http://localhost:8765/ 2>/dev/null || echo 000",
+                "expect": "200",
+                "poll_interval_s": 2,
+                "max_attempts": 5,
+                "description": "Server responds to HTTP request on port 8765",
+                "depends_on": ["pod_ready"]
+            }
+        ]
+    }
 }
