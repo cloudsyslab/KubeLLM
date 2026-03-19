@@ -17,8 +17,8 @@ if not hasattr(inspect, "getargspec"):
     inspect.getargspec = inspect.getfullargspec
 
 from debug_assistant_latest.config_merge import load_config_with_overrides, merge_config_overrides
-from debug_assistant_latest.ground_truth import CheckStatus, run_check, validate_ground_truth_config
-from debug_assistant_latest.report import AgentMetrics, TestSummary, generate_aggregate_report
+from debug_assistant_latest.ground_truth import CheckStatus, run_all_checks, run_check, validate_ground_truth_config
+from debug_assistant_latest.report import AgentMetrics, TestSummary, generate_aggregate_report, load_test_summary
 from debug_assistant_latest.runner import (
     TestResult,
     _apply_repeat_overrides,
@@ -81,6 +81,57 @@ class GroundTruthTests(unittest.TestCase):
 
         self.assertTrue(any("duplicate name" in error for error in errors))
 
+    def test_run_check_allows_expect_exit_with_stderr(self):
+        cmd = f'"{sys.executable}" -c "import sys; sys.stderr.write(\'boom\\n\'); sys.exit(2)"'
+        result = run_check(
+            {
+                "name": "expect_nonzero",
+                "cmd": cmd,
+                "expect_exit": 2,
+            },
+            passed_checks=set(),
+        )
+
+        self.assertEqual(result.status, CheckStatus.PASS)
+        self.assertIsNone(result.error)
+
+    def test_run_check_expect_exit_timeout_still_errors(self):
+        cmd = f'"{sys.executable}" -c "import time; time.sleep(0.2)"'
+        result = run_check(
+            {
+                "name": "expect_timeout",
+                "cmd": cmd,
+                "expect_exit": 2,
+                "timeout_s": 0.05,
+            },
+            passed_checks=set(),
+        )
+
+        self.assertEqual(result.status, CheckStatus.ERROR)
+        self.assertIn("timed out", result.error)
+
+    def test_run_all_checks_enforces_global_timeout_during_slow_check(self):
+        cmd_slow = f'"{sys.executable}" -c "import time; time.sleep(0.2); print(\'done\')"'
+        cmd_fast = f'"{sys.executable}" -c "print(\'later\')"'
+        result = run_all_checks(
+            {
+                "test-name": "slow_case",
+                "ground-truth": {
+                    "timeout_seconds": 0.05,
+                    "checks": [
+                        {"name": "slow_check", "cmd": cmd_slow, "expect": "done", "timeout_s": 1},
+                        {"name": "after_check", "cmd": cmd_fast, "expect": "later"},
+                    ],
+                },
+            }
+        )
+
+        self.assertIsNotNone(result)
+        self.assertEqual(result.checks[0].status, CheckStatus.ERROR)
+        self.assertIn("Global timeout exceeded", result.checks[0].error)
+        self.assertEqual(result.checks[1].status, CheckStatus.ERROR)
+        self.assertEqual(result.checks[1].actual, "(not executed)")
+
 
 class ReportTests(unittest.TestCase):
     def test_generate_aggregate_report_tracks_ground_truth_and_costs(self):
@@ -116,6 +167,94 @@ class ReportTests(unittest.TestCase):
         self.assertEqual(aggregate.total_tokens, 150)
         self.assertEqual(aggregate.total_cost, 2.0)
         self.assertEqual(aggregate.ground_truth_failed_tests, ["wrong_interface"])
+
+    def test_generate_aggregate_report_counts_dict_backed_metrics(self):
+        summaries = [
+            TestSummary(
+                test_name="wrong_port",
+                technique="allStepsAtOnce",
+                status="PASS",
+                verified=True,
+                metrics={
+                    "debug_agent": {
+                        "test_case": "wrong_port",
+                        "model": "gpt-4o",
+                        "agent_type": "debug",
+                        "input_tokens": 60,
+                        "output_tokens": 40,
+                        "total_tokens": 100,
+                        "task_status": True,
+                        "duration_s": 3.5,
+                        "cost": 1.25,
+                    }
+                },
+            ),
+            TestSummary(
+                test_name="wrong_interface",
+                technique="allStepsAtOnce",
+                status="FAIL",
+                verified=False,
+                metrics={
+                    "verification_agent": {
+                        "test_case": "wrong_interface",
+                        "model": "gpt-4o-mini",
+                        "agent_type": "verification",
+                        "input_tokens": 20,
+                        "output_tokens": 30,
+                        "total_tokens": 50,
+                        "task_status": False,
+                        "duration_s": 1.25,
+                        "cost": 0.75,
+                    }
+                },
+            ),
+        ]
+
+        aggregate = generate_aggregate_report(summaries, run_config={}, run_id="run-dict")
+
+        self.assertEqual(aggregate.total_tokens, 150)
+        self.assertEqual(aggregate.total_cost, 2.0)
+        self.assertEqual(aggregate.total_debug_cost, 1.25)
+        self.assertEqual(aggregate.total_verification_cost, 0.75)
+
+    def test_load_test_summary_accepts_legacy_raw_metric_dicts(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            summary_path = Path(tmpdir) / "summary.json"
+            summary_path.write_text(
+                json.dumps(
+                    {
+                        "test_name": "wrong_port",
+                        "technique": "allStepsAtOnce",
+                        "status": "PASS",
+                        "verified": True,
+                        "started_at": "2026-01-01T00:00:00",
+                        "finished_at": "2026-01-01T00:00:01",
+                        "duration_s": 1.0,
+                        "error_message": None,
+                        "metrics": {
+                            "debug_agent": {
+                                "test_case": "wrong_port",
+                                "model": "gpt-4o",
+                                "agent_type": "debug",
+                                "input_tokens": 5,
+                                "output_tokens": 10,
+                                "total_tokens": 15,
+                                "task_status": True,
+                                "duration_s": 0.5,
+                                "cost": 0.25,
+                            }
+                        },
+                        "config_overrides_applied": {},
+                        "ground_truth_passed": True,
+                    }
+                )
+            )
+
+            summary = load_test_summary(summary_path)
+
+        self.assertIsInstance(summary.metrics["debug_agent"], AgentMetrics)
+        self.assertEqual(summary.metrics["debug_agent"].total_tokens, 15)
+        self.assertEqual(summary.metrics["debug_agent"].cost, 0.25)
 
 
 class TeardownTests(unittest.TestCase):
@@ -183,6 +322,8 @@ class RunnerTests(unittest.TestCase):
         self.assertEqual(summary.status, "PASS")
         self.assertTrue(summary.verified)
         self.assertTrue(summary.ground_truth_passed)
+        self.assertEqual(summary.metrics["debug_agent"].__class__.__name__, "AgentMetrics")
+        self.assertEqual(summary.metrics["debug_agent"].cost, 1.0)
         self.assertEqual(summary.config_overrides_applied["debug-agent.model"], "gpt-4o")
 
     def test_apply_repeat_overrides_forces_serial_backup_and_teardown(self):

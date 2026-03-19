@@ -184,12 +184,42 @@ def get_expected_str(check: Dict[str, Any]) -> str:
     return "(unknown)"
 
 
-def run_check(check: Dict[str, Any], passed_checks: set) -> CheckResult:
+def build_global_timeout_result(
+    check: Dict[str, Any],
+    expected: str,
+    description: Optional[str],
+    attempts: int,
+    duration_ms: int,
+    actual: str = "(not executed)",
+    global_timeout_s: Optional[float] = None,
+) -> CheckResult:
+    """Build a consistent timeout result when the global budget is exhausted."""
+    timeout_label = f" ({global_timeout_s}s)" if global_timeout_s is not None else ""
+    return CheckResult(
+        name=check["name"],
+        status=CheckStatus.ERROR,
+        expected=expected,
+        actual=actual,
+        attempts=attempts,
+        duration_ms=duration_ms,
+        error=f"Global timeout exceeded{timeout_label}",
+        description=description,
+    )
+
+
+def run_check(
+    check: Dict[str, Any],
+    passed_checks: set,
+    deadline_at: Optional[float] = None,
+    global_timeout_s: Optional[float] = None,
+) -> CheckResult:
     """Execute a single ground truth check with optional polling.
 
     Args:
         check: Check definition dict
         passed_checks: Set of check names that have passed (for dependencies)
+        deadline_at: Absolute monotonic deadline for the overall ground-truth run
+        global_timeout_s: Configured global timeout used for user-facing error text
 
     Returns:
         CheckResult with status and details
@@ -202,6 +232,7 @@ def run_check(check: Dict[str, Any], passed_checks: set) -> CheckResult:
     timeout_s = check.get("timeout_s", 30)
     depends_on = check.get("depends_on", [])
     expected_str = get_expected_str(check)
+    expect_exit = "expect_exit" in check
 
     # Check dependencies
     for dep in depends_on:
@@ -216,33 +247,100 @@ def run_check(check: Dict[str, Any], passed_checks: set) -> CheckResult:
                 description=description,
             )
 
-    start_time = time.time()
+    start_time = time.monotonic()
     last_output = ""
     last_error = None
+    last_exit_code = 0
+
+    def duration_ms() -> int:
+        return int((time.monotonic() - start_time) * 1000)
+
+    def remaining_budget_s() -> Optional[float]:
+        if deadline_at is None:
+            return None
+        return deadline_at - time.monotonic()
 
     for attempt in range(1, max_attempts + 1):
-        output, exit_code, error = execute_command(cmd, timeout_s)
+        remaining = remaining_budget_s()
+        if remaining is not None and remaining <= 0:
+            return build_global_timeout_result(
+                check,
+                expected_str,
+                description,
+                attempts=attempt - 1,
+                duration_ms=duration_ms(),
+                actual=last_output or "(no output)",
+                global_timeout_s=global_timeout_s,
+            )
+
+        command_timeout_s = timeout_s if remaining is None else min(timeout_s, remaining)
+        output, exit_code, error = execute_command(cmd, command_timeout_s)
         last_output = output
         last_error = error
+        last_exit_code = exit_code
 
-        if error is None and matches_expectation(output, exit_code, check):
-            duration_ms = int((time.time() - start_time) * 1000)
+        if matches_expectation(output, exit_code, check) and (error is None or expect_exit):
             return CheckResult(
                 name=name,
                 status=CheckStatus.PASS,
                 expected=expected_str,
                 actual=output,
                 attempts=attempt,
-                duration_ms=duration_ms,
+                duration_ms=duration_ms(),
                 description=description,
             )
 
-        if attempt < max_attempts and poll_interval > 0:
-            time.sleep(poll_interval)
+        remaining = remaining_budget_s()
+        if remaining is not None and remaining <= 0:
+            return build_global_timeout_result(
+                check,
+                expected_str,
+                description,
+                attempts=attempt,
+                duration_ms=duration_ms(),
+                actual=last_output or "(no output)",
+                global_timeout_s=global_timeout_s,
+            )
 
-    duration_ms = int((time.time() - start_time) * 1000)
+        if attempt < max_attempts and poll_interval > 0:
+            sleep_s = poll_interval if remaining is None else min(poll_interval, max(0.0, remaining))
+            if sleep_s <= 0:
+                return build_global_timeout_result(
+                    check,
+                    expected_str,
+                    description,
+                    attempts=attempt,
+                    duration_ms=duration_ms(),
+                    actual=last_output or "(no output)",
+                    global_timeout_s=global_timeout_s,
+                )
+            time.sleep(sleep_s)
+
+    total_duration_ms = duration_ms()
 
     # Determine if ERROR or FAIL
+    if expect_exit:
+        if last_error and last_exit_code == -1:
+            return CheckResult(
+                name=name,
+                status=CheckStatus.ERROR,
+                expected=expected_str,
+                actual=last_output or "(no output)",
+                attempts=max_attempts,
+                duration_ms=total_duration_ms,
+                error=last_error,
+                description=description,
+            )
+        return CheckResult(
+            name=name,
+            status=CheckStatus.FAIL,
+            expected=expected_str,
+            actual=last_output,
+            attempts=max_attempts,
+            duration_ms=total_duration_ms,
+            description=description,
+        )
+
     if last_error:
         return CheckResult(
             name=name,
@@ -250,7 +348,7 @@ def run_check(check: Dict[str, Any], passed_checks: set) -> CheckResult:
             expected=expected_str,
             actual=last_output or "(no output)",
             attempts=max_attempts,
-            duration_ms=duration_ms,
+            duration_ms=total_duration_ms,
             error=last_error,
             description=description,
         )
@@ -261,7 +359,7 @@ def run_check(check: Dict[str, Any], passed_checks: set) -> CheckResult:
             expected=expected_str,
             actual=last_output,
             attempts=max_attempts,
-            duration_ms=duration_ms,
+            duration_ms=total_duration_ms,
             description=description,
         )
 
@@ -286,36 +384,37 @@ def run_all_checks(config: Dict[str, Any]) -> Optional[GroundTruthResult]:
     results: List[CheckResult] = []
     passed_checks: set = set()
     summary = {s.value: 0 for s in CheckStatus}
-    start_time = time.time()
+    start_time = time.monotonic()
+    deadline_at = start_time + global_timeout if global_timeout is not None else None
 
     for check_def in checks_config:
         # Enforce global timeout if configured
-        if global_timeout is not None:
-            elapsed = time.time() - start_time
-            if elapsed >= global_timeout:
-                # Mark remaining checks as ERROR due to global timeout
-                result = CheckResult(
-                    name=check_def["name"],
-                    status=CheckStatus.ERROR,
-                    expected=get_expected_str(check_def),
-                    actual="(not executed)",
-                    attempts=0,
-                    duration_ms=0,
-                    error=f"Global timeout exceeded ({global_timeout}s)",
-                    description=check_def.get("description"),
-                )
-                results.append(result)
-                summary[result.status.value] += 1
-                continue
+        if deadline_at is not None and time.monotonic() >= deadline_at:
+            result = build_global_timeout_result(
+                check_def,
+                get_expected_str(check_def),
+                check_def.get("description"),
+                attempts=0,
+                duration_ms=0,
+                global_timeout_s=global_timeout,
+            )
+            results.append(result)
+            summary[result.status.value] += 1
+            continue
 
-        result = run_check(check_def, passed_checks)
+        result = run_check(
+            check_def,
+            passed_checks,
+            deadline_at=deadline_at,
+            global_timeout_s=global_timeout,
+        )
         results.append(result)
         summary[result.status.value] += 1
 
         if result.status == CheckStatus.PASS:
             passed_checks.add(result.name)
 
-    total_duration_ms = int((time.time() - start_time) * 1000)
+    total_duration_ms = int((time.monotonic() - start_time) * 1000)
     all_passed = summary[CheckStatus.PASS.value] == len(results) and len(results) > 0
 
     return GroundTruthResult(
