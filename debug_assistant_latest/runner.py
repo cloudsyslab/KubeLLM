@@ -162,9 +162,14 @@ def run_single_test_in_process(
             try:
                 if technique == "allStepsAtOnce":
                     result = allStepsAtOnce(configFile=str(config_path), config_overrides=overrides)
-                    # allStepsAtOnce runs verification agent, so verified = result
-                    success = result is True
-                    verified = result is True
+                    # allStepsAtOnce returns dict with status and metrics
+                    if isinstance(result, dict):
+                        success = result.get("status") is True
+                        verified = result.get("status") is True
+                        metrics = {"debug": result.get("debug_metrics", {}), "verification": result.get("verification_metrics", {})}
+                    else:
+                        success = result is True
+                        verified = result is True
                 elif technique == "stepByStep":
                     result = stepByStep(configFile=str(config_path), config_overrides=overrides)
                     # stepByStep has no verification agent
@@ -323,9 +328,14 @@ def run_single_test(
             try:
                 if technique == "allStepsAtOnce":
                     result = allStepsAtOnce(configFile=str(config_path), config_overrides=overrides)
-                    # allStepsAtOnce runs verification agent, so verified = result
-                    success = result is True
-                    verified = result is True
+                    # allStepsAtOnce returns dict with status and metrics
+                    if isinstance(result, dict):
+                        success = result.get("status") is True
+                        verified = result.get("status") is True
+                        metrics = {"debug": result.get("debug_metrics", {}), "verification": result.get("verification_metrics", {})}
+                    else:
+                        success = result is True
+                        verified = result is True
                 elif technique == "stepByStep":
                     result = stepByStep(configFile=str(config_path), config_overrides=overrides)
                     # stepByStep has no verification agent
@@ -588,6 +598,16 @@ def run_tests_parallel(
                             finished_at=datetime.now().isoformat(),
                         )
                     )
+
+                    # Teardown after timeout kill
+                    if teardown_after_run:
+                        try:
+                            from teardown import teardown_environment
+                            teardown_environment(test_name)
+                        except Exception as td_err:
+                            with open(stderr_log, "a") as f:
+                                f.write(f"\n[WARNING] Post-timeout teardown failed: {td_err}\n")
+
                     completed.append(test_name)
 
             # Remove completed tests from active
