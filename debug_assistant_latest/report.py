@@ -64,7 +64,8 @@ class TestSummary:
     error_message: Optional[str] = None
     metrics: Dict[str, AgentMetrics] = field(default_factory=dict)
     config_overrides_applied: Dict[str, Any] = field(default_factory=dict)
-    ground_truth_passed: Optional[bool] = None  # True/False if GT ran, None if no GT config
+    ground_truth_passed: Optional[bool] = None  # True/False if GT ran, None if GT did not run
+    ground_truth_configured: bool = False
 
     def to_dict(self) -> dict:
         """Convert to dictionary for JSON serialization."""
@@ -75,6 +76,7 @@ class TestSummary:
             "verified": self.verified,
             "debug_self_report": self.debug_self_report,
             "ground_truth_passed": self.ground_truth_passed,
+            "ground_truth_configured": self.ground_truth_configured or self.ground_truth_passed is not None,
             "started_at": self.started_at,
             "finished_at": self.finished_at,
             "duration_s": round(self.duration_s, 3),
@@ -135,6 +137,7 @@ def load_test_summary(summary_path: Path) -> TestSummary:
         metrics=metrics,
         config_overrides_applied=data.get("config_overrides_applied", {}),
         ground_truth_passed=data.get("ground_truth_passed"),
+        ground_truth_configured=data.get("ground_truth_configured", data.get("ground_truth_passed") is not None),
     )
 
 
@@ -189,14 +192,18 @@ def generate_aggregate_report(
     passed = sum(1 for s in summaries if s.status == "PASS")
     failed = sum(1 for s in summaries if s.status == "FAIL")
     errors = sum(1 for s in summaries if s.status in ("ERROR", "TIMEOUT"))
+    gt_configured = [
+        s for s in summaries
+        if s.ground_truth_configured or s.ground_truth_passed is not None
+    ]
     # Only count verified=True; verified=None means no verification was run
     verified_count = sum(1 for s in summaries if s.verified is True)
     # Count tests that actually had verification (verified is not None)
     tests_with_verification = sum(1 for s in summaries if s.verified is not None)
     # Ground truth stats
-    gt_passed_count = sum(1 for s in summaries if s.ground_truth_passed is True)
-    tests_with_gt = sum(1 for s in summaries if s.ground_truth_passed is not None)
-    gt_failed_tests = [s.test_name for s in summaries if s.ground_truth_passed is False]
+    gt_passed_count = sum(1 for s in gt_configured if s.ground_truth_passed is True)
+    tests_with_gt = len(gt_configured)
+    gt_failed_tests = [s.test_name for s in gt_configured if s.ground_truth_passed is not True]
 
     total_duration = sum(s.duration_s for s in summaries)
 
@@ -220,6 +227,7 @@ def generate_aggregate_report(
             "status": s.status,
             "verified": s.verified,
             "ground_truth_passed": s.ground_truth_passed,
+            "ground_truth_configured": s.ground_truth_configured or s.ground_truth_passed is not None,
             "duration_s": round(s.duration_s, 2),
             "error": s.error_message,
         }

@@ -239,6 +239,34 @@ class ReportTests(unittest.TestCase):
         self.assertEqual(aggregate.total_cost, 2.0)
         self.assertEqual(aggregate.ground_truth_failed_tests, ["wrong_interface"])
 
+    def test_generate_aggregate_report_counts_configured_gt_even_if_not_run(self):
+        summaries = [
+            TestSummary(
+                test_name="wrong_port",
+                technique="allStepsAtOnce",
+                status="PASS",
+                verified=True,
+                ground_truth_passed=True,
+                ground_truth_configured=True,
+            ),
+            TestSummary(
+                test_name="worker_timeout",
+                technique="allStepsAtOnce",
+                status="ERROR",
+                verified=None,
+                ground_truth_passed=None,
+                ground_truth_configured=True,
+                error_message="Timeout: exceeded 600s",
+            ),
+        ]
+
+        aggregate = generate_aggregate_report(summaries, run_config={}, run_id="run-gt-timeout")
+
+        self.assertEqual(aggregate.ground_truth_passed, 1)
+        self.assertEqual(aggregate.tests_with_ground_truth, 2)
+        self.assertEqual(aggregate.ground_truth_rate, 50.0)
+        self.assertEqual(aggregate.ground_truth_failed_tests, ["worker_timeout"])
+
     def test_generate_aggregate_report_counts_dict_backed_metrics(self):
         summaries = [
             TestSummary(
@@ -326,6 +354,7 @@ class ReportTests(unittest.TestCase):
         self.assertIsInstance(summary.metrics["debug_agent"], AgentMetrics)
         self.assertEqual(summary.metrics["debug_agent"].total_tokens, 15)
         self.assertEqual(summary.metrics["debug_agent"].cost, 0.25)
+        self.assertTrue(summary.ground_truth_configured)
 
 
 class TeardownTests(unittest.TestCase):
@@ -386,6 +415,7 @@ class RunnerTests(unittest.TestCase):
             started_at="2026-01-01T00:00:00",
             finished_at="2026-01-01T00:00:12",
             ground_truth_passed=True,
+            ground_truth_configured=True,
         )
 
         summary = result_to_summary(result, "allStepsAtOnce", {"debug-agent.model": "gpt-4o"})
@@ -393,6 +423,7 @@ class RunnerTests(unittest.TestCase):
         self.assertEqual(summary.status, "PASS")
         self.assertTrue(summary.verified)
         self.assertTrue(summary.ground_truth_passed)
+        self.assertTrue(summary.ground_truth_configured)
         self.assertEqual(summary.metrics["debug_agent"].__class__.__name__, "AgentMetrics")
         self.assertEqual(summary.metrics["debug_agent"].cost, 1.0)
         self.assertEqual(summary.config_overrides_applied["debug-agent.model"], "gpt-4o")
