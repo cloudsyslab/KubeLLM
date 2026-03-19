@@ -32,7 +32,7 @@ User request --> Claude Code (you, the router)
   +--> High-volume research, bulk reading, many comparisons?
        |
        +--> Generate self-contained Codex prompt(s)
-       +--> YOU launch them via: codex exec --full-auto --search ...
+       +--> YOU launch them via: codex exec --full-auto -c "search=true" ...
        +--> (parallel if independent, serial if shared state)
        +--> Capture typed JSON output
        +--> Synthesize and act on enriched context
@@ -52,9 +52,17 @@ These bounds prevent runaway execution. Respect them strictly.
 MAX_WAVES = 3              # Maximum delegation rounds before forced termination
 MAX_WORKERS_PER_WAVE = 5   # Maximum parallel Codex processes
 MAX_RETRIES = 2            # Per-worker retry limit on failure
-WORKER_TIMEOUT = 300       # Seconds before worker is considered hung
+IDLE_TIMEOUT = 60          # Seconds with no new events = worker hung
+MAX_WALL_CLOCK = 600       # Absolute ceiling (10 min) regardless of activity
+POLL_INTERVAL = 5          # Check for new events every 5 seconds
 FAILURE_BUDGET = 0.3       # Proceed if >70% of workers succeed
 ```
+
+**Activity-based timeout (preferred over wall-clock):**
+- Use `--json` flag to stream JSONL events
+- Poll event file every POLL_INTERVAL seconds
+- If no new events for IDLE_TIMEOUT seconds → worker is hung, terminate
+- MAX_WALL_CLOCK is a hard ceiling even if worker is active
 
 **Loop states:**
 - **COMPLETE**: All questions answered, no gaps, no escalations → deliver final output
@@ -219,27 +227,34 @@ This phase replaces manual user execution. YOU launch Codex workers directly.
 
 ### 2.5.1 Execution Command
 
-Use the Bash tool to launch Codex workers:
+Use the Bash tool to launch Codex workers with JSONL streaming for observability:
 
 ```bash
-# Single worker (foreground, blocking)
-codex exec --full-auto --search --sandbox read-only -o "codex-output-1.md" "PROMPT_HERE"
+# PREFERRED: With JSONL streaming for real-time observability
+codex exec --full-auto --json -c "search=true" -o "output.md" "PROMPT" > events.jsonl 2>&1 &
 
-# With typed output schema (preferred for parsing)
-codex exec --full-auto --search --output-schema codex-prompts/worker-response-schema.json -o "output.json" "PROMPT"
+# Monitor events.jsonl for progress:
+# {"type":"item.started","item":{"type":"web_search",...}}
+# {"type":"item.completed","item":{"type":"web_search","query":"..."}}
+# {"type":"turn.completed","usage":{"input_tokens":12000,"output_tokens":500}}
 
-# Background execution for parallel workers
-codex exec --full-auto --search --ephemeral -o "task-1.json" "PROMPT" &
+# Without streaming (simpler, but no progress visibility)
+codex exec --full-auto -c "search=true" -o "output.md" "PROMPT"
 ```
 
 **Flag selection:**
 - `--full-auto`: No approval prompts, enables autonomous execution
-- `--search`: Enables web research (required for most OFFLOAD tasks)
+- `--json`: **Stream JSONL events for observability** (item.started, item.completed, turn.completed)
+- `-c "search=true"`: Enables web research (IMPORTANT: use this, not `--search` which is interactive-only)
 - `--sandbox read-only`: For research tasks (no file writes)
 - `--sandbox workspace-write`: For code generation tasks (can write files)
-- `--output-schema <file>`: Enforce typed JSON response
 - `-o <file>`: Capture final output to file
 - `--ephemeral`: Don't persist session (cleaner for workers)
+
+**JSONL event types you will see:**
+- `thread.started` - session begins
+- `item.started` / `item.completed` - each tool call (web_search, shell, etc.)
+- `turn.completed` - agent turn finished, includes token usage
 
 ### 2.5.2 Parallel vs Serial Execution
 
@@ -253,21 +268,147 @@ codex exec --full-auto --search --ephemeral -o "task-1.json" "PROMPT" &
 - Tasks modify overlapping files
 - Earlier task output informs later task prompts
 
-### 2.5.3 Execution Flow
+### 2.5.3 Execution Flow with Activity-Based Monitoring
 
-1. For each OFFLOAD task from triage:
-   - Determine sandbox mode (read-only vs workspace-write)
-   - Determine execution mode (foreground vs background)
-   - Launch via Bash tool with appropriate flags
+For each OFFLOAD task, launch with JSONL streaming and monitor for activity:
 
-2. For background tasks:
-   - Use `run_in_background: true` in Bash tool
-   - Track task IDs for later retrieval
-   - Use TaskOutput to collect results with timeout
+**Step 1: Launch worker in background with JSONL streaming**
 
-3. Capture all outputs before proceeding to synthesis
+```powershell
+# Launch Codex worker, stream events to file, capture PID
+$proc = Start-Process -FilePath "codex" -ArgumentList @(
+    "exec", "--full-auto", "--json", "-c", "search=true",
+    "-o", "worker-1-output.md", "PROMPT_TEXT"
+) -RedirectStandardOutput "worker-1-events.jsonl" -RedirectStandardError "worker-1-err.log" -PassThru -NoNewWindow
+$workerPid = $proc.Id
+$startTime = Get-Date
+```
 
-### 2.5.4 Error Handling During Execution
+**Step 2: Poll for activity (run in loop)**
+
+```powershell
+# Activity-based timeout monitoring
+$idleTimeout = 60   # seconds with no new events = hung
+$maxWallClock = 600 # absolute ceiling
+$pollInterval = 5   # check every 5 seconds
+
+while ($true) {
+    # Check if process is still running
+    $running = Get-Process -Id $workerPid -ErrorAction SilentlyContinue
+    if (-not $running) { break }
+
+    # Check wall clock limit
+    $elapsed = ((Get-Date) - $startTime).TotalSeconds
+    if ($elapsed -gt $maxWallClock) {
+        Write-Host "Worker 1: Wall clock timeout (${elapsed}s) - terminating"
+        Stop-Process -Id $workerPid -Force
+        break
+    }
+
+    # Check for idle timeout (no new events)
+    $eventsFile = Get-Item "worker-1-events.jsonl" -ErrorAction SilentlyContinue
+    if ($eventsFile) {
+        $lastMod = $eventsFile.LastWriteTime
+        $idleSeconds = ((Get-Date) - $lastMod).TotalSeconds
+        if ($idleSeconds -gt $idleTimeout) {
+            Write-Host "Worker 1: Idle timeout (${idleSeconds}s no activity) - terminating"
+            Stop-Process -Id $workerPid -Force
+            break
+        }
+    }
+
+    Start-Sleep -Seconds $pollInterval
+}
+```
+
+**Step 3: Collect results after completion**
+
+```powershell
+# Read final output
+$output = Get-Content "worker-1-output.md" -Raw
+
+# Parse last turn.completed event for token usage
+$lastTurn = Get-Content "worker-1-events.jsonl" |
+    Where-Object { $_ -match "turn.completed" } |
+    Select-Object -Last 1 |
+    ConvertFrom-Json
+
+Write-Host "Worker 1 complete: $($lastTurn.usage.input_tokens) input tokens"
+```
+
+**Practical usage in Claude Code:**
+
+When implementing this, use the Bash tool with `run_in_background: true` for parallel workers.
+Track each worker's PID and events file. Poll periodically using TaskOutput or direct file reads.
+Terminate hung workers that exceed IDLE_TIMEOUT.
+
+### 2.5.4 Progress Reporting
+
+Parse JSONL events to provide live progress updates during execution.
+
+**JSONL event types from Codex:**
+```json
+{"type":"item.started","item":{"id":"item_1","type":"web_search",...}}
+{"type":"item.completed","item":{"type":"web_search","query":"site:nodejs.org..."}}
+{"type":"turn.completed","usage":{"input_tokens":21622,"output_tokens":656}}
+```
+
+**PowerShell progress parsing:**
+
+```powershell
+function Get-WorkerProgress {
+    param([string]$EventsFile, [datetime]$StartTime)
+
+    if (-not (Test-Path $EventsFile)) {
+        return @{ Status = "starting"; Searches = 0; Tokens = 0; Elapsed = 0 }
+    }
+
+    $events = Get-Content $EventsFile
+
+    # Count completed web searches
+    $searches = ($events | Where-Object { $_ -match '"type":"web_search"' } |
+                 Where-Object { $_ -match 'item.completed' }).Count
+
+    # Get token usage from most recent turn.completed
+    $turnCompleted = $events | Where-Object { $_ -match 'turn.completed' } | Select-Object -Last 1
+    $tokens = 0
+    if ($turnCompleted) {
+        $parsed = $turnCompleted | ConvertFrom-Json
+        $tokens = $parsed.usage.input_tokens
+    }
+
+    $elapsed = [math]::Round(((Get-Date) - $StartTime).TotalSeconds)
+
+    return @{ Status = "running"; Searches = $searches; Tokens = $tokens; Elapsed = $elapsed }
+}
+```
+
+**Progress display format:**
+
+```
+Worker 1: 🔍 4 web searches | ⏱️ 45s | 📊 12k tokens
+Worker 2: 🔍 2 web searches | ⏱️ 30s | 📊 8k tokens
+Worker 3: ⏳ starting...
+```
+
+**Reporting during parallel execution:**
+
+When running multiple workers, aggregate progress into a single status update:
+
+```powershell
+# During poll loop, report progress for all workers
+foreach ($worker in $workers) {
+    $progress = Get-WorkerProgress -EventsFile $worker.EventsFile -StartTime $worker.StartTime
+    $status = switch ($progress.Status) {
+        "starting" { "⏳ starting..." }
+        "running"  { "🔍 $($progress.Searches) searches | ⏱️ $($progress.Elapsed)s | 📊 $($progress.Tokens) tokens" }
+        "complete" { "✅ done" }
+    }
+    Write-Host "Worker $($worker.Id): $status"
+}
+```
+
+### 2.5.5 Error Handling During Execution
 
 - **Worker times out**: Log the timeout, proceed with other results, note gap
 - **Worker fails**: Retry up to MAX_RETRIES, then mark as failed
