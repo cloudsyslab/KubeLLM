@@ -23,6 +23,9 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 
+GROUND_TRUTH_SCHEMA_PATH = Path(__file__).with_name("ground_truth.schema.json")
+
+
 class CheckStatus(Enum):
     """Status of a ground truth check."""
     PASS = "PASS"      # Check succeeded - assertion matched
@@ -488,6 +491,19 @@ def save_ground_truth_result(result: GroundTruthResult, output_dir: Path) -> Pat
     return output_file
 
 
+def _load_ground_truth_schema() -> Dict[str, Any]:
+    """Load the checked-in ground-truth schema used by preflight validation."""
+    with open(GROUND_TRUTH_SCHEMA_PATH, encoding="utf-8") as f:
+        return json.load(f)
+
+
+def _format_schema_error(error: Any) -> str:
+    """Format a jsonschema validation error with a stable dotted path."""
+    path_parts = [str(part) for part in error.absolute_path]
+    path = ".".join(path_parts) if path_parts else "ground-truth"
+    return f"{path}: {error.message}"
+
+
 def validate_ground_truth_config(config: Dict[str, Any]) -> List[str]:
     """Validate ground-truth section of a config without executing commands.
 
@@ -507,14 +523,34 @@ def validate_ground_truth_config(config: Dict[str, Any]) -> List[str]:
         errors.append("ground-truth must be an object")
         return errors
 
+    try:
+        from jsonschema import Draft202012Validator
+    except ImportError:
+        errors.append("ground-truth schema validation unavailable: missing 'jsonschema' dependency")
+        return errors
+
+    try:
+        schema = _load_ground_truth_schema()
+    except Exception as exc:
+        errors.append(f"failed to load ground-truth schema: {exc}")
+        return errors
+
+    validator = Draft202012Validator(schema)
+    schema_errors = sorted(
+        (error for error in validator.iter_errors(config) if error.validator != "oneOf"),
+        key=lambda err: (tuple(str(part) for part in err.absolute_path), err.message),
+    )
+    for error in schema_errors:
+        errors.append(_format_schema_error(error))
+
     checks = gt.get("checks")
     if not checks:
         errors.append("ground-truth.checks is required")
-        return errors
+        return list(dict.fromkeys(errors))
 
     if not isinstance(checks, list):
         errors.append("ground-truth.checks must be an array")
-        return errors
+        return list(dict.fromkeys(errors))
 
     seen_names = set()
     for i, check in enumerate(checks):
@@ -554,4 +590,4 @@ def validate_ground_truth_config(config: Dict[str, Any]) -> List[str]:
             if dep not in seen_names:
                 errors.append(f"{prefix}: depends_on '{dep}' not defined (must appear earlier)")
 
-    return errors
+    return list(dict.fromkeys(errors))
