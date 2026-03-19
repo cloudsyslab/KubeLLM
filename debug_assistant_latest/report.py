@@ -23,6 +23,33 @@ class AgentMetrics:
     duration_s: float = 0.0
 
 
+AGENT_METRIC_FIELDS = tuple(AgentMetrics.__dataclass_fields__.keys())
+
+
+def normalize_agent_metrics(agent_metrics: Any) -> AgentMetrics:
+    """Coerce raw metrics payloads into the report's supported metric shape."""
+    if isinstance(agent_metrics, AgentMetrics):
+        return agent_metrics
+
+    if isinstance(agent_metrics, dict):
+        filtered = {
+            field_name: agent_metrics[field_name]
+            for field_name in AGENT_METRIC_FIELDS
+            if field_name in agent_metrics
+        }
+        return AgentMetrics(**filtered)
+
+    return AgentMetrics()
+
+
+def normalize_metrics_map(metrics: Optional[Dict[str, Any]]) -> Dict[str, AgentMetrics]:
+    """Normalize a metrics mapping so reporting code can treat all entries uniformly."""
+    return {
+        agent_name: normalize_agent_metrics(agent_metrics)
+        for agent_name, agent_metrics in (metrics or {}).items()
+    }
+
+
 @dataclass
 class TestSummary:
     """Summary of a single test execution."""
@@ -55,11 +82,8 @@ class TestSummary:
             "metrics": {},
             "config_overrides_applied": self.config_overrides_applied,
         }
-        for agent_name, agent_metrics in self.metrics.items():
-            if isinstance(agent_metrics, AgentMetrics):
-                result["metrics"][agent_name] = asdict(agent_metrics)
-            else:
-                result["metrics"][agent_name] = agent_metrics
+        for agent_name, agent_metrics in normalize_metrics_map(self.metrics).items():
+            result["metrics"][agent_name] = asdict(agent_metrics)
         return result
 
 
@@ -96,9 +120,7 @@ def load_test_summary(summary_path: Path) -> TestSummary:
     with open(summary_path) as f:
         data = json.load(f)
 
-    metrics = {}
-    for agent_name, agent_data in data.get("metrics", {}).items():
-        metrics[agent_name] = AgentMetrics(**agent_data)
+    metrics = normalize_metrics_map(data.get("metrics", {}))
 
     return TestSummary(
         test_name=data["test_name"],
@@ -184,14 +206,13 @@ def generate_aggregate_report(
     total_tokens = 0
 
     for s in summaries:
-        for agent_name, m in s.metrics.items():
-            if isinstance(m, AgentMetrics):
-                total_cost += m.cost
-                total_tokens += m.total_tokens
-                if "debug" in agent_name:
-                    debug_cost += m.cost
-                elif "verification" in agent_name:
-                    verification_cost += m.cost
+        for agent_name, m in normalize_metrics_map(s.metrics).items():
+            total_cost += m.cost
+            total_tokens += m.total_tokens
+            if "debug" in agent_name:
+                debug_cost += m.cost
+            elif "verification" in agent_name:
+                verification_cost += m.cost
 
     tests = [
         {
