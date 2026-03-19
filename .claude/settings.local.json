@@ -1,12 +1,41 @@
 {
   "permissions": {
     "allow": [
-      "Bash(ls:*)",
-      "Bash(python3:*)"
+      "Bash(dir:*)",
+      "Bash(Get-ChildItem -Force -Recurse)",
+      "Bash(Select-Object FullName)",
+      "Bash(powershell -Command:*)",
+      "WebSearch",
+      "WebFetch",
+      "Bash(claude:*)",
+      "Bash(winget install:*)",
+      "Bash(cmd /c \"dir C:\\\\Users\\\\minhl\\\\AppData\\\\Local\\\\Microsoft\\\\WinGet\\\\Packages\\\\jqlang* /s /b 2>nul | findstr exe\")",
+      "Bash(cmd /c \"where jq 2>nul || echo not found\")",
+      "Bash(powershell -NoProfile -ExecutionPolicy Bypass -File C:/Users/minhl/.claude/statusline.ps1)",
+      "Bash(powershell -NoProfile -ExecutionPolicy Bypass -Command \"$input = [Console]::In.ReadToEnd\\(\\); $data = $input | ConvertFrom-Json; Write-Host $data.model.display_name\")",
+      "Bash(cmd /c \"echo {\"\"model\"\":{\"\"display_name\"\":\"\"Claude Opus 4.5\"\"},\"\"context_window\"\":{\"\"used_percentage\"\":25.5},\"\"workspace\"\":{\"\"project_dir\"\":\"\"C:/llmsandbox\"\"},\"\"cost\"\":{\"\"total_cost_usd\"\":0.15}} | powershell -NoProfile -ExecutionPolicy Bypass -File C:/Users/minhl/.claude/statusline.ps1\")",
+      "Bash(powershell -NoProfile -ExecutionPolicy Bypass -Command \"''{\"\"model\"\":{\"\"display_name\"\":\"\"Claude Opus 4.5\"\"},\"\"context_window\"\":{\"\"used_percentage\"\":25.5},\"\"workspace\"\":{\"\"project_dir\"\":\"\"C:/llmsandbox\"\"},\"\"cost\"\":{\"\"total_cost_usd\"\":0.15}}'' | powershell -NoProfile -ExecutionPolicy Bypass -File C:/Users/minhl/.claude/statusline.ps1\")",
+      "Skill(learn)",
+      "Bash(powershell -NoProfile -ExecutionPolicy Bypass -Command \"''{\"\"model\"\":{\"\"display_name\"\":\"\"Claude Opus 4.5\"\"},\"\"context_window\"\":{\"\"used_percentage\"\":41.0},\"\"workspace\"\":{\"\"project_dir\"\":\"\"C:/Users/minhl/OneDrive/Desktop/llmsandbox\"\"},\"\"cost\"\":{\"\"total_cost_usd\"\":0.15}}'' | powershell -NoProfile -ExecutionPolicy Bypass -File C:/Users/minhl/.claude/statusline.ps1\")",
+      "Skill(codex)"
+    ],
+    "deny": [
+      "Edit(**/.env*)",
+      "Edit(**/*credentials*)",
+      "Edit(**/*secret*)"
     ]
   },
-  "enableAllProjectMcpServers": true,
-  "enabledMcpjsonServers": [
-    "kubellm-docs"
-  ]
+  "hooks": {
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "prompt",
+            "prompt": "You are a prompt quality evaluator for a learning sandbox. Evaluate the following user prompt for structural quality.\n\nUser prompt: $ARGUMENTS\n\nEvaluate against these 4 criteria:\n1. CONTEXT/ROLE: Does the prompt establish what domain or role is relevant? (e.g., 'In the context of terraform...' or 'As a Docker setup...')\n2. TASK SPECIFICITY: Is there a clear, specific task? Vague requests like 'help me with terraform' or 'do something' fail this criterion.\n3. DELIVERABLE: Is it clear what form the output should take? (code, explanation, file, comparison, list, etc.)\n4. CONSTRAINTS: Are there boundaries, requirements, or scope limitations stated?\n\nAUTO-APPROVE these cases (respond with {\"decision\": \"approve\"} immediately):\n- Slash commands (prompt starts with /)\n- Short conversational follow-ups: yes, no, continue, go ahead, try that, option 1, option 2, sounds good, etc.\n- Specific questions that contain a question mark and are clearly answerable\n- Prompts that reference prior conversation context (e.g., 'do the same for X', 'now try Y')\n\nFor all other prompts:\n- If the prompt meets at least 2 of the 4 criteria, respond with {\"decision\": \"approve\"}\n- If the prompt meets fewer than 2 criteria, respond with {\"decision\": \"block\", \"reason\": \"Your prompt is missing structure. Here is what was missing:\\n\\n[list which criteria were not met]\\n\\nTry restructuring like this:\\n\\nContext: [what domain/role]\\nTask: [what specifically to do]\\nDeliverable: [what form the output takes]\\nConstraints: [any boundaries]\\n\\nExample: 'In the context of Docker containerization, create a multi-stage Dockerfile for a Node.js app that minimizes image size. Output the Dockerfile with inline comments explaining each stage.'\"}",
+            "timeout": 15
+          }
+        ]
+      }
+    ]
+  }
 }

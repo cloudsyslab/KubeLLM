@@ -219,20 +219,16 @@ Each test case includes:
 
 ## Adding to Automated Tests
 
-To add these to `kube_test.py`:
+To add these to the active runner workflow:
 
-```python
-for testEnvName in [
-    "port_mismatch_wrong_interface",
-    "readiness_missing_dependency",
-    "selector_env_variable",
-    "resource_limits_oom"
-]:
-    configFile = f"{filepath}/{testEnvName}/config_step.json"
-    # Run tests...
+1. Create the test case directory under `debug_assistant_latest/troubleshooting/`
+2. Add `config_step.json` with the active config shape
+3. Add one entry to `TEARDOWN_CONFIG` in `debug_assistant_latest/teardown.py`
+4. Verify discovery with:
+
+```bash
+python3 debug_assistant_latest/runner.py --list
 ```
-
-You'll need to add teardown logic for each test case in the `tearDownEnviornment()` function.
 
 ---
 

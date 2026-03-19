@@ -1,0 +1,167 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://kubellm.local/ground-truth.schema.json",
+  "title": "Ground Truth Verification Config",
+  "description": "Schema for deterministic verification commands in KubeLLM test configs",
+  "type": "object",
+  "properties": {
+    "ground-truth": {
+      "type": "object",
+      "required": ["checks"],
+      "properties": {
+        "description": {
+          "type": "string",
+          "description": "Human-readable description of what this verification proves"
+        },
+        "timeout_seconds": {
+          "type": "integer",
+          "default": 60,
+          "minimum": 1,
+          "maximum": 300,
+          "description": "Global timeout for all checks combined"
+        },
+        "checks": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "$ref": "#/$defs/check" },
+          "description": "List of verification checks to execute sequentially"
+        }
+      },
+      "additionalProperties": false
+    }
+  },
+  "$defs": {
+    "check": {
+      "type": "object",
+      "required": ["name", "cmd"],
+      "properties": {
+        "name": {
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9_]*$",
+          "description": "Unique identifier for this check (snake_case)"
+        },
+        "cmd": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Shell command to execute (must be idempotent)"
+        },
+        "description": {
+          "type": "string",
+          "description": "Human-readable explanation of what this check verifies"
+        },
+        "poll_interval_s": {
+          "type": "number",
+          "default": 0,
+          "minimum": 0,
+          "maximum": 30,
+          "description": "Seconds between polling attempts (0 = no polling)"
+        },
+        "max_attempts": {
+          "type": "integer",
+          "default": 1,
+          "minimum": 1,
+          "maximum": 60,
+          "description": "Maximum polling attempts before failing"
+        },
+        "timeout_s": {
+          "type": "number",
+          "minimum": 1,
+          "maximum": 120,
+          "description": "Per-check command timeout in seconds"
+        },
+        "depends_on": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Names of checks that must PASS before this one runs"
+        },
+        "expect": {
+          "type": "string",
+          "description": "Expected output (exact match after trimming whitespace)"
+        },
+        "expect_contains": {
+          "type": "string",
+          "description": "Substring that must appear in output"
+        },
+        "expect_regex": {
+          "type": "string",
+          "description": "Regex pattern that must match output"
+        },
+        "expect_gte": {
+          "type": ["string", "number"],
+          "description": "Output (parsed as number) must be >= this value"
+        },
+        "expect_exit": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 255,
+          "description": "Expected exit code"
+        },
+        "expect_empty": {
+          "type": "boolean",
+          "const": true,
+          "description": "Output must be empty (for error log checks)"
+        }
+      },
+      "oneOf": [
+        {
+          "properties": {
+            "expect": {
+              "type": "string",
+              "description": "Expected output (exact match after trimming whitespace)"
+            }
+          },
+          "required": ["expect"]
+        },
+        {
+          "properties": {
+            "expect_contains": {
+              "type": "string",
+              "description": "Substring that must appear in output"
+            }
+          },
+          "required": ["expect_contains"]
+        },
+        {
+          "properties": {
+            "expect_regex": {
+              "type": "string",
+              "description": "Regex pattern that must match output"
+            }
+          },
+          "required": ["expect_regex"]
+        },
+        {
+          "properties": {
+            "expect_gte": {
+              "type": ["string", "number"],
+              "description": "Output (parsed as number) must be >= this value"
+            }
+          },
+          "required": ["expect_gte"]
+        },
+        {
+          "properties": {
+            "expect_exit": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 255,
+              "description": "Expected exit code (use with 'cmd; echo $?')"
+            }
+          },
+          "required": ["expect_exit"]
+        },
+        {
+          "properties": {
+            "expect_empty": {
+              "type": "boolean",
+              "const": true,
+              "description": "Output must be empty (for error log checks)"
+            }
+          },
+          "required": ["expect_empty"]
+        }
+      ],
+      "additionalProperties": false
+    }
+  }
+}

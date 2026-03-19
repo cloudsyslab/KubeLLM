@@ -21,7 +21,6 @@
             "Do not use commands like vim or vi",
             "Do not use commands that open up editors like 'kubectl edit'"
         ],
-        "api-key": "",
         "guidelines": [
             "If a command invocation is successful but gives no stdout nor stderr, then that is because that invocation resulted in no output to stdout or stderr.",
             "If a command contains a placeholder name surrounded in angle brackets such as <pod_name>, for example, then **do not** run that command as-is. First run a `kubectl get` command to find a real name to replace the placeholder name, then run the suggested command with the replaced name of the resource. For example, if you see `kubectl logs <pod_name> -n example_namespace`, first run `kubectl get pods -n example_namespace` and use the name of the first pod you see.",
@@ -60,5 +59,39 @@
     ],
     "test-name": "wrong_port",
     "test-directory": "",
-    "yaml-file-name": "wrong_port.yaml"
+    "yaml-file-name": "wrong_port.yaml",
+    "ground-truth": {
+        "description": "Verify containerPort matches server listen port and server is reachable",
+        "timeout_seconds": 60,
+        "checks": [
+            {
+                "name": "pod_ready",
+                "cmd": "kubectl get pod kube-wrong-port -o jsonpath='{.status.conditions[?(@.type==\"Ready\")].status}'",
+                "expect": "True",
+                "poll_interval_s": 2,
+                "max_attempts": 15,
+                "description": "Pod is Ready (not just Running)"
+            },
+            {
+                "name": "port_aligned",
+                "cmd": "kubectl get pod kube-wrong-port -o jsonpath='{.spec.containers[0].ports[0].containerPort}'",
+                "expect": "8765",
+                "description": "Container port matches server.py listen port (8765)",
+                "depends_on": [
+                    "pod_ready"
+                ]
+            },
+            {
+                "name": "server_responding",
+                "cmd": "kubectl exec kube-wrong-port -- python3 -c \"import urllib.request; print(urllib.request.urlopen('http://localhost:8765/').getcode())\"",
+                "expect": "200",
+                "poll_interval_s": 2,
+                "max_attempts": 5,
+                "description": "Server responds to HTTP request on port 8765",
+                "depends_on": [
+                    "pod_ready"
+                ]
+            }
+        ]
+    }
 }
