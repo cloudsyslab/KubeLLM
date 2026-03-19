@@ -47,7 +47,7 @@ from config_merge import (
 )
 from report import (
     TestSummary,
-    AgentMetrics,
+    normalize_metrics_map,
     save_test_summary,
     generate_aggregate_report,
     save_aggregate_report,
@@ -635,7 +635,7 @@ def result_to_summary(result: TestResult, technique: str, overrides: dict) -> Te
         finished_at=result.finished_at,
         duration_s=result.duration_s,
         error_message=result.error,
-        metrics=result.metrics,
+        metrics=normalize_metrics_map(result.metrics),
         config_overrides_applied=overrides,
         ground_truth_passed=result.ground_truth_passed,
     )
@@ -937,7 +937,7 @@ def _build_repeat_payload(args, mode, iteration, base_run_id, base_output_dir):
     """
     args_dict = {}
     for k, v in vars(args).items():
-        args_dict[k] = str(v) if isinstance(v, Path) else v
+        args_dict[k] = v.as_posix() if isinstance(v, Path) else v
     # output_dir will be overridden by the worker; set to None to be explicit
     args_dict["output_dir"] = None
 
@@ -945,7 +945,7 @@ def _build_repeat_payload(args, mode, iteration, base_run_id, base_output_dir):
         "mode": mode,
         "iteration": iteration,
         "base_run_id": base_run_id,
-        "base_output_dir": str(base_output_dir),
+        "base_output_dir": base_output_dir.as_posix() if isinstance(base_output_dir, Path) else str(base_output_dir),
         "args": args_dict,
     }
     if mode == "single":
