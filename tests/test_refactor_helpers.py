@@ -121,6 +121,23 @@ class GroundTruthTests(unittest.TestCase):
 
         self.assertEqual(errors, [])
 
+    def test_validate_ground_truth_config_rejects_malformed_expect_regex(self):
+        errors = validate_ground_truth_config(
+            {
+                "ground-truth": {
+                    "checks": [
+                        {
+                            "name": "regex_check",
+                            "cmd": "echo value",
+                            "expect_regex": "(",
+                        }
+                    ],
+                }
+            }
+        )
+
+        self.assertTrue(any("invalid expect_regex" in error for error in errors))
+
     def test_run_check_allows_expect_exit_with_stderr(self):
         cmd = f'"{sys.executable}" -c "import sys; sys.stderr.write(\'boom\\n\'); sys.exit(2)"'
         result = run_check(
@@ -149,6 +166,20 @@ class GroundTruthTests(unittest.TestCase):
 
         self.assertEqual(result.status, CheckStatus.ERROR)
         self.assertIn("timed out", result.error)
+
+    def test_run_check_malformed_expect_regex_returns_error(self):
+        cmd = f'"{sys.executable}" -c "print(\'value\')"'
+        result = run_check(
+            {
+                "name": "bad_regex",
+                "cmd": cmd,
+                "expect_regex": "(",
+            },
+            passed_checks=set(),
+        )
+
+        self.assertEqual(result.status, CheckStatus.ERROR)
+        self.assertIn("Invalid expect_regex", result.error)
 
     def test_run_all_checks_enforces_global_timeout_during_slow_check(self):
         cmd_slow = f'"{sys.executable}" -c "import time; time.sleep(0.2); print(\'done\')"'
