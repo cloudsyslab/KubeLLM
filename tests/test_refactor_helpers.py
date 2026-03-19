@@ -81,6 +81,46 @@ class GroundTruthTests(unittest.TestCase):
 
         self.assertTrue(any("duplicate name" in error for error in errors))
 
+    def test_validate_ground_truth_config_enforces_schema_ranges_and_types(self):
+        errors = validate_ground_truth_config(
+            {
+                "ground-truth": {
+                    "timeout_seconds": 0,
+                    "checks": [
+                        {
+                            "name": "bad_check",
+                            "cmd": "echo bad",
+                            "timeout_s": "30",
+                            "expect_exit": 999,
+                        }
+                    ],
+                }
+            }
+        )
+
+        self.assertTrue(any("ground-truth.timeout_seconds" in error and "minimum of 1" in error for error in errors))
+        self.assertTrue(any("ground-truth.checks.0.timeout_s" in error and "type 'number'" in error for error in errors))
+        self.assertTrue(any("ground-truth.checks.0.expect_exit" in error and "maximum of 255" in error for error in errors))
+
+    def test_validate_ground_truth_config_accepts_schema_valid_expect_fields(self):
+        errors = validate_ground_truth_config(
+            {
+                "ground-truth": {
+                    "timeout_seconds": 60,
+                    "checks": [
+                        {
+                            "name": "exit_check",
+                            "cmd": "echo ok",
+                            "timeout_s": 30,
+                            "expect_exit": 2,
+                        }
+                    ],
+                }
+            }
+        )
+
+        self.assertEqual(errors, [])
+
     def test_run_check_allows_expect_exit_with_stderr(self):
         cmd = f'"{sys.executable}" -c "import sys; sys.stderr.write(\'boom\\n\'); sys.exit(2)"'
         result = run_check(
