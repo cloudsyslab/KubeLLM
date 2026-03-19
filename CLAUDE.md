@@ -131,7 +131,8 @@ config_step.json → Knowledge Agent (RAG) → Debug Agent (kubectl/file ops) �
 - `debug_assistant_latest/runner.py`: **Recommended** CLI for running tests with parallelism and config overrides
 - `debug_assistant_latest/main.py`: Entry point with three execution strategies (legacy single-test interface)
 - `debug_assistant_latest/agents.py`: Agent implementations (AgentAPI, AgentDebug, AgentDebugStepByStep, SingleAgent, AgentVerification_v1/v2)
-- `debug_assistant_latest/kube_test.py`: Test harness with `TEARDOWN_CONFIG` and `tearDownEnviornment()`
+- `debug_assistant_latest/kube_test.py`: Compatibility wrappers for older teardown imports
+- `debug_assistant_latest/teardown.py`: Canonical teardown config and cleanup helpers
 - `debug_assistant_latest/teardownenv.py`: CLI wrapper for teardown operations
 - `debug_assistant_latest/metrics_db.py`: SQLite metrics tracking (tokens, cost, duration per agent)
 - `debug_assistant_latest/utils.py`: Config reading, file traversal, LLM identification
@@ -157,7 +158,7 @@ Each test case directory contains:
 
 ## Teardown System
 
-Data-driven teardown via `TEARDOWN_CONFIG` in `kube_test.py`:
+Data-driven teardown via `TEARDOWN_CONFIG` in `teardown.py`:
 
 ```python
 TEARDOWN_CONFIG = {
@@ -170,7 +171,7 @@ TEARDOWN_CONFIG = {
 }
 ```
 
-To add a new test case: add one entry to `TEARDOWN_CONFIG`. The `tearDownEnviornment()` function handles all cleanup automatically.
+To add a new test case: add one entry to `TEARDOWN_CONFIG`. The `teardown_environment()` function handles all cleanup automatically.
 
 ## Metrics Database
 
