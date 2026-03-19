@@ -282,7 +282,21 @@ def run_check(
         last_error = error
         last_exit_code = exit_code
 
-        if matches_expectation(output, exit_code, check) and (error is None or expect_exit):
+        try:
+            matched = matches_expectation(output, exit_code, check)
+        except re.error as exc:
+            return CheckResult(
+                name=name,
+                status=CheckStatus.ERROR,
+                expected=expected_str,
+                actual=output or "(no output)",
+                attempts=attempt,
+                duration_ms=duration_ms(),
+                error=f"Invalid expect_regex: {exc}",
+                description=description,
+            )
+
+        if matched and (error is None or expect_exit):
             return CheckResult(
                 name=name,
                 status=CheckStatus.PASS,
@@ -583,6 +597,12 @@ def validate_ground_truth_config(config: Dict[str, Any]) -> List[str]:
             errors.append(f"{prefix}: one of {expect_fields} is required")
         elif len(found) > 1:
             errors.append(f"{prefix}: only one expect_* field allowed (found: {found})")
+
+        if "expect_regex" in check and isinstance(check["expect_regex"], str):
+            try:
+                re.compile(check["expect_regex"])
+            except re.error as exc:
+                errors.append(f"{prefix}: invalid expect_regex '{check['expect_regex']}': {exc}")
 
         # Validate depends_on references
         depends_on = check.get("depends_on", [])
