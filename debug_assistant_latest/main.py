@@ -106,7 +106,11 @@ def allStepsAtOnce(configFile=None, config_overrides: Optional[Dict[str, Any]] =
     store_metrics_entry(db_path, verification_metrics, verification_metrics.get("task_status"))
     printFinishMessage()
 
-    return verificationAgent.verificationStatus  # Return verification result instead of debug agent's self-report
+    return {
+        "status": verificationAgent.verificationStatus,
+        "debug_metrics": debug_metrics,
+        "verification_metrics": verification_metrics,
+    }
 
 def stepByStep(configFile=None, config_overrides: Optional[Dict[str, Any]] = None):
     """
