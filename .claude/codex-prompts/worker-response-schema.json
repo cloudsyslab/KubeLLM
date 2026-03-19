@@ -1,0 +1,88 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "CodexWorkerResponse",
+  "description": "Typed response schema for Codex worker agents. Workers MUST return output conforming to this schema.",
+  "type": "object",
+  "properties": {
+    "status": {
+      "type": "string",
+      "enum": ["complete", "partial", "failed"],
+      "description": "Task completion status. 'complete' = all objectives met. 'partial' = some gaps remain. 'failed' = could not fulfill request."
+    },
+    "summary": {
+      "type": "string",
+      "description": "3-5 sentence executive summary of findings or work completed.",
+      "minLength": 50,
+      "maxLength": 1000
+    },
+    "findings": {
+      "type": "array",
+      "description": "Structured findings from research or analysis tasks.",
+      "items": {
+        "type": "object",
+        "properties": {
+          "claim": {
+            "type": "string",
+            "description": "Specific, falsifiable statement."
+          },
+          "source": {
+            "type": "string",
+            "description": "URL or reference for the claim."
+          },
+          "confidence": {
+            "type": "string",
+            "enum": ["high", "medium", "low"],
+            "description": "Confidence level based on source quality and corroboration."
+          },
+          "evidence": {
+            "type": "string",
+            "description": "Direct quote or specific data point supporting the claim."
+          }
+        },
+        "required": ["claim", "confidence"]
+      }
+    },
+    "artifacts": {
+      "type": "array",
+      "description": "Files created, modified, or code samples produced.",
+      "items": {
+        "type": "object",
+        "properties": {
+          "type": {
+            "type": "string",
+            "enum": ["file_created", "file_modified", "code_sample", "data"],
+            "description": "Type of artifact."
+          },
+          "path": {
+            "type": "string",
+            "description": "File path (for file_created/file_modified) or identifier."
+          },
+          "description": {
+            "type": "string",
+            "description": "Brief description of the artifact."
+          },
+          "content": {
+            "type": "string",
+            "description": "Inline content for code_sample or small data artifacts."
+          }
+        },
+        "required": ["type", "description"]
+      }
+    },
+    "gaps": {
+      "type": "array",
+      "description": "Questions that could not be answered or areas needing follow-up.",
+      "items": {
+        "type": "string"
+      }
+    },
+    "escalations": {
+      "type": "array",
+      "description": "Issues requiring router/user attention. Worker should NOT attempt to resolve these.",
+      "items": {
+        "type": "string"
+      }
+    }
+  },
+  "required": ["status", "summary"]
+}

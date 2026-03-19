@@ -17,6 +17,7 @@ DEFAULT_INCLUDE = [
     "debug_assistant_latest/main.py",
     "debug_assistant_latest/agents.py",
     "debug_assistant_latest/kube_test.py",
+    "debug_assistant_latest/teardown.py",
     "debug_assistant_latest/teardownenv.py",
     "debug_assistant_latest/troubleshooting/**/*.yaml",
     "debug_assistant_latest/troubleshooting/**/readme.txt",
