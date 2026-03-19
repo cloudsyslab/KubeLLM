@@ -121,7 +121,7 @@ def execute_command(cmd: str, timeout_s: float = 30) -> tuple[str, int, Optional
         return (
             result.stdout.strip(),
             result.returncode,
-            result.stderr.strip() if result.returncode != 0 else None
+            (result.stderr.strip() or None) if result.returncode != 0 else None
         )
     except subprocess.TimeoutExpired:
         return ("", -1, f"Command timed out after {timeout_s}s")
@@ -281,6 +281,7 @@ def run_all_checks(config: Dict[str, Any]) -> Optional[GroundTruthResult]:
 
     test_name = config.get("test-name", "unknown")
     checks_config = gt_config.get("checks", [])
+    global_timeout = gt_config.get("timeout_seconds")
 
     results: List[CheckResult] = []
     passed_checks: set = set()
@@ -288,6 +289,25 @@ def run_all_checks(config: Dict[str, Any]) -> Optional[GroundTruthResult]:
     start_time = time.time()
 
     for check_def in checks_config:
+        # Enforce global timeout if configured
+        if global_timeout is not None:
+            elapsed = time.time() - start_time
+            if elapsed >= global_timeout:
+                # Mark remaining checks as ERROR due to global timeout
+                result = CheckResult(
+                    name=check_def["name"],
+                    status=CheckStatus.ERROR,
+                    expected=get_expected_str(check_def),
+                    actual="(not executed)",
+                    attempts=0,
+                    duration_ms=0,
+                    error=f"Global timeout exceeded ({global_timeout}s)",
+                    description=check_def.get("description"),
+                )
+                results.append(result)
+                summary[result.status.value] += 1
+                continue
+
         result = run_check(check_def, passed_checks)
         results.append(result)
         summary[result.status.value] += 1

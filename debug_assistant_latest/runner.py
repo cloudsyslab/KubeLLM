@@ -187,6 +187,9 @@ def run_single_test_in_process(
                         print(format_ground_truth_results(gt_result))
                         save_ground_truth_result(gt_result, log_dir)
                         ground_truth_passed = gt_result.passed
+                        # GT failure overrides LLM success (deterministic > heuristic)
+                        if not gt_result.passed:
+                            success = False
 
             finally:
                 sys.stdout, sys.stderr = old_stdout, old_stderr
@@ -345,6 +348,8 @@ def run_single_test(
                         print(format_ground_truth_results(gt_result))
                         save_ground_truth_result(gt_result, log_dir)
                         ground_truth_passed = gt_result.passed
+                        if not gt_result.passed:
+                            success = False
 
             finally:
                 sys.stdout, sys.stderr = old_stdout, old_stderr
