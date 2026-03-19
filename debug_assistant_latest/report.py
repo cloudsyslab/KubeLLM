@@ -23,6 +23,33 @@ class AgentMetrics:
     duration_s: float = 0.0
 
 
+AGENT_METRIC_FIELDS = tuple(AgentMetrics.__dataclass_fields__.keys())
+
+
+def normalize_agent_metrics(agent_metrics: Any) -> AgentMetrics:
+    """Coerce raw metrics payloads into the report's supported metric shape."""
+    if isinstance(agent_metrics, AgentMetrics):
+        return agent_metrics
+
+    if isinstance(agent_metrics, dict):
+        filtered = {
+            field_name: agent_metrics[field_name]
+            for field_name in AGENT_METRIC_FIELDS
+            if field_name in agent_metrics
+        }
+        return AgentMetrics(**filtered)
+
+    return AgentMetrics()
+
+
+def normalize_metrics_map(metrics: Optional[Dict[str, Any]]) -> Dict[str, AgentMetrics]:
+    """Normalize a metrics mapping so reporting code can treat all entries uniformly."""
+    return {
+        agent_name: normalize_agent_metrics(agent_metrics)
+        for agent_name, agent_metrics in (metrics or {}).items()
+    }
+
+
 @dataclass
 class TestSummary:
     """Summary of a single test execution."""
@@ -37,6 +64,8 @@ class TestSummary:
     error_message: Optional[str] = None
     metrics: Dict[str, AgentMetrics] = field(default_factory=dict)
     config_overrides_applied: Dict[str, Any] = field(default_factory=dict)
+    ground_truth_passed: Optional[bool] = None  # True/False if GT ran, None if GT did not run
+    ground_truth_configured: bool = False
 
     def to_dict(self) -> dict:
         """Convert to dictionary for JSON serialization."""
@@ -46,6 +75,8 @@ class TestSummary:
             "status": self.status,
             "verified": self.verified,
             "debug_self_report": self.debug_self_report,
+            "ground_truth_passed": self.ground_truth_passed,
+            "ground_truth_configured": self.ground_truth_configured or self.ground_truth_passed is not None,
             "started_at": self.started_at,
             "finished_at": self.finished_at,
             "duration_s": round(self.duration_s, 3),
@@ -53,11 +84,8 @@ class TestSummary:
             "metrics": {},
             "config_overrides_applied": self.config_overrides_applied,
         }
-        for agent_name, agent_metrics in self.metrics.items():
-            if isinstance(agent_metrics, AgentMetrics):
-                result["metrics"][agent_name] = asdict(agent_metrics)
-            else:
-                result["metrics"][agent_name] = agent_metrics
+        for agent_name, agent_metrics in normalize_metrics_map(self.metrics).items():
+            result["metrics"][agent_name] = asdict(agent_metrics)
         return result
 
 
@@ -94,9 +122,7 @@ def load_test_summary(summary_path: Path) -> TestSummary:
     with open(summary_path) as f:
         data = json.load(f)
 
-    metrics = {}
-    for agent_name, agent_data in data.get("metrics", {}).items():
-        metrics[agent_name] = AgentMetrics(**agent_data)
+    metrics = normalize_metrics_map(data.get("metrics", {}))
 
     return TestSummary(
         test_name=data["test_name"],
@@ -110,6 +136,8 @@ def load_test_summary(summary_path: Path) -> TestSummary:
         error_message=data.get("error_message"),
         metrics=metrics,
         config_overrides_applied=data.get("config_overrides_applied", {}),
+        ground_truth_passed=data.get("ground_truth_passed"),
+        ground_truth_configured=data.get("ground_truth_configured", data.get("ground_truth_passed") is not None),
     )
 
 
@@ -125,8 +153,11 @@ class AggregateReport:
     errors: int = 0
     verified: int = 0
     tests_with_verification: int = 0  # Tests that had verification agent run
+    ground_truth_passed: int = 0  # Tests where ground truth checks passed
+    tests_with_ground_truth: int = 0  # Tests that had ground truth configured
     pass_rate: float = 0.0
     verified_rate: float = 0.0  # verified / tests_with_verification
+    ground_truth_rate: float = 0.0  # ground_truth_passed / tests_with_ground_truth
     total_duration_s: float = 0.0
     wall_clock_s: float = 0.0
     total_cost: float = 0.0
@@ -136,6 +167,7 @@ class AggregateReport:
     tests: List[Dict] = field(default_factory=list)
     failed_tests: List[str] = field(default_factory=list)
     error_tests: List[str] = field(default_factory=list)
+    ground_truth_failed_tests: List[str] = field(default_factory=list)
 
 
 def generate_aggregate_report(
@@ -160,10 +192,18 @@ def generate_aggregate_report(
     passed = sum(1 for s in summaries if s.status == "PASS")
     failed = sum(1 for s in summaries if s.status == "FAIL")
     errors = sum(1 for s in summaries if s.status in ("ERROR", "TIMEOUT"))
+    gt_configured = [
+        s for s in summaries
+        if s.ground_truth_configured or s.ground_truth_passed is not None
+    ]
     # Only count verified=True; verified=None means no verification was run
     verified_count = sum(1 for s in summaries if s.verified is True)
     # Count tests that actually had verification (verified is not None)
     tests_with_verification = sum(1 for s in summaries if s.verified is not None)
+    # Ground truth stats
+    gt_passed_count = sum(1 for s in gt_configured if s.ground_truth_passed is True)
+    tests_with_gt = len(gt_configured)
+    gt_failed_tests = [s.test_name for s in gt_configured if s.ground_truth_passed is not True]
 
     total_duration = sum(s.duration_s for s in summaries)
 
@@ -173,20 +213,21 @@ def generate_aggregate_report(
     total_tokens = 0
 
     for s in summaries:
-        for agent_name, m in s.metrics.items():
-            if isinstance(m, AgentMetrics):
-                total_cost += m.cost
-                total_tokens += m.total_tokens
-                if "debug" in agent_name:
-                    debug_cost += m.cost
-                elif "verification" in agent_name:
-                    verification_cost += m.cost
+        for agent_name, m in normalize_metrics_map(s.metrics).items():
+            total_cost += m.cost
+            total_tokens += m.total_tokens
+            if "debug" in agent_name:
+                debug_cost += m.cost
+            elif "verification" in agent_name:
+                verification_cost += m.cost
 
     tests = [
         {
             "name": s.test_name,
             "status": s.status,
             "verified": s.verified,
+            "ground_truth_passed": s.ground_truth_passed,
+            "ground_truth_configured": s.ground_truth_configured or s.ground_truth_passed is not None,
             "duration_s": round(s.duration_s, 2),
             "error": s.error_message,
         }
@@ -206,8 +247,11 @@ def generate_aggregate_report(
         errors=errors,
         verified=verified_count,
         tests_with_verification=tests_with_verification,
+        ground_truth_passed=gt_passed_count,
+        tests_with_ground_truth=tests_with_gt,
         pass_rate=round(passed / total * 100, 1) if total > 0 else 0.0,
         verified_rate=round(verified_count / tests_with_verification * 100, 1) if tests_with_verification > 0 else 0.0,
+        ground_truth_rate=round(gt_passed_count / tests_with_gt * 100, 1) if tests_with_gt > 0 else 0.0,
         total_duration_s=round(total_duration, 2),
         wall_clock_s=round(wall_clock_s, 2),
         total_cost=round(total_cost, 4),
@@ -217,6 +261,7 @@ def generate_aggregate_report(
         tests=tests,
         failed_tests=failed_tests,
         error_tests=error_tests,
+        ground_truth_failed_tests=gt_failed_tests,
     )
 
 
@@ -274,9 +319,11 @@ def print_console_summary(report: AggregateReport, output_dir: Path) -> None:
     print()
     print(f"Tests: {report.total_tests} total | {report.passed} passed | {report.failed} failed | {report.errors} error")
     if report.tests_with_verification > 0:
-        print(f"Verified: {report.verified}/{report.tests_with_verification} ({report.verified_rate}%)")
+        print(f"Verified (LLM): {report.verified}/{report.tests_with_verification} ({report.verified_rate}%)")
     else:
-        print(f"Verified: N/A (no verification agent ran)")
+        print(f"Verified (LLM): N/A (no verification agent ran)")
+    if report.tests_with_ground_truth > 0:
+        print(f"Ground Truth: {report.ground_truth_passed}/{report.tests_with_ground_truth} ({report.ground_truth_rate}%)")
     print(f"Duration: {report.total_duration_s}s (wall: {report.wall_clock_s}s)")
 
     if report.total_cost > 0:
@@ -292,6 +339,12 @@ def print_console_summary(report: AggregateReport, output_dir: Path) -> None:
         print()
         print("ERRORS:")
         for name in report.error_tests:
+            print(f"  - {name}")
+
+    if report.ground_truth_failed_tests:
+        print()
+        print("GROUND TRUTH FAILED:")
+        for name in report.ground_truth_failed_tests:
             print(f"  - {name}")
 
     print()

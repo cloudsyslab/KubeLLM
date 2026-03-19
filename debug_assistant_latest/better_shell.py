@@ -1,8 +1,16 @@
 from pathlib import Path
 from typing import List, Optional, Union
 
-from phi.tools import Toolkit
-from phi.utils.log import logger
+try:
+    from phi.tools import Toolkit
+except ImportError:
+    Toolkit = object
+
+try:
+    from phi.utils.log import logger
+except ImportError:
+    import logging
+    logger = logging.getLogger("better_shell")
 
 class BetterShellTools(Toolkit):
     def __init__(self, base_dir: Optional[Union[Path, str]] = None):

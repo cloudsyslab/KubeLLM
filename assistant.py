@@ -2,19 +2,15 @@ from typing import Optional
 from phi.agent import Agent
 from phi.agent import AgentKnowledge
 from phi.llm.ollama import OllamaTools
-from phi.model.ollama import Ollama
-from phi.embedder.ollama import OllamaEmbedder
 from phi.vectordb.pgvector import PgVector, SearchType
 from phi.storage.agent.postgres import PgAgentStorage
 from phi.tools.shell import ShellTools
-from phi.model.openai import OpenAIChat
 from phi.embedder.openai import OpenAIEmbedder
 from better_shell import BetterShellTools
 from statement import Model
-from phi.model.google import Gemini
+from runtime_config import DB_URL, build_chat_model, build_ollama_embedder, require_openai_api_key
 
-
-db_url = "postgresql+psycopg://ai:ai@localhost:5532/ai"
+db_url = DB_URL
 
 description = "You are an AI called 'RAGit'. You provide instructions that a user should take to solve issues with their Kubernetes configurations."
 task = "Provide the user with instructions and shell commands to solve the user's problem."
@@ -45,7 +41,6 @@ guidelines = [
     # TODO: HOW TO GET AGENT TO STOP USING PLACEHOLDER NAMES
     #"When writing out your commands, use the **real name** of the Kubernetes resource instead of placeholder names. For example, if the command you are about to suggest is `kubectl get pods -n <namespace>`, run `kubectl get namespaces` first to get available namespaces. Another example is if your command is `kubectl describe <node-name>`, then run `kubectl get nodes` first to get the available nodes.",
 ]
-
 def get_rag_agent(
     model: Model, 
     use_rag: bool = True,
@@ -54,10 +49,11 @@ def get_rag_agent(
     debug_mode: bool = True
 ) -> Agent:
     """Get a Local RAG Agent."""
-
+    model_name = model.name
+    require_openai_api_key(model_name)
 
     """ model = """
-    llm = Gemini(id="gemini-1.5-flash")
+    llm = build_chat_model(model_name)
     embedder, embeddings_model_clean = model.to_embedder()
 
     if use_rag:
@@ -124,20 +120,10 @@ def get_rag_assistant(
     debug_mode: bool = True,
 ) -> Agent:
     """Get a Local RAG Agent."""
-    
-    
-    if any(token in llm_model for token in ['gpt', 'o3', 'o4', 'o1']):
-        llm = OpenAIChat(id=llm_model)
-    elif 'gemini' in llm_model:
-        llm = Gemini(id=llm_model)
-    else:
-        llm = Ollama(id=llm_model)
-    
-    # Define the embedder based on the embeddings model
-    if embeddings_model == "nomic-embed-text":
-        embedder = OllamaEmbedder(model=embeddings_model, dimensions=768)
-    else:
-        embedder = OllamaEmbedder(model=embeddings_model)
+    require_openai_api_key(llm_model)
+
+    llm = build_chat_model(llm_model)
+    embedder = build_ollama_embedder(embeddings_model)
 
     """ model = """
     # Define the knowledge base

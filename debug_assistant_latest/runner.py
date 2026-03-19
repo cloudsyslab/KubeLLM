@@ -47,12 +47,19 @@ from config_merge import (
 )
 from report import (
     TestSummary,
-    AgentMetrics,
+    normalize_metrics_map,
     save_test_summary,
     generate_aggregate_report,
     save_aggregate_report,
     save_run_config,
     print_console_summary,
+)
+from ground_truth import (
+    run_all_checks as run_ground_truth_checks,
+    format_results as format_ground_truth_results,
+    save_ground_truth_result,
+    validate_ground_truth_config,
+    GroundTruthResult,
 )
 
 
@@ -69,6 +76,8 @@ class TestResult:
     log_dir: Path
     started_at: str
     finished_at: str
+    ground_truth_passed: Optional[bool] = None  # None if GT did not run
+    ground_truth_configured: bool = False
 
 
 def get_timestamp_id() -> str:
@@ -81,6 +90,16 @@ def get_output_dir(run_id: str, base_dir: Optional[Path] = None) -> Path:
     if base_dir:
         return base_dir
     return REPO_ROOT / ".local" / "test_runs" / run_id
+
+
+def _has_ground_truth_config(test_name: str, overrides: dict) -> bool:
+    """Best-effort check for whether a test case has deterministic GT configured."""
+    try:
+        config_path = get_config_path(test_name)
+        config = load_config_with_overrides(config_path, overrides)
+    except Exception:
+        return False
+    return bool(config.get("ground-truth"))
 
 
 def run_single_test_in_process(
@@ -117,25 +136,28 @@ def run_single_test_in_process(
     error = None
     metrics = {}
     test_started = False  # Guard: only teardown if test actually started
+    ground_truth_passed = None
+    ground_truth_configured = False
 
     try:
         # Import here to avoid circular imports in worker process
         from main import allStepsAtOnce, stepByStep, singleAgentApproach
         from config_merge import load_config_with_overrides, save_effective_config
-        from kube_test import backupEnviornment, tearDownEnviornment
+        from teardown import backup_environment, teardown_environment
+
+        config_path = get_config_path(test_name)
+        config = load_config_with_overrides(config_path, overrides)
+        ground_truth_configured = bool(config.get("ground-truth"))
 
         # Opt-in backup before run (fail fast if backup fails)
         if backup_before_run:
             try:
-                backupEnviornment(test_name)
+                backup_environment(test_name)
             except Exception as backup_err:
                 error = f"Backup failed: {backup_err}"
                 with open(stderr_log, "a") as f:
                     f.write(f"BACKUP FAILED:\n{traceback.format_exc()}")
                 raise  # Abort test - don't proceed without backup
-
-        config_path = get_config_path(test_name)
-        config = load_config_with_overrides(config_path, overrides)
 
         # Save effective config for audit trail
         save_effective_config(config, log_dir / "config_effective.json")
@@ -153,9 +175,14 @@ def run_single_test_in_process(
             try:
                 if technique == "allStepsAtOnce":
                     result = allStepsAtOnce(configFile=str(config_path), config_overrides=overrides)
-                    # allStepsAtOnce runs verification agent, so verified = result
-                    success = result is True
-                    verified = result is True
+                    # allStepsAtOnce returns dict with status and metrics
+                    if isinstance(result, dict):
+                        success = result.get("status") is True
+                        verified = result.get("status") is True
+                        metrics = {"debug": result.get("debug_metrics", {}), "verification": result.get("verification_metrics", {})}
+                    else:
+                        success = result is True
+                        verified = result is True
                 elif technique == "stepByStep":
                     result = stepByStep(configFile=str(config_path), config_overrides=overrides)
                     # stepByStep has no verification agent
@@ -168,6 +195,20 @@ def run_single_test_in_process(
                     verified = None  # No verification performed
                 else:
                     raise ValueError(f"Unknown technique: {technique}")
+
+                # Run ground truth verification if configured
+                if ground_truth_configured:
+                    print("\n" + "=" * 60)
+                    print("Running ground truth verification...")
+                    gt_result = run_ground_truth_checks(config)
+                    if gt_result:
+                        print(format_ground_truth_results(gt_result))
+                        save_ground_truth_result(gt_result, log_dir)
+                        ground_truth_passed = gt_result.passed
+                        # GT failure overrides LLM success (deterministic > heuristic)
+                        if not gt_result.passed:
+                            success = False
+
             finally:
                 sys.stdout, sys.stderr = old_stdout, old_stderr
 
@@ -180,7 +221,7 @@ def run_single_test_in_process(
     # Opt-in teardown after run (only if test started; log warnings to stderr.log)
     if teardown_after_run and test_started:
         try:
-            tearDownEnviornment(test_name)
+            teardown_environment(test_name)
         except Exception as teardown_err:
             # Route warning to per-test stderr.log
             with open(stderr_log, "a") as f:
@@ -201,6 +242,8 @@ def run_single_test_in_process(
         log_dir=log_dir,
         started_at=started_at,
         finished_at=finished_at,
+        ground_truth_passed=ground_truth_passed,
+        ground_truth_configured=ground_truth_configured,
     )
 
 
@@ -239,20 +282,26 @@ def run_single_test(
     error = None
     metrics = {}
     test_started = False  # Guard: only teardown if test actually started
+    ground_truth_passed = None
+    ground_truth_configured = False
 
     if verbose:
         print(f"[RUNNING] {test_name} ({technique})")
 
     try:
         from main import allStepsAtOnce, stepByStep, singleAgentApproach
-        from kube_test import backupEnviornment, tearDownEnviornment
+        from teardown import backup_environment, teardown_environment
+
+        config_path = get_config_path(test_name)
+        config = load_config_with_overrides(config_path, overrides)
+        ground_truth_configured = bool(config.get("ground-truth"))
 
         # Opt-in backup before run (fail fast if backup fails)
         if backup_before_run:
             if verbose:
                 print(f"[BACKUP] Creating backup for {test_name}")
             try:
-                backupEnviornment(test_name)
+                backup_environment(test_name)
             except Exception as backup_err:
                 error = f"Backup failed: {backup_err}"
                 if verbose:
@@ -260,9 +309,6 @@ def run_single_test(
                 with open(stderr_log, "a") as f:
                     f.write(f"BACKUP FAILED:\n{traceback.format_exc()}")
                 raise  # Abort test - don't proceed without backup
-
-        config_path = get_config_path(test_name)
-        config = load_config_with_overrides(config_path, overrides)
 
         # Save effective config for audit trail
         save_effective_config(config, log_dir / "config_effective.json")
@@ -298,9 +344,14 @@ def run_single_test(
             try:
                 if technique == "allStepsAtOnce":
                     result = allStepsAtOnce(configFile=str(config_path), config_overrides=overrides)
-                    # allStepsAtOnce runs verification agent, so verified = result
-                    success = result is True
-                    verified = result is True
+                    # allStepsAtOnce returns dict with status and metrics
+                    if isinstance(result, dict):
+                        success = result.get("status") is True
+                        verified = result.get("status") is True
+                        metrics = {"debug": result.get("debug_metrics", {}), "verification": result.get("verification_metrics", {})}
+                    else:
+                        success = result is True
+                        verified = result is True
                 elif technique == "stepByStep":
                     result = stepByStep(configFile=str(config_path), config_overrides=overrides)
                     # stepByStep has no verification agent
@@ -313,6 +364,19 @@ def run_single_test(
                     verified = None  # No verification performed
                 else:
                     raise ValueError(f"Unknown technique: {technique}")
+
+                # Run ground truth verification if configured
+                if ground_truth_configured:
+                    print("\n" + "=" * 60)
+                    print("Running ground truth verification...")
+                    gt_result = run_ground_truth_checks(config)
+                    if gt_result:
+                        print(format_ground_truth_results(gt_result))
+                        save_ground_truth_result(gt_result, log_dir)
+                        ground_truth_passed = gt_result.passed
+                        if not gt_result.passed:
+                            success = False
+
             finally:
                 sys.stdout, sys.stderr = old_stdout, old_stderr
 
@@ -329,7 +393,7 @@ def run_single_test(
         try:
             if verbose:
                 print(f"[TEARDOWN] Running teardown for {test_name}")
-            tearDownEnviornment(test_name)
+            teardown_environment(test_name)
         except Exception as teardown_err:
             warning_msg = f"[WARNING] Teardown failed for {test_name}: {teardown_err}"
             if verbose:
@@ -357,6 +421,8 @@ def run_single_test(
         log_dir=log_dir,
         started_at=started_at,
         finished_at=finished_at,
+        ground_truth_passed=ground_truth_passed,
+        ground_truth_configured=ground_truth_configured,
     )
 
 
@@ -436,6 +502,10 @@ def run_tests_parallel(
         # Track active processes: {test_name: (process, queue, start_time)}
         active: Dict[str, tuple] = {}
         pending = list(test_names)
+        gt_configured_by_test = {
+            test_name: _has_ground_truth_config(test_name, overrides)
+            for test_name in test_names
+        }
 
         while pending or active:
             # Launch new processes up to max_workers
@@ -484,13 +554,14 @@ def run_tests_parallel(
                                     verified=None,
                                     debug_self_report=None,
                                     duration_s=elapsed,
-                                    error=f"Worker error: {err_msg}",
-                                    metrics={},
-                                    log_dir=output_dir / test_name,
-                                    started_at=datetime.now().isoformat(),
-                                    finished_at=datetime.now().isoformat(),
-                                )
+                                error=f"Worker error: {err_msg}",
+                                metrics={},
+                                log_dir=output_dir / test_name,
+                                started_at=datetime.now().isoformat(),
+                                finished_at=datetime.now().isoformat(),
+                                ground_truth_configured=gt_configured_by_test.get(test_name, False),
                             )
+                        )
                     except queue.Empty:
                         # Process ended but no result (crash)
                         print(f"[ERROR] {test_name}: Worker crashed without result")
@@ -506,6 +577,7 @@ def run_tests_parallel(
                                 log_dir=output_dir / test_name,
                                 started_at=datetime.now().isoformat(),
                                 finished_at=datetime.now().isoformat(),
+                                ground_truth_configured=gt_configured_by_test.get(test_name, False),
                             )
                         )
                     finally:
@@ -547,8 +619,19 @@ def run_tests_parallel(
                             log_dir=log_dir,
                             started_at=datetime.now().isoformat(),
                             finished_at=datetime.now().isoformat(),
+                            ground_truth_configured=gt_configured_by_test.get(test_name, False),
                         )
                     )
+
+                    # Teardown after timeout kill
+                    if teardown_after_run:
+                        try:
+                            from teardown import teardown_environment
+                            teardown_environment(test_name)
+                        except Exception as td_err:
+                            with open(stderr_log, "a") as f:
+                                f.write(f"\n[WARNING] Post-timeout teardown failed: {td_err}\n")
+
                     completed.append(test_name)
 
             # Remove completed tests from active
@@ -576,8 +659,10 @@ def result_to_summary(result: TestResult, technique: str, overrides: dict) -> Te
         finished_at=result.finished_at,
         duration_s=result.duration_s,
         error_message=result.error,
-        metrics=result.metrics,
+        metrics=normalize_metrics_map(result.metrics),
         config_overrides_applied=overrides,
+        ground_truth_passed=result.ground_truth_passed,
+        ground_truth_configured=result.ground_truth_configured,
     )
 
 
@@ -603,6 +688,69 @@ def cmd_list(args):
             print(f"  {tc}")
 
     return 0
+
+
+def cmd_validate_ground_truth(args):
+    """Handle --validate-ground-truth command."""
+    test_cases = list_test_cases()
+    errors_found = False
+
+    print(f"Validating ground truth configs for {len(test_cases)} test cases...\n")
+
+    for tc in test_cases:
+        config_path = get_config_path(tc)
+        try:
+            config = load_config_with_overrides(config_path, {})
+            gt_errors = validate_ground_truth_config(config)
+
+            if gt_errors:
+                print(f"[INVALID] {tc}:")
+                for err in gt_errors:
+                    print(f"          {err}")
+                errors_found = True
+            elif config.get("ground-truth"):
+                checks = config["ground-truth"].get("checks", [])
+                print(f"[OK]      {tc} ({len(checks)} checks)")
+            else:
+                print(f"[NONE]    {tc} (no ground-truth configured)")
+        except Exception as e:
+            print(f"[ERROR]   {tc}: {e}")
+            errors_found = True
+
+    print()
+    if errors_found:
+        print("Validation FAILED - fix errors above")
+        return 1
+    else:
+        print("Validation PASSED")
+        return 0
+
+
+def cmd_verify_only(args, test_name: str):
+    """Handle --verify-only command - run ground truth checks without agents."""
+    config_path = get_config_path(test_name)
+    config = load_config_with_overrides(config_path, {})
+
+    if not config.get("ground-truth"):
+        print(f"No ground-truth configured for {test_name}")
+        return 1
+
+    print(f"Running ground truth verification for {test_name}...")
+
+    gt_result = run_ground_truth_checks(config)
+    if gt_result:
+        print(format_ground_truth_results(gt_result))
+
+        # Save results if output-dir specified
+        if args.output_dir:
+            output_dir = args.output_dir / test_name
+            save_ground_truth_result(gt_result, output_dir)
+            print(f"Results saved to: {output_dir}/ground_truth.json")
+
+        return 0 if gt_result.passed else 1
+    else:
+        print("Ground truth verification failed to run")
+        return 1
 
 
 def cmd_run_single(args, test_name: str):
@@ -814,7 +962,7 @@ def _build_repeat_payload(args, mode, iteration, base_run_id, base_output_dir):
     """
     args_dict = {}
     for k, v in vars(args).items():
-        args_dict[k] = str(v) if isinstance(v, Path) else v
+        args_dict[k] = v.as_posix() if isinstance(v, Path) else v
     # output_dir will be overridden by the worker; set to None to be explicit
     args_dict["output_dir"] = None
 
@@ -822,7 +970,7 @@ def _build_repeat_payload(args, mode, iteration, base_run_id, base_output_dir):
         "mode": mode,
         "iteration": iteration,
         "base_run_id": base_run_id,
-        "base_output_dir": str(base_output_dir),
+        "base_output_dir": base_output_dir.as_posix() if isinstance(base_output_dir, Path) else str(base_output_dir),
         "args": args_dict,
     }
     if mode == "single":
@@ -1073,6 +1221,18 @@ Examples:
         help="Run teardown after test completes (opt-in). Warnings emitted on failure.",
     )
 
+    # Ground truth verification
+    parser.add_argument(
+        "--verify-only",
+        action="store_true",
+        help="Run only ground truth verification (no agent execution)",
+    )
+    parser.add_argument(
+        "--validate-ground-truth",
+        action="store_true",
+        help="Validate ground truth configs without executing (schema check only)",
+    )
+
     # Serial repeat queue
     parser.add_argument(
         "--repeat",
@@ -1094,6 +1254,20 @@ Examples:
     # Determine which command to run
     if args.list:
         return cmd_list(args)
+
+    if args.validate_ground_truth:
+        return cmd_validate_ground_truth(args)
+
+    if args.verify_only:
+        if not args.test_case:
+            print("Error: --verify-only requires a test case name")
+            return 1
+        available = list_test_cases()
+        if args.test_case not in available:
+            print(f"Unknown test case: {args.test_case}")
+            print(f"Available: {', '.join(available)}")
+            return 1
+        return cmd_verify_only(args, args.test_case)
 
     # Apply repeat overrides before dispatching
     repeat_active = _apply_repeat_overrides(args)
