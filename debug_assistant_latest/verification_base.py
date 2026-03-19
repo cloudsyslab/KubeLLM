@@ -91,8 +91,8 @@ class VerificationAgentBase(Agent):
     def preparePrompt(self):
         raise NotImplementedError
 
-    @TIMEOUT_DECORATOR(480)
     @withTimeout(None)
+    @TIMEOUT_DECORATOR(480)
     def askQuestion(self):
         try:
             prompt = self.prompt
