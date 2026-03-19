@@ -42,10 +42,14 @@ KubeLLM is an LLM-based multi-agent framework for automated Kubernetes cluster t
 |-----------|----------|----------------|
 | **runner.py** | `debug_assistant_latest/runner.py` | CLI test runner with parallelism, config overrides, repeat queues |
 | **main.py** | `debug_assistant_latest/main.py` | Entry point with 3 execution strategies |
-| **agents.py** | `debug_assistant_latest/agents.py` | All agent implementations (AgentAPI, AgentDebug, AgentDebugStepByStep, SingleAgent, AgentVerification) |
+| **api_agents.py** | `debug_assistant_latest/api_agents.py` | Knowledge-agent wrapper around the RAG API + prompt builder |
+| **debug_agents.py** | `debug_assistant_latest/debug_agents.py` | Debug flows (allStepsAtOnce, stepByStep, singleAgent) and shared helpers |
+| **verification_base.py** | `debug_assistant_latest/verification_base.py` | Shared verification lifecycle, status parsing, and metric capture |
+| **verification_agents.py** | `debug_assistant_latest/verification_agents.py` | Verification agent prompts that reuse the base helpers |
 | **api_server.py** | `api_server.py` | FastAPI server for RAG knowledge base endpoints |
 | **assistant.py** | `assistant.py` | RAG assistant factory with phidata |
-| **kube_test.py** | `debug_assistant_latest/kube_test.py` | Test harness, TEARDOWN_CONFIG, backup/restore |
+| **kube_test.py** | `debug_assistant_latest/kube_test.py` | Compatibility wrappers for older teardown imports |
+| **teardown.py** | `debug_assistant_latest/teardown.py` | Canonical teardown configuration and backup/restore helpers |
 | **metrics_db.py** | `debug_assistant_latest/metrics_db.py` | SQLite token/cost tracking per agent |
 | **config_merge.py** | `debug_assistant_latest/config_merge.py` | Config override merge logic |
 | **report.py** | `debug_assistant_latest/report.py` | Test summary and aggregate report generation |
@@ -62,7 +66,7 @@ KubeLLM is an LLM-based multi-agent framework for automated Kubernetes cluster t
    - Load `config_step.json` with problem description, agent configs, setup commands
    - Apply CLI overrides via `config_merge.py`
    - Execute setup commands (docker build, kubectl apply)
-   - Backup files via `kube_test.backupEnviornment()`
+   - Backup files via `teardown.backup_environment()`
 
 2. **Knowledge Retrieval** (`AgentAPI`)
    - Initialize RAG assistant with pgvector knowledge base
@@ -85,7 +89,7 @@ KubeLLM is an LLM-based multi-agent framework for automated Kubernetes cluster t
 5. **Metrics & Reporting**
    - Store per-agent metrics to SQLite via `store_metrics_entry()`
    - Generate `summary.json` per test, `aggregate.json` per run
-   - Teardown environment via `kube_test.tearDownEnviornment()`
+   - Teardown environment via `teardown.teardown_environment()`
 
 ## Key Patterns
 
@@ -102,7 +106,7 @@ KubeLLM is an LLM-based multi-agent framework for automated Kubernetes cluster t
 | `singleAgent` | Unified agent with embedded RAG | No |
 
 ### Data-Driven Teardown
-- `TEARDOWN_CONFIG` dict in `kube_test.py` defines cleanup for all 15 test cases
+- `TEARDOWN_CONFIG` dict in `teardown.py` defines cleanup for all 15 test cases
 - Single entry per test: docker images, files to restore, k8s manifests to delete
 - Adding new test: add one entry to `TEARDOWN_CONFIG`
 
@@ -126,7 +130,7 @@ KubeLLM is an LLM-based multi-agent framework for automated Kubernetes cluster t
 
 | Goal | Start Here |
 |------|------------|
-| Add new test case | Create dir in `troubleshooting/`, add `config_step.json`, add entry to `TEARDOWN_CONFIG` |
+| Add new test case | Create dir in `troubleshooting/`, add `config_step.json`, add entry to `teardown.py` |
 | Add new agent type | `debug_assistant_latest/agents.py` - follow existing agent patterns |
 | Add new execution strategy | `debug_assistant_latest/main.py` - add new function, wire to runner |
 | Modify RAG knowledge sources | `api_server.py` `/add_url/` endpoint or config `knowledge` array |
@@ -146,7 +150,8 @@ KubeLLM-main/
 │   ├── runner.py           # Recommended CLI entry point
 │   ├── main.py             # Execution strategies
 │   ├── agents.py           # Agent implementations
-│   ├── kube_test.py        # TEARDOWN_CONFIG + test harness
+│   ├── kube_test.py        # Compatibility wrappers for older imports
+│   ├── teardown.py         # TEARDOWN_CONFIG + backup/restore helpers
 │   ├── teardownenv.py      # Teardown CLI wrapper
 │   ├── metrics_db.py       # SQLite metrics tracking
 │   ├── config_merge.py     # Config override logic

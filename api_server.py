@@ -1,11 +1,10 @@
-from typing import List, Optional, IO, Annotated
+from typing import Annotated, List
+
 from fastapi import FastAPI, HTTPException, UploadFile, Form, File, Body
-from fastapi.responses import HTMLResponse
 from fastapi.middleware.cors import CORSMiddleware
-from phi.agent import Agent
+from fastapi.responses import HTMLResponse
 from phi.document import Document
 from phi.document.reader.pdf import PDFReader
-from phi.document.reader.website import WebsiteReader
 from phi.document.reader.text import TextReader
 from phi.utils.log import logger
 from assistant import get_rag_assistant, get_rag_agent  # type: ignore
@@ -13,19 +12,11 @@ import shutil
 from pathlib import Path
 from statement import Model
 from sqlalchemy import create_engine, text
-from phi.vectordb.pgvector import PgVector
-from phi.knowledge.website import WebsiteKnowledgeBase
-import requests
-from bs4 import BeautifulSoup
-from phi.document.base import Document
-from phi.agent import AgentKnowledge
-from phi.embedder.ollama import OllamaEmbedder
-from dotenv import load_dotenv
-
-load_dotenv(Path(__file__).resolve().parent / ".env")
+from api_server_support import SessionState, knowledge_table_name, load_knowledge_document
+from runtime_config import DB_URL_PSYCOPG2
 
 app = FastAPI()
-DB_URL = "postgresql+psycopg2://ai:ai@localhost:5532/ai"  # adjust your DB URL
+DB_URL = DB_URL_PSYCOPG2
 engine = create_engine(DB_URL)
 
 
@@ -37,15 +28,6 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
-
-# In-memory state management
-class SessionState:
-    def __init__(self):
-        self.rag_assistant: Optional[Agent] = None
-        self.messages = []  # Initialize with an empty list
-        self.rag_assistant_run_id: Optional[str] = None
-        self.llm_model: Optional[str] = None
-        self.embeddings_model: Optional[str] = None
 
 session_state = SessionState()
 
@@ -71,8 +53,7 @@ async def initialize_agent(model: Model, use_rag: Annotated[bool, Body()]):
         session_state.rag_assistant = get_rag_agent(model, use_rag)
         session_state.llm_model = model.name
         session_state.rag_assistant_run_id = session_state.rag_assistant.create_session()
-
-        session_state.messages = [{"role": "assistant", "content": "Upload a doc and ask me questions..."}]
+        session_state.reset_messages()
     
     return {"status": "Agent initialized"}
 
@@ -85,9 +66,7 @@ async def initialize_assistant(llm_model: str = Form(...), embeddings_model: str
         session_state.llm_model = llm_model
         session_state.embeddings_model = embeddings_model
         session_state.rag_assistant_run_id = session_state.rag_assistant.create_session()
-        
-        # Initialize messages with a default message
-        session_state.messages = [{"role": "assistant", "content": "Upload a doc and ask me questions..."}]
+        session_state.reset_messages()
 
     return {"status": "Agent initialized"}
 
@@ -109,61 +88,6 @@ async def ask_question(prompt: str = Form(...)):
     
     return {"response": response.content}
 
-def load_knowledge_base_old(url: str, table_name: str):
-    """
-    Scrape the website URL and load content into the pgvector knowledge base.
-    """
-    knowledge_base = WebsiteKnowledgeBase(
-        urls=[url],
-        max_links=2,  # adjust depth if needed
-        vector_db=PgVector(
-            table_name=table_name,
-            db_url=DB_URL,
-        ),
-    )
-    knowledge_base.load()
-
-def load_knowledge_base(url: str, table_name:str):
-    # Headers from your working manual test
-    headers = {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
-    }
-    
-    # Fetch and parse
-    response = requests.get(url, headers=headers)
-    response.raise_for_status()
-    
-    soup = BeautifulSoup(response.content, 'html.parser')
-    title = soup.title.string if soup.title else url.split('/')[-1]
-    
-    # Clean text (remove scripts/styles/nav)
-    for tag in soup(["script", "style", "nav", "footer"]):
-        tag.decompose()
-    text = soup.get_text(separator='\n', strip=True)
-    
-    doc = Document(
-        content=text,
-        metadata={"source": url, "title": title}
-    )
-    
-    
-    # Define the embedder based on the embeddings model
-    if session_state.embeddings_model == "nomic-embed-text":
-        embedder = OllamaEmbedder(model=session_state.embeddings_model, dimensions=768)
-    else:
-        embedder = OllamaEmbedder(model=session_state.embeddings_model)
-
-    # Load to KB
-    kb = AgentKnowledge(
-        vector_db=PgVector(
-            schema="ai",
-            table_name=table_name,
-            db_url=DB_URL,
-            embedder=embedder
-        )
-    )
-    kb.load_documents([doc])  # Add more docs for crawling/multi-URL
-
 @app.post("/add_url/")
 async def add_url(url: str = Form(...)):
     """Add a URL to the RAG knowledge base using load_knowledge_base logic."""
@@ -171,31 +95,13 @@ async def add_url(url: str = Form(...)):
         raise HTTPException(status_code=400, detail="Agent not initialized")
 
     # Construct table name dynamically based on embeddings model
-    table_name = f"local_rag_documents_{session_state.embeddings_model}"
+    table_name = knowledge_table_name(session_state.embeddings_model)
 
     try:
-        load_knowledge_base(url, table_name)
+        load_knowledge_document(url, table_name, session_state.embeddings_model, DB_URL)
         return {"status": "URL added", "url": url, "table": table_name}
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Could not load knowledge base: {str(e)}")
-
-'''
-......................................................
-Deprecated: this code only works for static web page.
-......................................................
-@app.post("/add_url/")
-async def add_url(url: str = Form(...)):
-    """Add a URL to the knowledge base."""
-    if session_state.rag_assistant is None:
-        raise HTTPException(status_code=400, detail="Agent not initialized")
-    scraper = WebsiteReader(max_links=2, max_depth=1)
-    web_documents: List[Document] = scraper.read(url)
-    if web_documents:
-        session_state.rag_assistant.knowledge.load_documents(web_documents, upsert=True)
-        return {"status": "URL added"}
-    else:
-        raise HTTPException(status_code=400, detail="Could not read website")
-'''
 
 @app.post("/upload_md/")
 async def upload_md(file: UploadFile = File(...)):
@@ -239,7 +145,7 @@ async def clear_knowledge_base():
     if session_state.rag_assistant is None:
         raise HTTPException(status_code=400, detail="Agent not initialized")
 
-    table_name = f"local_rag_documents_{session_state.embeddings_model}"
+    table_name = knowledge_table_name(session_state.embeddings_model)
 
     try:
         with engine.begin() as conn:
@@ -271,6 +177,5 @@ async def get_chat_history():
 @app.post("/new_run/")
 async def new_run():
     """Start a new run."""
-    session_state.rag_assistant = None
-    session_state.messages = [{"role": "assistant", "content": "Upload a doc and ask me questions..."}]
+    session_state.reset_run()
     return {"status": "New run started"}

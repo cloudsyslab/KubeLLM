@@ -25,8 +25,9 @@ One-line summaries for clutter detection and repo understanding.
 | `runner.py` | **New** CLI for parallel test execution with config overrides |
 | `main.py` | Entry point: allStepsAtOnce, stepByStep, singleAgent execution |
 | `agents.py` | Agent implementations (AgentAPI, AgentDebug, AgentVerification, etc.) |
-| `kube_test.py` | Test harness with TEARDOWN_CONFIG and tearDownEnviornment() |
+| `kube_test.py` | Compatibility wrappers for older teardown imports; active teardown lives in `teardown.py` |
 | `teardownenv.py` | CLI wrapper for teardown operations |
+| `teardown.py` | Canonical teardown configuration and backup/restore helpers |
 | `metrics_db.py` | SQLite metrics tracking (tokens, cost, duration per agent) |
 | `utils.py` | Config reading, file traversal, LLM identification |
 | `test_discovery.py` | **New** Test case enumeration and pattern matching |
@@ -60,6 +61,15 @@ One-line summaries for clutter detection and repo understanding.
 | `__init__.py` | Package init |
 | `__main__.py` | Package entry point |
 
+## legacy/
+
+| File | Summary |
+|------|---------|
+| `legacy/README.md` | Notes which superseded scripts are being preserved temporarily |
+| `legacy/debug_assistant_latest/runtests.sh` | Legacy sequential test script superseded by `debug_assistant_latest/runner.py` |
+| `legacy/debug_assistant_latest/kube_test.py` | Legacy batch harness preserved for later review |
+| `legacy/root/test_runner.sh` | Legacy shell runner preserved for later review |
+
 ## .github/workflows/
 
 | File | Summary |
@@ -85,6 +95,10 @@ The following clutter was removed:
 ### Kept (used by code)
 - `statement.py` - imported by `assistant.py` and `api_server.py`
 - `better_shell.py` - imported by `assistant.py` and `agents.py`
-- `test_runner.sh` - referenced in orchestrator
 - `usage_monitor.py` - standalone cost calculator utility
 - `rag_apicall_example.py` - example/reference script
+
+### Moved to legacy/ for later review
+- `legacy/debug_assistant_latest/kube_test.py`
+- `legacy/root/test_runner.sh`
+- `legacy/debug_assistant_latest/runtests.sh`
