@@ -76,7 +76,8 @@ class TestResult:
     log_dir: Path
     started_at: str
     finished_at: str
-    ground_truth_passed: Optional[bool] = None  # None if no GT checks defined
+    ground_truth_passed: Optional[bool] = None  # None if GT did not run
+    ground_truth_configured: bool = False
 
 
 def get_timestamp_id() -> str:
@@ -89,6 +90,16 @@ def get_output_dir(run_id: str, base_dir: Optional[Path] = None) -> Path:
     if base_dir:
         return base_dir
     return REPO_ROOT / ".local" / "test_runs" / run_id
+
+
+def _has_ground_truth_config(test_name: str, overrides: dict) -> bool:
+    """Best-effort check for whether a test case has deterministic GT configured."""
+    try:
+        config_path = get_config_path(test_name)
+        config = load_config_with_overrides(config_path, overrides)
+    except Exception:
+        return False
+    return bool(config.get("ground-truth"))
 
 
 def run_single_test_in_process(
@@ -126,12 +137,17 @@ def run_single_test_in_process(
     metrics = {}
     test_started = False  # Guard: only teardown if test actually started
     ground_truth_passed = None
+    ground_truth_configured = False
 
     try:
         # Import here to avoid circular imports in worker process
         from main import allStepsAtOnce, stepByStep, singleAgentApproach
         from config_merge import load_config_with_overrides, save_effective_config
         from teardown import backup_environment, teardown_environment
+
+        config_path = get_config_path(test_name)
+        config = load_config_with_overrides(config_path, overrides)
+        ground_truth_configured = bool(config.get("ground-truth"))
 
         # Opt-in backup before run (fail fast if backup fails)
         if backup_before_run:
@@ -142,9 +158,6 @@ def run_single_test_in_process(
                 with open(stderr_log, "a") as f:
                     f.write(f"BACKUP FAILED:\n{traceback.format_exc()}")
                 raise  # Abort test - don't proceed without backup
-
-        config_path = get_config_path(test_name)
-        config = load_config_with_overrides(config_path, overrides)
 
         # Save effective config for audit trail
         save_effective_config(config, log_dir / "config_effective.json")
@@ -184,7 +197,7 @@ def run_single_test_in_process(
                     raise ValueError(f"Unknown technique: {technique}")
 
                 # Run ground truth verification if configured
-                if config.get("ground-truth"):
+                if ground_truth_configured:
                     print("\n" + "=" * 60)
                     print("Running ground truth verification...")
                     gt_result = run_ground_truth_checks(config)
@@ -230,6 +243,7 @@ def run_single_test_in_process(
         started_at=started_at,
         finished_at=finished_at,
         ground_truth_passed=ground_truth_passed,
+        ground_truth_configured=ground_truth_configured,
     )
 
 
@@ -269,6 +283,7 @@ def run_single_test(
     metrics = {}
     test_started = False  # Guard: only teardown if test actually started
     ground_truth_passed = None
+    ground_truth_configured = False
 
     if verbose:
         print(f"[RUNNING] {test_name} ({technique})")
@@ -276,6 +291,10 @@ def run_single_test(
     try:
         from main import allStepsAtOnce, stepByStep, singleAgentApproach
         from teardown import backup_environment, teardown_environment
+
+        config_path = get_config_path(test_name)
+        config = load_config_with_overrides(config_path, overrides)
+        ground_truth_configured = bool(config.get("ground-truth"))
 
         # Opt-in backup before run (fail fast if backup fails)
         if backup_before_run:
@@ -290,9 +309,6 @@ def run_single_test(
                 with open(stderr_log, "a") as f:
                     f.write(f"BACKUP FAILED:\n{traceback.format_exc()}")
                 raise  # Abort test - don't proceed without backup
-
-        config_path = get_config_path(test_name)
-        config = load_config_with_overrides(config_path, overrides)
 
         # Save effective config for audit trail
         save_effective_config(config, log_dir / "config_effective.json")
@@ -350,7 +366,7 @@ def run_single_test(
                     raise ValueError(f"Unknown technique: {technique}")
 
                 # Run ground truth verification if configured
-                if config.get("ground-truth"):
+                if ground_truth_configured:
                     print("\n" + "=" * 60)
                     print("Running ground truth verification...")
                     gt_result = run_ground_truth_checks(config)
@@ -406,6 +422,7 @@ def run_single_test(
         started_at=started_at,
         finished_at=finished_at,
         ground_truth_passed=ground_truth_passed,
+        ground_truth_configured=ground_truth_configured,
     )
 
 
@@ -485,6 +502,10 @@ def run_tests_parallel(
         # Track active processes: {test_name: (process, queue, start_time)}
         active: Dict[str, tuple] = {}
         pending = list(test_names)
+        gt_configured_by_test = {
+            test_name: _has_ground_truth_config(test_name, overrides)
+            for test_name in test_names
+        }
 
         while pending or active:
             # Launch new processes up to max_workers
@@ -533,13 +554,14 @@ def run_tests_parallel(
                                     verified=None,
                                     debug_self_report=None,
                                     duration_s=elapsed,
-                                    error=f"Worker error: {err_msg}",
-                                    metrics={},
-                                    log_dir=output_dir / test_name,
-                                    started_at=datetime.now().isoformat(),
-                                    finished_at=datetime.now().isoformat(),
-                                )
+                                error=f"Worker error: {err_msg}",
+                                metrics={},
+                                log_dir=output_dir / test_name,
+                                started_at=datetime.now().isoformat(),
+                                finished_at=datetime.now().isoformat(),
+                                ground_truth_configured=gt_configured_by_test.get(test_name, False),
                             )
+                        )
                     except queue.Empty:
                         # Process ended but no result (crash)
                         print(f"[ERROR] {test_name}: Worker crashed without result")
@@ -555,6 +577,7 @@ def run_tests_parallel(
                                 log_dir=output_dir / test_name,
                                 started_at=datetime.now().isoformat(),
                                 finished_at=datetime.now().isoformat(),
+                                ground_truth_configured=gt_configured_by_test.get(test_name, False),
                             )
                         )
                     finally:
@@ -596,6 +619,7 @@ def run_tests_parallel(
                             log_dir=log_dir,
                             started_at=datetime.now().isoformat(),
                             finished_at=datetime.now().isoformat(),
+                            ground_truth_configured=gt_configured_by_test.get(test_name, False),
                         )
                     )
 
@@ -638,6 +662,7 @@ def result_to_summary(result: TestResult, technique: str, overrides: dict) -> Te
         metrics=normalize_metrics_map(result.metrics),
         config_overrides_applied=overrides,
         ground_truth_passed=result.ground_truth_passed,
+        ground_truth_configured=result.ground_truth_configured,
     )
 
 
