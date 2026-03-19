@@ -1,9 +1,32 @@
-from phi.assistant import Assistant
-from phi.llm.openai import OpenAIChat
-from phi.llm.ollama import Ollama
-from phi.tools.shell import ShellTools
-from phi.tools.duckduckgo import DuckDuckGo
-from phi.llm.ollama import OllamaTools
+try:
+    from phi.assistant import Assistant
+except ImportError:
+    Assistant = None
+
+try:
+    from phi.llm.openai import OpenAIChat
+except ImportError:
+    OpenAIChat = None
+
+try:
+    from phi.llm.ollama import Ollama
+except ImportError:
+    Ollama = None
+
+try:
+    from phi.tools.shell import ShellTools
+except ImportError:
+    ShellTools = None
+
+try:
+    from phi.tools.duckduckgo import DuckDuckGo
+except ImportError:
+    DuckDuckGo = None
+
+try:
+    from phi.llm.ollama import OllamaTools
+except ImportError:
+    OllamaTools = None
 
 import requests
 import rag_api
@@ -61,9 +84,9 @@ def readTheJSONConfigFile(configFile):
             print(f"DEBUG: Derived test-directory from config location: {parsedConfig['test-directory']}")
 
     except Exception as e:
-        print("Failed to open config file, please make sure you input a valid path in the arguments when invoking the python script")
-        print(e)
-        sys.exit()
+        raise RuntimeError(
+            "Failed to open config file. Make sure the path passed to the script is valid."
+        ) from e
     return parsedConfig
 
 
@@ -99,30 +122,29 @@ def update_debug_agent_model(json_file_path: str, new_model: str) -> None:
 
 def setUpEnvironment(config):
     """ Setup the enviornment using the set up commands specified in the config"""
-    try:
-        # Run setup commands from repo root so repo-root-relative paths work regardless of CWD.
-        env = os.environ.copy()
-        minikube_profile = config.get("minikube-profile")
-        if minikube_profile:
-            env["MINIKUBE_PROFILE"] = minikube_profile
-        for command in config.get("setup-commands", []):
-            subprocess.run(command, shell=True, check=True, cwd=str(REPO_ROOT), env=env)
-    except Exception as e:
-        print(f"Error running setup command: {e}")
+    # Run setup commands from repo root so repo-root-relative paths work regardless of CWD.
+    env = os.environ.copy()
+    minikube_profile = config.get("minikube-profile")
+    if minikube_profile:
+        env["MINIKUBE_PROFILE"] = minikube_profile
+    for command in config.get("setup-commands", []):
+        subprocess.run(command, shell=True, check=True, cwd=str(REPO_ROOT), env=env)
 
 def identifyLLM(debugAgent):
     """ Identify the LLM model that was specified in the config and setup accordingly """
+    if Ollama is None or OpenAIChat is None:
+        raise RuntimeError("phi is required for identifyLLM; install the figate `phi` package first.")
+
     model = None
-    if debugAgent["llm-source"].lower() == "ollama":    
+    if debugAgent["llm-source"].lower() == "ollama":
         model = Ollama(id="llama3.1:70b")
     elif debugAgent["llm-source"].lower() == "openai":
         model = OpenAIChat(id="gpt-4o")
         api_key = os.getenv("OPENAI_API_KEY")  # Returns None if not set
         if api_key is None:
-            print("Error: OPENAI_API_KEY is not set. Add it to the repo-level .env file or export it in your shell.")
-            sys.exit()
-        #os.environ["OPENAI_API_KEY"] = debugAgent["api-key"]
-
+            raise RuntimeError(
+                "OPENAI_API_KEY is not set. Add it to the repo-level .env file or export it in your shell."
+            )
     return model
 
 def traverseRelevantFiles(config, relevantFileType, prompt):

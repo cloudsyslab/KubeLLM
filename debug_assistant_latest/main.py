@@ -1,5 +1,8 @@
-from agents import AgentAPI, AgentDebug, AgentDebugStepByStep, SingleAgent, AgentVerification_v1, AgentVerification_v2
-from utils import readTheJSONConfigFile, setUpEnvironment, printFinishMessage
+from api_agents import AgentAPI
+from debug_agents import AgentDebug, AgentDebugStepByStep, SingleAgent
+from verification_agents import AgentVerification_v1, AgentVerification_v2
+from utils import setUpEnvironment, printFinishMessage
+from config_merge import load_config_with_overrides
 import sys, os
 from metrics_db import store_metrics_entry, calculate_cost, calculate_totals
 import time
@@ -18,24 +21,11 @@ if not SCRIPT_DIR.parent.exists():
     )
 
 
-def _apply_config_overrides(config: dict, overrides: Optional[Dict[str, Any]]) -> dict:
-    """Apply dotted-path config overrides to config dictionary."""
-    if not overrides:
-        return config
-
-    import copy
-    merged = copy.deepcopy(config)
-
-    for dotted_key, value in overrides.items():
-        if value is None:
-            continue
-        keys = dotted_key.split(".")
-        target = merged
-        for k in keys[:-1]:
-            target = target.setdefault(k, {})
-        target[keys[-1]] = value
-
-    return merged
+def _load_runtime_config(config_file, config_overrides: Optional[Dict[str, Any]] = None) -> dict:
+    """Load config and apply overrides using the shared config module."""
+    if not config_file:
+        raise ValueError("config_file is required")
+    return load_config_with_overrides(Path(config_file), config_overrides)
 
 
 def allStepsAtOnce(configFile=None, config_overrides: Optional[Dict[str, Any]] = None):
@@ -53,8 +43,7 @@ def allStepsAtOnce(configFile=None, config_overrides: Optional[Dict[str, Any]] =
     """
 
     #read config to initilize enviornment
-    config = readTheJSONConfigFile(configFile = configFile)
-    config = _apply_config_overrides(config, config_overrides)
+    config = _load_runtime_config(configFile, config_overrides)
     setUpEnvironment(config)
     #initilize needed LLMs
     apiAgent = AgentAPI("api-agent" , config)
@@ -134,8 +123,7 @@ def stepByStep(configFile=None, config_overrides: Optional[Dict[str, Any]] = Non
             config_overrides: Optional dict of dotted-path overrides
     """
     #read config to initilize enviornment
-    config = readTheJSONConfigFile(configFile=configFile)
-    config = _apply_config_overrides(config, config_overrides)
+    config = _load_runtime_config(configFile, config_overrides)
     setUpEnvironment(config)
     #initilize needed LLMs
     apiAgent = AgentAPI("api-agent" , config)
@@ -164,8 +152,7 @@ def singleAgentApproach(configFile=None, config_overrides: Optional[Dict[str, An
             config_overrides: Optional dict of dotted-path overrides
     """
     #read config to initilize enviornment
-    config = readTheJSONConfigFile(configFile=configFile)
-    config = _apply_config_overrides(config, config_overrides)
+    config = _load_runtime_config(configFile, config_overrides)
     setUpEnvironment(config)
     #initilize needed LLMs
     agent = SingleAgent("single-agent", config)
@@ -216,6 +203,4 @@ if __name__ == "__main__":
 
 
     
-
-
 

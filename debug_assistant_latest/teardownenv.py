@@ -1,8 +1,8 @@
-import kube_test
 import sys
+from teardown import TEARDOWN_CONFIG, teardown_environment
 
 # Use TEARDOWN_CONFIG as single source of truth for valid test cases
-TESTS = list(kube_test.TEARDOWN_CONFIG.keys())
+TESTS = list(TEARDOWN_CONFIG.keys())
 
 if len(sys.argv) < 2:
     print("Usage: python teardownenv.py <testcase_name|all>")
@@ -15,7 +15,7 @@ test_env_name = sys.argv[1].lower()
 def teardown_one(name: str) -> int:
     try:
         print(f"Tearing down: {name}")
-        kube_test.tearDownEnviornment(name)
+        teardown_environment(name)
         print(f"  Done: {name}")
         return 0
     except Exception as exc:

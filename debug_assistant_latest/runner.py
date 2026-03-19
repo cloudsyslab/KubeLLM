@@ -131,12 +131,12 @@ def run_single_test_in_process(
         # Import here to avoid circular imports in worker process
         from main import allStepsAtOnce, stepByStep, singleAgentApproach
         from config_merge import load_config_with_overrides, save_effective_config
-        from kube_test import backupEnviornment, tearDownEnviornment
+        from teardown import backup_environment, teardown_environment
 
         # Opt-in backup before run (fail fast if backup fails)
         if backup_before_run:
             try:
-                backupEnviornment(test_name)
+                backup_environment(test_name)
             except Exception as backup_err:
                 error = f"Backup failed: {backup_err}"
                 with open(stderr_log, "a") as f:
@@ -200,7 +200,7 @@ def run_single_test_in_process(
     # Opt-in teardown after run (only if test started; log warnings to stderr.log)
     if teardown_after_run and test_started:
         try:
-            tearDownEnviornment(test_name)
+            teardown_environment(test_name)
         except Exception as teardown_err:
             # Route warning to per-test stderr.log
             with open(stderr_log, "a") as f:
@@ -267,14 +267,14 @@ def run_single_test(
 
     try:
         from main import allStepsAtOnce, stepByStep, singleAgentApproach
-        from kube_test import backupEnviornment, tearDownEnviornment
+        from teardown import backup_environment, teardown_environment
 
         # Opt-in backup before run (fail fast if backup fails)
         if backup_before_run:
             if verbose:
                 print(f"[BACKUP] Creating backup for {test_name}")
             try:
-                backupEnviornment(test_name)
+                backup_environment(test_name)
             except Exception as backup_err:
                 error = f"Backup failed: {backup_err}"
                 if verbose:
@@ -362,7 +362,7 @@ def run_single_test(
         try:
             if verbose:
                 print(f"[TEARDOWN] Running teardown for {test_name}")
-            tearDownEnviornment(test_name)
+            teardown_environment(test_name)
         except Exception as teardown_err:
             warning_msg = f"[WARNING] Teardown failed for {test_name}: {teardown_err}"
             if verbose:

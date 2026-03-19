@@ -116,7 +116,7 @@ Guidance for task specs:
 ## Canonical Test Cases
 
 - **Path**: `debug_assistant_latest/troubleshooting/` (15 test cases)
-- **Adding new test case**: Add entry to `TEARDOWN_CONFIG` dict in `kube_test.py` (data-driven pattern)
+- **Adding new test case**: Add entry to `TEARDOWN_CONFIG` dict in `teardown.py` (data-driven pattern)
 - **Test case structure**: `config_step.json`, `<name>.yaml`, `Dockerfile`, `server.py`, `backup_*` files
 - `all_test_cases/` directory has been removed (was deprecated duplicate)
 
