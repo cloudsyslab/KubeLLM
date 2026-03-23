@@ -36,6 +36,12 @@ PARALLEL_TEST_TIMEOUT = 600
 SCRIPT_DIR = Path(__file__).parent.absolute()
 REPO_ROOT = SCRIPT_DIR.parent
 
+# Ensure REPO_ROOT and SCRIPT_DIR are in sys.path
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
+if str(SCRIPT_DIR) not in sys.path:
+    sys.path.insert(0, str(SCRIPT_DIR))
+
 # Import local modules
 from test_discovery import list_test_cases, match_pattern, get_config_path, get_test_info
 from config_merge import (
