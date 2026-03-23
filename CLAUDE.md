@@ -156,6 +156,27 @@ Each test case directory contains:
 - `Dockerfile`, `server.py`: Application code
 - `backup_*`: Original files for teardown/restore
 
+## Ground Truth Verification
+
+Each test case includes a `ground-truth` section in `config_step.json` for objective verification. See `debug_assistant_latest/ground_truth.schema.json` for the full schema.
+
+```json
+"ground-truth": {
+  "checks": [
+    {"name": "pod_ready", "cmd": "kubectl get pod X -o jsonpath='...'", "expect": "True", "poll_interval_s": 2, "max_attempts": 15},
+    {"name": "config_check", "cmd": "...", "expect": "value", "depends_on": ["pod_ready"]}
+  ]
+}
+```
+
+**Operators**: `expect` (exact), `expect_contains`, `expect_regex`, `expect_gte`, `expect_exit`, `expect_empty`
+
+**CLI**:
+```bash
+python3 debug_assistant_latest/runner.py --validate-ground-truth  # Validate configs
+python3 debug_assistant_latest/runner.py wrong_port --verify-only  # Run GT only
+```
+
 ## Teardown System
 
 Data-driven teardown via `TEARDOWN_CONFIG` in `teardown.py`:

@@ -61,5 +61,33 @@
     ],
     "test-name": "incorrect_selector",
     "test-directory": "",
-    "yaml-file-name": "incorrect_selector.yaml"
+    "yaml-file-name": "incorrect_selector.yaml",
+    "ground-truth": {
+        "description": "Verify service selector matches pod label and endpoints are populated",
+        "timeout_seconds": 60,
+        "checks": [
+            {
+                "name": "pod_ready",
+                "cmd": "kubectl get pod kube-incorrect-selector -o jsonpath='{.status.conditions[?(@.type==\"Ready\")].status}'",
+                "expect": "True",
+                "poll_interval_s": 2,
+                "max_attempts": 15,
+                "description": "Pod is Ready"
+            },
+            {
+                "name": "endpoints_populated",
+                "cmd": "kubectl get endpoints app-service -o jsonpath='{.subsets}'",
+                "expect_regex": "addresses",
+                "depends_on": ["pod_ready"],
+                "description": "Service endpoints have addresses (selector matches pod)"
+            },
+            {
+                "name": "selector_matches",
+                "cmd": "kubectl get svc app-service -o jsonpath='{.spec.selector.app}'",
+                "expect": "kube-incorrect-selector",
+                "depends_on": ["pod_ready"],
+                "description": "Service selector matches pod label"
+            }
+        ]
+    }
 }

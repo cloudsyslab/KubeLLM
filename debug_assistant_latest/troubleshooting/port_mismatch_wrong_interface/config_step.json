@@ -61,5 +61,42 @@
     ],
     "test-name": "port_mismatch_wrong_interface",
     "test-directory": "",
-    "yaml-file-name": "port_mismatch_wrong_interface.yaml"
+    "yaml-file-name": "port_mismatch_wrong_interface.yaml",
+    "ground-truth": {
+        "description": "Verify port alignment and server binds to 0.0.0.0",
+        "timeout_seconds": 60,
+        "checks": [
+            {
+                "name": "pod_ready",
+                "cmd": "kubectl get pod port-mismatch-wrong-interface-app -o jsonpath='{.status.conditions[?(@.type==\"Ready\")].status}'",
+                "expect": "True",
+                "poll_interval_s": 2,
+                "max_attempts": 15,
+                "description": "Pod is Ready"
+            },
+            {
+                "name": "port_aligned",
+                "cmd": "kubectl get svc port-mismatch-app-service -o jsonpath='{.spec.ports[0].targetPort}'",
+                "expect": "8765",
+                "depends_on": ["pod_ready"],
+                "description": "Service targetPort is 8765"
+            },
+            {
+                "name": "endpoints_exist",
+                "cmd": "kubectl get endpoints port-mismatch-app-service -o jsonpath='{.subsets[0].addresses[0].ip}'",
+                "expect_regex": "^[0-9]+\\.[0-9]+\\.[0-9]+\\.[0-9]+$",
+                "depends_on": ["pod_ready"],
+                "description": "Service has endpoint addresses"
+            },
+            {
+                "name": "server_responding",
+                "cmd": "kubectl exec port-mismatch-wrong-interface-app -- python3 -c \"import urllib.request; print(urllib.request.urlopen('http://localhost:8765/').getcode())\"",
+                "expect": "200",
+                "poll_interval_s": 2,
+                "max_attempts": 5,
+                "depends_on": ["pod_ready"],
+                "description": "Server responds to HTTP request"
+            }
+        ]
+    }
 }
