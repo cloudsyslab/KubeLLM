@@ -62,7 +62,7 @@
     "test-directory": "",
     "yaml-file-name": "volume_mount.yaml",
     "ground-truth": {
-        "description": "Verify container port is configured and volume is mounted",
+        "description": "Verify the log volume is mounted and usable",
         "timeout_seconds": 60,
         "checks": [
             {
@@ -74,18 +74,18 @@
                 "description": "Pod is Ready"
             },
             {
-                "name": "port_configured",
-                "cmd": "kubectl get pod kube-volume-mount -o jsonpath='{.spec.containers[0].ports[0].containerPort}'",
-                "expect": "8765",
-                "depends_on": ["pod_ready"],
-                "description": "Container has port 8765 configured"
-            },
-            {
                 "name": "volume_mounted",
                 "cmd": "kubectl get pod kube-volume-mount -o jsonpath='{.spec.containers[0].volumeMounts[0].mountPath}'",
                 "expect": "/data/logs",
                 "depends_on": ["pod_ready"],
                 "description": "Volume is mounted at /data/logs"
+            },
+            {
+                "name": "log_path_usable",
+                "cmd": "kubectl exec kube-volume-mount -- python3 -c \"from pathlib import Path; print(Path('/data/logs/app.log').read_text())\"",
+                "expect_contains": "Application started",
+                "depends_on": ["volume_mounted"],
+                "description": "Application can write to /data/logs/app.log"
             }
         ]
     }

@@ -63,7 +63,7 @@
     "test-directory": "",
     "yaml-file-name": "port_mismatch_wrong_interface.yaml",
     "ground-truth": {
-        "description": "Verify port alignment and server binds to 0.0.0.0",
+        "description": "Verify port alignment and server is reachable via pod IP",
         "timeout_seconds": 60,
         "checks": [
             {
@@ -90,12 +90,12 @@
             },
             {
                 "name": "server_responding",
-                "cmd": "kubectl exec port-mismatch-wrong-interface-app -- python3 -c \"import urllib.request; print(urllib.request.urlopen('http://localhost:8765/').getcode())\"",
+                "cmd": "kubectl exec port-mismatch-wrong-interface-app -- python3 -c \"import subprocess, urllib.request; ip=subprocess.check_output(['hostname', '-i'], text=True).strip().split()[0]; print(urllib.request.urlopen(f'http://{ip}:8765/').getcode())\"",
                 "expect": "200",
                 "poll_interval_s": 2,
                 "max_attempts": 5,
-                "depends_on": ["pod_ready"],
-                "description": "Server responds to HTTP request"
+                "depends_on": ["port_aligned", "endpoints_exist"],
+                "description": "Server responds via the pod IP, proving it is not bound only to localhost"
             }
         ]
     }

@@ -60,8 +60,8 @@
     "test-directory": "",
     "yaml-file-name": "liveness_probe.yaml",
     "ground-truth": {
-        "description": "Verify liveness probe passes and pod does not restart",
-        "timeout_seconds": 90,
+        "description": "Verify liveness probe stays healthy through the initial failure window",
+        "timeout_seconds": 150,
         "checks": [
             {
                 "name": "pod_running",
@@ -82,10 +82,11 @@
             },
             {
                 "name": "no_restarts",
-                "cmd": "kubectl get pod kube-liveness -o jsonpath='{.status.containerStatuses[0].restartCount}'",
+                "cmd": "python -c \"import subprocess, time; time.sleep(55); print(subprocess.run(['kubectl', 'get', 'pod', 'kube-liveness', '-o', 'jsonpath={.status.containerStatuses[0].restartCount}'], capture_output=True, text=True, check=True).stdout.strip())\"",
                 "expect": "0",
+                "timeout_s": 70,
                 "depends_on": ["pod_ready"],
-                "description": "Container has not restarted (liveness probe passes)"
+                "description": "Container still has restartCount=0 after the initial liveness delay"
             }
         ]
     }
