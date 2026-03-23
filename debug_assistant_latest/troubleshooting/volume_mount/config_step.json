@@ -60,5 +60,33 @@
     ],
     "test-name": "volume_mount",
     "test-directory": "",
-    "yaml-file-name": "volume_mount.yaml"
+    "yaml-file-name": "volume_mount.yaml",
+    "ground-truth": {
+        "description": "Verify container port is configured and volume is mounted",
+        "timeout_seconds": 60,
+        "checks": [
+            {
+                "name": "pod_ready",
+                "cmd": "kubectl get pod kube-volume-mount -o jsonpath='{.status.conditions[?(@.type==\"Ready\")].status}'",
+                "expect": "True",
+                "poll_interval_s": 2,
+                "max_attempts": 15,
+                "description": "Pod is Ready"
+            },
+            {
+                "name": "port_configured",
+                "cmd": "kubectl get pod kube-volume-mount -o jsonpath='{.spec.containers[0].ports[0].containerPort}'",
+                "expect": "8765",
+                "depends_on": ["pod_ready"],
+                "description": "Container has port 8765 configured"
+            },
+            {
+                "name": "volume_mounted",
+                "cmd": "kubectl get pod kube-volume-mount -o jsonpath='{.spec.containers[0].volumeMounts[0].mountPath}'",
+                "expect": "/data/logs",
+                "depends_on": ["pod_ready"],
+                "description": "Volume is mounted at /data/logs"
+            }
+        ]
+    }
 }

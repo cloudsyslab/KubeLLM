@@ -61,5 +61,35 @@
     ],
     "test-name": "wrong_interface",
     "test-directory": "",
-    "yaml-file-name": "wrong_interface.yaml"
+    "yaml-file-name": "wrong_interface.yaml",
+    "ground-truth": {
+        "description": "Verify server binds to 0.0.0.0 and service has endpoints",
+        "timeout_seconds": 60,
+        "checks": [
+            {
+                "name": "pod_ready",
+                "cmd": "kubectl get pod kube-wrong-interface -o jsonpath='{.status.conditions[?(@.type==\"Ready\")].status}'",
+                "expect": "True",
+                "poll_interval_s": 2,
+                "max_attempts": 15,
+                "description": "Pod is Ready"
+            },
+            {
+                "name": "endpoints_exist",
+                "cmd": "kubectl get endpoints app-service -o jsonpath='{.subsets[0].addresses[0].ip}'",
+                "expect_regex": "^[0-9]+\\.[0-9]+\\.[0-9]+\\.[0-9]+$",
+                "depends_on": ["pod_ready"],
+                "description": "Service has endpoint addresses (not empty)"
+            },
+            {
+                "name": "server_responding",
+                "cmd": "kubectl exec kube-wrong-interface -- python3 -c \"import urllib.request; print(urllib.request.urlopen('http://localhost:8765/').getcode())\"",
+                "expect": "200",
+                "poll_interval_s": 2,
+                "max_attempts": 5,
+                "depends_on": ["pod_ready"],
+                "description": "Server responds to HTTP request"
+            }
+        ]
+    }
 }

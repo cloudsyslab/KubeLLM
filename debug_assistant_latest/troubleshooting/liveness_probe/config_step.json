@@ -58,5 +58,35 @@
     ],
     "test-name": "liveness_probe",
     "test-directory": "",
-    "yaml-file-name": "liveness_probe.yaml"
+    "yaml-file-name": "liveness_probe.yaml",
+    "ground-truth": {
+        "description": "Verify liveness probe passes and pod does not restart",
+        "timeout_seconds": 90,
+        "checks": [
+            {
+                "name": "pod_running",
+                "cmd": "kubectl get pod kube-liveness -o jsonpath='{.status.phase}'",
+                "expect": "Running",
+                "poll_interval_s": 2,
+                "max_attempts": 20,
+                "description": "Pod is Running"
+            },
+            {
+                "name": "pod_ready",
+                "cmd": "kubectl get pod kube-liveness -o jsonpath='{.status.conditions[?(@.type==\"Ready\")].status}'",
+                "expect": "True",
+                "poll_interval_s": 2,
+                "max_attempts": 15,
+                "depends_on": ["pod_running"],
+                "description": "Pod is Ready"
+            },
+            {
+                "name": "no_restarts",
+                "cmd": "kubectl get pod kube-liveness -o jsonpath='{.status.containerStatuses[0].restartCount}'",
+                "expect": "0",
+                "depends_on": ["pod_ready"],
+                "description": "Container has not restarted (liveness probe passes)"
+            }
+        ]
+    }
 }
