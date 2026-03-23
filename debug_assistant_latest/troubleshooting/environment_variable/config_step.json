@@ -58,5 +58,33 @@
     ],
     "test-name": "environment_variable",
     "test-directory": "",
-    "yaml-file-name": "environment_variable.yaml"
+    "yaml-file-name": "environment_variable.yaml",
+    "ground-truth": {
+        "description": "Verify APP_MODE environment variable is set and pod runs",
+        "timeout_seconds": 60,
+        "checks": [
+            {
+                "name": "pod_ready",
+                "cmd": "kubectl get pod kube-env-missing -o jsonpath='{.status.conditions[?(@.type==\"Ready\")].status}'",
+                "expect": "True",
+                "poll_interval_s": 2,
+                "max_attempts": 15,
+                "description": "Pod is Ready"
+            },
+            {
+                "name": "env_present",
+                "cmd": "kubectl get pod kube-env-missing -o jsonpath='{.spec.containers[0].env[?(@.name==\"APP_MODE\")].name}'",
+                "expect": "APP_MODE",
+                "depends_on": ["pod_ready"],
+                "description": "Container has APP_MODE environment variable defined"
+            },
+            {
+                "name": "no_crash",
+                "cmd": "kubectl get pod kube-env-missing -o jsonpath='{.status.containerStatuses[0].restartCount}'",
+                "expect": "0",
+                "depends_on": ["pod_ready"],
+                "description": "Container has not restarted"
+            }
+        ]
+    }
 }

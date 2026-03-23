@@ -55,5 +55,26 @@
     ],
     "test-name": "readiness_failure",
     "test-directory": "",
-    "yaml-file-name": "readiness_failure.yaml"
+    "yaml-file-name": "readiness_failure.yaml",
+    "ground-truth": {
+        "description": "Verify readiness probe passes and pod is Ready",
+        "timeout_seconds": 90,
+        "checks": [
+            {
+                "name": "pod_ready",
+                "cmd": "kubectl get pod readiness-http -o jsonpath='{.status.conditions[?(@.type==\"Ready\")].status}'",
+                "expect": "True",
+                "poll_interval_s": 3,
+                "max_attempts": 20,
+                "description": "Pod is Ready (readiness probe succeeds)"
+            },
+            {
+                "name": "container_ready",
+                "cmd": "kubectl get pod readiness-http -o jsonpath='{.status.containerStatuses[0].ready}'",
+                "expect": "true",
+                "depends_on": ["pod_ready"],
+                "description": "Container status shows ready=true"
+            }
+        ]
+    }
 }

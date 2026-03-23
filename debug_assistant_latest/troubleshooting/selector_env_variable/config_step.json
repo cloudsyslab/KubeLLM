@@ -61,5 +61,33 @@
     ],
     "test-name": "selector_env_variable",
     "test-directory": "",
-    "yaml-file-name": "selector_env_variable.yaml"
+    "yaml-file-name": "selector_env_variable.yaml",
+    "ground-truth": {
+        "description": "Verify selector matches and APP_MESSAGE env var exists",
+        "timeout_seconds": 60,
+        "checks": [
+            {
+                "name": "pod_ready",
+                "cmd": "kubectl get pod selector-env-app -o jsonpath='{.status.conditions[?(@.type==\"Ready\")].status}'",
+                "expect": "True",
+                "poll_interval_s": 2,
+                "max_attempts": 15,
+                "description": "Pod is Ready"
+            },
+            {
+                "name": "endpoints_exist",
+                "cmd": "kubectl get endpoints selector-env-app-service -o jsonpath='{.subsets}'",
+                "expect_regex": "addresses",
+                "depends_on": ["pod_ready"],
+                "description": "Service has endpoints (selector matches pod)"
+            },
+            {
+                "name": "env_present",
+                "cmd": "kubectl get pod selector-env-app -o jsonpath='{.spec.containers[0].env[?(@.name==\"APP_MESSAGE\")].name}'",
+                "expect": "APP_MESSAGE",
+                "depends_on": ["pod_ready"],
+                "description": "Container has APP_MESSAGE environment variable"
+            }
+        ]
+    }
 }
