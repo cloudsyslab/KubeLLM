@@ -63,7 +63,7 @@
     "test-directory": "",
     "yaml-file-name": "wrong_interface.yaml",
     "ground-truth": {
-        "description": "Verify server binds to 0.0.0.0 and service has endpoints",
+        "description": "Verify server is reachable via pod IP and service has endpoints",
         "timeout_seconds": 60,
         "checks": [
             {
@@ -83,12 +83,12 @@
             },
             {
                 "name": "server_responding",
-                "cmd": "kubectl exec kube-wrong-interface -- python3 -c \"import urllib.request; print(urllib.request.urlopen('http://localhost:8765/').getcode())\"",
+                "cmd": "kubectl exec kube-wrong-interface -- python3 -c \"import subprocess, urllib.request; ip=subprocess.check_output(['hostname', '-i'], text=True).strip().split()[0]; print(urllib.request.urlopen(f'http://{ip}:8765/').getcode())\"",
                 "expect": "200",
                 "poll_interval_s": 2,
                 "max_attempts": 5,
-                "depends_on": ["pod_ready"],
-                "description": "Server responds to HTTP request"
+                "depends_on": ["endpoints_exist"],
+                "description": "Server responds via the pod IP, not just localhost"
             }
         ]
     }
