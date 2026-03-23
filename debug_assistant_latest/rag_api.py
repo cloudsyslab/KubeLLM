@@ -1,7 +1,28 @@
 import requests
+import os
+import platform
+from pathlib import Path
+from dotenv import load_dotenv
 
-# Base URL for your FastAPI app
-BASE_URL = "http://10.242.128.44:8501"
+# Find REPO_ROOT (assuming this file is in debug_assistant_latest/)
+SCRIPT_DIR = Path(__file__).resolve().parent
+REPO_ROOT = SCRIPT_DIR.parent
+load_dotenv(REPO_ROOT / ".env")
+
+# Determine BASE_URL dynamically
+BASE_URL = os.getenv("RAG_API_URL")
+
+if not BASE_URL:
+    # Use platform as a heuristic for Lab (Linux) vs Local (macOS/other)
+    if platform.system() == "Linux":
+        # Lab server environment
+        BASE_URL = "http://10.242.128.44:8501"
+    else:
+        # Local development environment (macOS or fallback)
+        BASE_URL = "http://localhost:8501"
+
+# Ensure we have a clean base URL without trailing slash for joining
+BASE_URL = BASE_URL.rstrip('/')
 
 def initialize_assistant(llm_model: str, embeddings_model: str):
     """
