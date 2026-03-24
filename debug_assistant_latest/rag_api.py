@@ -18,8 +18,8 @@ if not BASE_URL:
         # Lab server environment
         BASE_URL = "http://10.242.128.44:8501"
     else:
-        # Local development environment (macOS or fallback)
-        BASE_URL = "http://localhost:8501"
+        # Local development environment (Windows/macOS)
+        BASE_URL = "http://localhost:8000"
 
 # Ensure we have a clean base URL without trailing slash for joining
 BASE_URL = BASE_URL.rstrip('/')
