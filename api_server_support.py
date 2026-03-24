@@ -4,7 +4,7 @@ from typing import Optional
 import requests
 from bs4 import BeautifulSoup
 
-from runtime_config import build_ollama_embedder
+from runtime_config import OPENAI_PROVIDER, OLLAMA_PROVIDER, build_embedder
 
 DEFAULT_ASSISTANT_MESSAGE = "Upload a doc and ask me questions..."
 
@@ -16,6 +16,7 @@ class SessionState:
     rag_assistant_run_id: Optional[str] = None
     llm_model: Optional[str] = None
     embeddings_model: Optional[str] = None
+    embeddings_provider: Optional[str] = None
 
     def reset_messages(self):
         self.messages = [{"role": "assistant", "content": DEFAULT_ASSISTANT_MESSAGE}]
@@ -23,6 +24,9 @@ class SessionState:
     def reset_run(self):
         self.rag_assistant = None
         self.rag_assistant_run_id = None
+        self.llm_model = None
+        self.embeddings_model = None
+        self.embeddings_provider = None
         self.reset_messages()
 
 
@@ -52,11 +56,36 @@ def scrape_url_to_document(url: str):
     return Document(content=text, metadata={"source": url, "title": title})
 
 
-def load_knowledge_document(url: str, table_name: str, embeddings_model: str, db_url: str):
+def load_knowledge_document(
+    url: str,
+    table_name: str,
+    embeddings_model: str,
+    db_url: str,
+    embeddings_provider: Optional[str] = None,
+):
     from phi.agent import AgentKnowledge
     from phi.vectordb.pgvector import PgVector
 
-    embedder = build_ollama_embedder(embeddings_model)
+    embedder = build_embedder(embeddings_model, provider=embeddings_provider)
+    provider_name = embeddings_provider or "selected"
+    try:
+        # Preflight the selected embedder so provider/service failures are
+        # surfaced directly instead of being masked by PgVector's empty-batch
+        # fallback path.
+        embedder.get_embedding_and_usage("kubellm embedder preflight")
+    except Exception as exc:
+        hint = ""
+        if embeddings_provider == OPENAI_PROVIDER:
+            hint = " Check OPENAI_API_KEY, billing, and OpenAI model quota."
+        elif embeddings_provider == OLLAMA_PROVIDER:
+            hint = (
+                f" Check that the Ollama service is running and that embedder model "
+                f"'{embeddings_model}' is available locally."
+            )
+        raise RuntimeError(
+            f"{provider_name} embedder '{embeddings_model}' failed preflight: {exc}.{hint}"
+        ) from exc
+
     kb = AgentKnowledge(
         vector_db=PgVector(
             schema="ai",

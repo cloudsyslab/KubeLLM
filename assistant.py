@@ -1,14 +1,11 @@
 from typing import Optional
 from phi.agent import Agent
 from phi.agent import AgentKnowledge
-from phi.llm.ollama import OllamaTools
 from phi.vectordb.pgvector import PgVector, SearchType
 from phi.storage.agent.postgres import PgAgentStorage
-from phi.tools.shell import ShellTools
-from phi.embedder.openai import OpenAIEmbedder
 from better_shell import BetterShellTools
 from statement import Model
-from runtime_config import DB_URL, build_chat_model, build_ollama_embedder, require_openai_api_key
+from runtime_config import DB_URL, build_chat_model, build_embedder, resolve_embedder_config
 
 db_url = DB_URL
 
@@ -50,19 +47,18 @@ def get_rag_agent(
 ) -> Agent:
     """Get a Local RAG Agent."""
     model_name = model.name
-    require_openai_api_key(model_name)
-
-    """ model = """
     llm = build_chat_model(model_name)
-    embedder, embeddings_model_clean = model.to_embedder()
 
     if use_rag:
+        embedder_config = resolve_embedder_config(chat_model_name=model_name)
+        embedder = build_embedder(embedder_config.model, provider=embedder_config.provider)
+
         # Define the knowledge base
         knowledge = AgentKnowledge(
             vector_db=PgVector(
                 db_url=db_url,
                 schema="ai",
-                table_name=f"local_rag_documents_{embeddings_model_clean}",
+                table_name=f"local_rag_documents_{embedder_config.model}",
                 embedder=embedder,
                 search_type=SearchType.hybrid
             ),
@@ -114,24 +110,27 @@ def get_rag_agent(
 
 def get_rag_assistant(
     llm_model: str = "llama3.1:70b",
-    embeddings_model: str = "nomic-embed-text",
+    embeddings_model: Optional[str] = None,
+    embeddings_provider: Optional[str] = None,
     user_id: Optional[str] = None,
     run_id: Optional[str] = None,
     debug_mode: bool = True,
 ) -> Agent:
     """Get a Local RAG Agent."""
-    require_openai_api_key(llm_model)
-
     llm = build_chat_model(llm_model)
-    embedder = build_ollama_embedder(embeddings_model)
+    embedder_config = resolve_embedder_config(
+        embeddings_model=embeddings_model,
+        provider=embeddings_provider,
+        chat_model_name=llm_model,
+    )
+    embedder = build_embedder(embedder_config.model, provider=embedder_config.provider)
 
-    """ model = """
     # Define the knowledge base
     knowledge = AgentKnowledge(
         vector_db=PgVector(
             db_url=db_url,
             schema="ai",
-            table_name=f"local_rag_documents_{embeddings_model}",
+            table_name=f"local_rag_documents_{embedder_config.model}",
             embedder=embedder,
             search_type=SearchType.hybrid
         ),
