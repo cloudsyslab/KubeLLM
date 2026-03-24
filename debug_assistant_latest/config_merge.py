@@ -17,6 +17,7 @@ CLI_TO_CONFIG_MAP = {
     "api_model": "api-agent.model",
     "verification_model": "verification-agent.model",
     "embedder": "api-agent.embedder",
+    "embedder_provider": "api-agent.embedder-provider",
     "minikube_profile": "minikube-profile",
 }
 
@@ -126,7 +127,11 @@ def get_override_summary(overrides: dict) -> str:
 if __name__ == "__main__":
     # Quick test of the module
     test_config = {
-        "api-agent": {"model": "gpt-5-mini", "embedder": "nomic-embed-text"},
+        "api-agent": {
+            "model": "gpt-5-mini",
+            "embedder": "text-embedding-3-small",
+            "embedder-provider": "openai",
+        },
         "debug-agent": {"model": "gpt-5-nano", "instructions": []},
         "test-name": "test_case",
     }

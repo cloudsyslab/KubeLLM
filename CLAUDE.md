@@ -8,7 +8,11 @@ KubeLLM is an LLM-based multi-agent framework for automated Kubernetes cluster t
 
 ## Commands
 
-LAB-ONLY EXECUTION: All tests and operational commands must be run on the lab server. Local runs are for development/editing only.
+Execution model:
+- The lab server is the reference environment for full Kubernetes troubleshooting runs.
+- Local runs are also supported when Docker, Kubernetes, pgvector, and the RAG API server are available locally.
+- The runner and the API server share the same default URL: `http://127.0.0.1:8000`.
+- `RAG_API_URL` should only be set when the runner must talk to a server on another host.
 
 ### Environment Setup
 ```bash
@@ -22,8 +26,27 @@ docker run -d \
   -p 5532:5432 --name pgvector phidata/pgvector:16
 
 # Start API server for RAG capability
+python start_apiserver.py
+```
+
+Linux/macOS wrapper:
+```bash
 bash start_apiserver.sh
 ```
+
+RAG API URL precedence:
+- `--rag-api-url`
+- `RAG_API_URL` from the shell or `.env`
+- default `http://127.0.0.1:${RAG_SERVER_PORT:-8000}`
+
+Server bind defaults:
+- `RAG_SERVER_HOST=127.0.0.1`
+- `RAG_SERVER_PORT=8000`
+
+Provider notes:
+- OpenAI-only runs require `OPENAI_API_KEY`, pgvector, and the API server. Ollama is not required.
+- Ollama-only runs require the Ollama service/model, pgvector, and the API server. `OPENAI_API_KEY` is not required unless an OpenAI model or embedder is selected.
+- Missing dependencies for providers that are not selected are irrelevant by design.
 
 ### Running Tests
 
@@ -37,6 +60,7 @@ python3 debug_assistant_latest/runner.py wrong_port
 
 # Run single test with config overrides
 python3 debug_assistant_latest/runner.py wrong_port --debug-model gpt-4o --technique stepByStep
+python3 debug_assistant_latest/runner.py wrong_port --embedder text-embedding-3-small --embedder-provider openai
 
 # Run multiple tests by pattern (parallel)
 python3 debug_assistant_latest/runner.py --run-many "port_*" --jobs 4
@@ -55,6 +79,9 @@ python3 debug_assistant_latest/runner.py wrong_port --repeat 10 --output-dir /tm
 
 # Minikube profile override (only applied when explicitly passed)
 python3 debug_assistant_latest/runner.py wrong_port --minikube-profile minh
+
+# Talk to a non-default API server explicitly
+python3 debug_assistant_latest/runner.py wrong_port --rag-api-url http://lab-host:8000
 ```
 
 Notes:
@@ -231,6 +258,6 @@ When discovering lab state, ask the user to run these commands on the lab server
 | `kubectl --kubeconfig ~/.kube/minh-admin.conf get pods -A` | kube-system pods Running |
 | `bash orchestrator/preflight.sh` | `preflight: ... API ready` |
 | `docker logs pgvector --tail=10` | Checkpoint logs, no fatal errors |
-| `pgrep -af "uvicorn.*api_server"` | Process running (or start with `bash start_apiserver.sh`) |
+| `pgrep -af "uvicorn.*api_server"` | Process running (or start with `python3 start_apiserver.py`) |
 
 Use this checklist before modifying orchestrator scripts or kubeconfig paths.

@@ -9,6 +9,7 @@ from phi.vectordb.pgvector import PgVector, SearchType
 from agent_base import Agent
 from agent_helpers import build_llm_agent, build_model
 from better_shell import BetterShellTools
+from runtime_config import DB_URL, build_embedder, resolve_embedder_config
 from prompt_helpers import (
     TOOL_USAGE_RULES,
     append_relevant_files,
@@ -157,14 +158,36 @@ class SingleAgent(Agent):
     def prepareAgent(self):
         """Prepare the single-agent workflow based on the config file."""
         try:
-            model = build_model("o3-mini")
+            single_agent_config = self.agentProperties or {}
+            debug_agent_config = self.config.get("debug-agent", {})
+            api_agent_config = self.config.get("api-agent", {})
+
+            model_name = (
+                single_agent_config.get("model")
+                or debug_agent_config.get("model")
+                or api_agent_config.get("model")
+            )
+            if not model_name:
+                raise RuntimeError(
+                    "SingleAgent requires a configured model in 'single-agent.model', "
+                    "'debug-agent.model', or 'api-agent.model'."
+                )
+
+            model = build_model(model_name)
+            embedder_config = resolve_embedder_config(
+                embeddings_model=single_agent_config.get("embedder") or api_agent_config.get("embedder"),
+                provider=single_agent_config.get("embedder-provider") or api_agent_config.get("embedder-provider"),
+                chat_model_name=model_name,
+            )
+            embedder = build_embedder(embedder_config.model, provider=embedder_config.provider)
 
             knowledge_base = WebsiteKnowledgeBase(
-                urls=self.config["api-agent"].get("knowledge", []),
+                urls=api_agent_config.get("knowledge", []),
                 max_links=10,
                 vector_db=PgVector(
-                    table_name="ai.local_rag_documents_singleAgent",
-                    db_url="postgresql+psycopg://ai:ai@localhost:5532/ai",
+                    table_name=f"local_rag_documents_{embedder_config.model}",
+                    db_url=DB_URL,
+                    embedder=embedder,
                 ),
             )
 
