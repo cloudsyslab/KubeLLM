@@ -67,6 +67,7 @@ from ground_truth import (
     validate_ground_truth_config,
     GroundTruthResult,
 )
+from rag_server_config import RAG_API_URL_ENV, resolve_client_base_url
 
 
 @dataclass
@@ -96,6 +97,10 @@ def get_output_dir(run_id: str, base_dir: Optional[Path] = None) -> Path:
     if base_dir:
         return base_dir
     return REPO_ROOT / ".local" / "test_runs" / run_id
+
+
+def resolve_rag_api_url_for_args(args) -> str:
+    return resolve_client_base_url(getattr(args, "rag_api_url", None))
 
 
 def _has_ground_truth_config(test_name: str, overrides: dict) -> bool:
@@ -764,6 +769,7 @@ def cmd_run_single(args, test_name: str):
     run_id = get_timestamp_id()
     output_dir = get_output_dir(run_id, args.output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
+    rag_api_url = resolve_rag_api_url_for_args(args)
 
     overrides = build_overrides_from_args(args)
     technique = args.technique
@@ -786,10 +792,12 @@ def cmd_run_single(args, test_name: str):
         "run_id": run_id,
         "backup_before_run": backup_before_run,
         "teardown_after_run": teardown_after_run,
+        "rag_api_url": rag_api_url,
     }
     save_run_config(run_config, output_dir)
 
     print(f"Output directory: {output_dir}")
+    print(f"RAG API URL: {rag_api_url}")
     print()
 
     wall_start = time.perf_counter()
@@ -834,6 +842,7 @@ def cmd_run_many(args):
     run_id = get_timestamp_id()
     output_dir = get_output_dir(run_id, args.output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
+    rag_api_url = resolve_rag_api_url_for_args(args)
 
     overrides = build_overrides_from_args(args)
     technique = args.technique
@@ -858,11 +867,13 @@ def cmd_run_many(args):
         "run_id": run_id,
         "backup_before_run": backup_before_run,
         "teardown_after_run": teardown_after_run,
+        "rag_api_url": rag_api_url,
     }
     save_run_config(run_config, output_dir)
 
     print(f"Running {len(matched)} tests with {jobs} workers")
     print(f"Output directory: {output_dir}")
+    print(f"RAG API URL: {rag_api_url}")
     print()
 
     wall_start = time.perf_counter()
@@ -1186,6 +1197,17 @@ Examples:
         help="Override verification-agent model",
     )
     parser.add_argument(
+        "--embedder",
+        dest="embedder",
+        help="Override api-agent embedder model",
+    )
+    parser.add_argument(
+        "--embedder-provider",
+        dest="embedder_provider",
+        choices=["openai", "ollama"],
+        help="Override api-agent embedder provider",
+    )
+    parser.add_argument(
         "--technique",
         choices=["allStepsAtOnce", "stepByStep", "singleAgent"],
         default="allStepsAtOnce",
@@ -1196,6 +1218,15 @@ Examples:
         dest="minikube_profile",
         default=None,
         help="Override minikube profile name. Only applied when explicitly set.",
+    )
+    parser.add_argument(
+        "--rag-api-url",
+        dest="rag_api_url",
+        default=None,
+        help=(
+            "Override the RAG API base URL for this run. "
+            "Precedence: --rag-api-url > RAG_API_URL env/.env > http://127.0.0.1:RAG_SERVER_PORT"
+        ),
     )
 
     # Output control
@@ -1256,6 +1287,8 @@ Examples:
     )
 
     args = parser.parse_args()
+    if args.rag_api_url:
+        os.environ[RAG_API_URL_ENV] = args.rag_api_url
 
     # Determine which command to run
     if args.list:

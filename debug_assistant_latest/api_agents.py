@@ -23,7 +23,8 @@ class AgentAPI(Agent):
 
             initialize_response = initialize_assistant(
                 self.agentProperties["model"],
-                self.agentProperties["embedder"],
+                self.agentProperties.get("embedder"),
+                self.agentProperties.get("embedder-provider"),
             )
             print("Initialize Response:", initialize_response)
 
