@@ -135,7 +135,7 @@ def run_single_test_in_process(
 
     # Log forced backup warning to per-test stderr.log
     if forced_backup_warning:
-        with open(stderr_log, "a") as f:
+        with open(stderr_log, "a", encoding="utf-8") as f:
             f.write("[WARNING] --teardown-after-run requires backup; auto-enabling --backup-before-run\n")
 
     started_at = datetime.now().isoformat()
@@ -166,7 +166,7 @@ def run_single_test_in_process(
                 backup_environment(test_name)
             except Exception as backup_err:
                 error = f"Backup failed: {backup_err}"
-                with open(stderr_log, "a") as f:
+                with open(stderr_log, "a", encoding="utf-8") as f:
                     f.write(f"BACKUP FAILED:\n{traceback.format_exc()}")
                 raise  # Abort test - don't proceed without backup
 
@@ -177,7 +177,7 @@ def run_single_test_in_process(
         test_started = True
 
         # Capture stdout/stderr
-        with open(stdout_log, "w") as stdout_f, open(stderr_log, "w") as stderr_f:
+        with open(stdout_log, "w", encoding="utf-8") as stdout_f, open(stderr_log, "w", encoding="utf-8") as stderr_f:
             # Redirect stdout/stderr
             old_stdout, old_stderr = sys.stdout, sys.stderr
             sys.stdout = stdout_f
@@ -226,7 +226,7 @@ def run_single_test_in_process(
     except Exception as e:
         if error is None:  # Don't overwrite backup error
             error = str(e)
-        with open(stderr_log, "a") as f:
+        with open(stderr_log, "a", encoding="utf-8") as f:
             f.write(f"\n\nEXCEPTION:\n{traceback.format_exc()}")
 
     # Opt-in teardown after run (only if test started; log warnings to stderr.log)
@@ -235,7 +235,7 @@ def run_single_test_in_process(
             teardown_environment(test_name)
         except Exception as teardown_err:
             # Route warning to per-test stderr.log
-            with open(stderr_log, "a") as f:
+            with open(stderr_log, "a", encoding="utf-8") as f:
                 f.write(f"\n\n[WARNING] Teardown failed for {test_name}: {teardown_err}\n")
                 f.write(traceback.format_exc())
 
@@ -281,7 +281,7 @@ def run_single_test(
 
     # Log forced backup warning to per-test stderr.log
     if forced_backup_warning:
-        with open(stderr_log, "a") as f:
+        with open(stderr_log, "a", encoding="utf-8") as f:
             f.write("[WARNING] --teardown-after-run requires backup; auto-enabling --backup-before-run\n")
 
     started_at = datetime.now().isoformat()
@@ -317,7 +317,7 @@ def run_single_test(
                 error = f"Backup failed: {backup_err}"
                 if verbose:
                     print(f"[ERROR] Backup failed for {test_name}: {backup_err}")
-                with open(stderr_log, "a") as f:
+                with open(stderr_log, "a", encoding="utf-8") as f:
                     f.write(f"BACKUP FAILED:\n{traceback.format_exc()}")
                 raise  # Abort test - don't proceed without backup
 
@@ -329,7 +329,7 @@ def run_single_test(
 
         # For single test, we tee output to both console and file
         # Open log files for writing
-        with open(stdout_log, "w") as stdout_f, open(stderr_log, "w") as stderr_f:
+        with open(stdout_log, "w", encoding="utf-8") as stdout_f, open(stderr_log, "w", encoding="utf-8") as stderr_f:
             # Create tee writers
             class TeeWriter:
                 def __init__(self, *streams):
@@ -337,7 +337,15 @@ def run_single_test(
 
                 def write(self, data):
                     for s in self.streams:
-                        s.write(data)
+                        try:
+                            s.write(data)
+                        except UnicodeEncodeError:
+                            encoding = getattr(s, "encoding", None) or "utf-8"
+                            safe_data = data.encode(encoding, errors="replace").decode(encoding)
+                            if hasattr(s, "buffer"):
+                                s.buffer.write(safe_data.encode(encoding, errors="replace"))
+                            else:
+                                s.write(safe_data)
                         s.flush()
 
                 def flush(self):
@@ -396,7 +404,7 @@ def run_single_test(
             error = str(e)
         if verbose:
             print(f"[ERROR] {test_name}: {error}")
-        with open(stderr_log, "a") as f:
+        with open(stderr_log, "a", encoding="utf-8") as f:
             f.write(f"\n\nEXCEPTION:\n{traceback.format_exc()}")
 
     # Opt-in teardown after run (only if test started; log warnings to stderr.log)
@@ -410,7 +418,7 @@ def run_single_test(
             if verbose:
                 print(warning_msg, file=sys.stderr)
             # Also log to per-test stderr.log
-            with open(stderr_log, "a") as f:
+            with open(stderr_log, "a", encoding="utf-8") as f:
                 f.write(f"\n\n{warning_msg}\n")
                 f.write(traceback.format_exc())
 
@@ -615,7 +623,7 @@ def run_tests_parallel(
                     log_dir = output_dir / test_name
                     log_dir.mkdir(parents=True, exist_ok=True)
                     stderr_log = log_dir / "stderr.log"
-                    with open(stderr_log, "a") as f:
+                    with open(stderr_log, "a", encoding="utf-8") as f:
                         f.write(f"\n\n[TIMEOUT] Test exceeded {PARALLEL_TEST_TIMEOUT}s and was terminated.\n")
 
                     results.append(
@@ -640,7 +648,7 @@ def run_tests_parallel(
                             from teardown import teardown_environment
                             teardown_environment(test_name)
                         except Exception as td_err:
-                            with open(stderr_log, "a") as f:
+                            with open(stderr_log, "a", encoding="utf-8") as f:
                                 f.write(f"\n[WARNING] Post-timeout teardown failed: {td_err}\n")
 
                     completed.append(test_name)

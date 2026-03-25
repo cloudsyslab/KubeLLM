@@ -38,6 +38,7 @@ import api_server
 from api_server_support import SessionState, knowledge_table_name
 import api_server_support
 import runtime_config
+import timeout_helpers
 from debug_assistant_latest import rag_api
 from debug_assistant_latest import rag_server_config
 from debug_assistant_latest.verification_base import parse_verification_status, print_verification_status
@@ -154,6 +155,32 @@ class RuntimeConfigTests(unittest.TestCase):
     def test_db_url_uses_psycopg2_driver_consistently(self):
         self.assertEqual(runtime_config.DB_URL, runtime_config.DB_URL_PSYCOPG2)
         self.assertTrue(runtime_config.DB_URL.startswith("postgresql+psycopg2://"))
+
+
+class TimeoutHelperTests(unittest.TestCase):
+    def test_timeout_is_noop_on_windows(self):
+        def target():
+            return "ok"
+
+        fake_timeout = MagicMock()
+        fake_module = types.SimpleNamespace(timeout=fake_timeout, TimeoutError=RuntimeError)
+
+        with patch.object(timeout_helpers, "timeout_decorator", fake_module), patch("timeout_helpers.os.name", "nt"):
+            decorated = timeout_helpers.timeout(480)(target)
+
+        fake_timeout.assert_not_called()
+        self.assertIs(decorated, target)
+
+    def test_timeout_uses_signals_off_windows(self):
+        fake_decorator = object()
+        fake_timeout = MagicMock(return_value=fake_decorator)
+        fake_module = types.SimpleNamespace(timeout=fake_timeout, TimeoutError=RuntimeError)
+
+        with patch.object(timeout_helpers, "timeout_decorator", fake_module), patch("timeout_helpers.os.name", "posix"):
+            result = timeout_helpers.timeout(480)
+
+        fake_timeout.assert_called_once_with(480, use_signals=True)
+        self.assertIs(result, fake_decorator)
 
 
 class AssistantIntegrationTests(unittest.TestCase):
