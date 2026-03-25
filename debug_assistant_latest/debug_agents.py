@@ -1,6 +1,5 @@
 import re
 
-import timeout_decorator
 from phi.agent import Agent as llmAgent
 from phi.knowledge.website import WebsiteKnowledgeBase
 from phi.storage.agent.postgres import PgAgentStorage
@@ -16,7 +15,7 @@ from prompt_helpers import (
     classify_status_from_response,
     extract_metrics,
 )
-from utils import withTimeout
+from timeout_helpers import timeout, withTimeout
 
 
 class AgentDebug(Agent):
@@ -51,7 +50,7 @@ class AgentDebug(Agent):
             raise RuntimeError(f"Error creating debug agent prompt: {e}") from e
 
     @withTimeout(False)
-    @timeout_decorator.timeout(480)
+    @timeout(480)
     def askQuestion(self):
         """Ask the formatted prepared question to the debug agent."""
         try:
@@ -124,7 +123,7 @@ class AgentDebugStepByStep(Agent):
             raise RuntimeError(f"Failed to generate steps to problem: {e}") from e
 
     @withTimeout(False)
-    @timeout_decorator.timeout(480)
+    @timeout(480)
     def executeProblemSteps(self):
         """Execute each generated problem-solving step in order."""
         try:

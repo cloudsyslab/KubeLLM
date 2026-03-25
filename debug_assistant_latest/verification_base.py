@@ -1,11 +1,7 @@
-try:
-    import timeout_decorator
-except ImportError:  # pragma: no cover import-error
-    timeout_decorator = None
-
 from agent_base import Agent
 from agent_helpers import build_llm_agent
 from prompt_helpers import TOOL_USAGE_RULES, extract_metrics
+from timeout_helpers import timeout as TIMEOUT_DECORATOR, withTimeout
 
 STATUS_MAP = {True: 1, False: 0, None: -1}
 
@@ -36,32 +32,6 @@ def print_verification_status(status):
         print("VERIFICATION STATUS: ? UNKNOWN")
         print("No verification status token found in response")
         print("=" * 80 + "\n")
-
-
-if timeout_decorator:
-    TIMEOUT_DECORATOR = timeout_decorator.timeout
-    TimeoutError = timeout_decorator.TimeoutError
-else:
-    def _noop_timeout(_seconds):
-        def decorator(func):
-            return func
-        return decorator
-
-    TIMEOUT_DECORATOR = _noop_timeout
-
-    class TimeoutError(Exception):
-        pass
-
-
-def withTimeout(default_value):
-    def decorator(func):
-        def wrapper(*args, **kwargs):
-            try:
-                return func(*args, **kwargs)
-            except TimeoutError:
-                return default_value
-        return wrapper
-    return decorator
 
 class VerificationAgentBase(Agent):
     include_duration_cost = False

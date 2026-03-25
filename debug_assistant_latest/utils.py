@@ -34,9 +34,9 @@ import json
 import sys
 import os
 import subprocess
-import timeout_decorator
 from pathlib import Path
 from dotenv import load_dotenv
+from timeout_helpers import withTimeout
 
 SCRIPT_DIR = Path(__file__).resolve().parent
 REPO_ROOT = SCRIPT_DIR.parent
@@ -168,14 +168,3 @@ def printFinishMessage():
     print("=================================================")
 
 
-def withTimeout(default_value):
-    def decorator(func):
-        def wrapper(*args, **kwargs):
-            try:
-                return func(*args, **kwargs)
-            except timeout_decorator.TimeoutError:
-                return default_value
-        return wrapper
-    return decorator
-
-    
