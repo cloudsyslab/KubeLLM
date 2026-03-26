@@ -8,6 +8,7 @@ from metrics_db import store_metrics_entry, calculate_cost, calculate_totals
 import time
 from pathlib import Path
 from typing import Optional, Dict, Any
+from runtime_progress import PhaseHeartbeat, WrongPortSuccessProbe
 
 # Use relative path from script location
 SCRIPT_DIR = Path(__file__).parent.absolute()
@@ -28,7 +29,88 @@ def _load_runtime_config(config_file, config_overrides: Optional[Dict[str, Any]]
     return load_config_with_overrides(Path(config_file), config_overrides)
 
 
-def allStepsAtOnce(configFile=None, config_overrides: Optional[Dict[str, Any]] = None):
+def _status_to_task_status(status: Optional[bool]) -> int:
+    if status is None:
+        return -1
+    return int(status)
+
+
+def _default_metrics(config: dict, agent_type: str, model: Optional[str] = None, task_status: int = -1) -> dict:
+    return {
+        "test_case": config["test-name"],
+        "model": model or "",
+        "agent_type": agent_type,
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "total_tokens": 0,
+        "task_status": task_status,
+    }
+
+
+def _normalize_metrics(
+    config: dict,
+    metrics: Optional[dict],
+    agent_type: str,
+    model: Optional[str] = None,
+    task_status: Optional[int] = None,
+) -> dict:
+    normalized = _default_metrics(config, agent_type, model=model, task_status=-1)
+    if isinstance(metrics, dict):
+        normalized.update(metrics)
+    if task_status is not None:
+        normalized["task_status"] = task_status
+    if not normalized.get("model") and model:
+        normalized["model"] = model
+    return normalized
+
+
+def _finalize_metrics(metrics: dict, duration_s: float) -> dict:
+    metrics["duration_s"] = round(duration_s, 2)
+    model_name = metrics.get("model")
+    if model_name:
+        metrics["cost"] = round(
+            calculate_cost(
+                model_name,
+                metrics.get("input_tokens", 0),
+                metrics.get("output_tokens", 0),
+            ),
+            4,
+        )
+    else:
+        metrics["cost"] = 0.0
+    return metrics
+
+
+def _write_progress(runtime_context: Optional[Dict[str, Any]], event: str, **fields: Any) -> None:
+    if not runtime_context:
+        return
+    progress_writer = runtime_context.get("progress_writer")
+    if progress_writer is None:
+        return
+    progress_writer.write_event(event, pid=os.getpid(), **fields)
+
+
+def _run_observed_phase(runtime_context: Optional[Dict[str, Any]], phase: str, action):
+    _write_progress(runtime_context, "phase_start", phase=phase)
+    with PhaseHeartbeat(
+        runtime_context.get("progress_writer") if runtime_context else None,
+        phase,
+        pid=os.getpid(),
+    ):
+        try:
+            result = action()
+        except Exception as exc:
+            _write_progress(runtime_context, "phase_end", phase=phase, status="error", error=str(exc))
+            raise
+    _write_progress(runtime_context, "phase_end", phase=phase, status="ok")
+    return result
+
+
+def allStepsAtOnce(
+    configFile=None,
+    config_overrides: Optional[Dict[str, Any]] = None,
+    runtime_context: Optional[Dict[str, Any]] = None,
+):
     """
         This function will run the knowledge agent and debug agent.
         When the debug agent receives the response from the knowledge
@@ -44,24 +126,49 @@ def allStepsAtOnce(configFile=None, config_overrides: Optional[Dict[str, Any]] =
 
     #read config to initilize enviornment
     config = _load_runtime_config(configFile, config_overrides)
-    setUpEnvironment(config)
+    _write_progress(runtime_context, "setup_start", test_name=config.get("test-name"))
+    try:
+        setUpEnvironment(config)
+    except Exception as exc:
+        _write_progress(runtime_context, "setup_end", test_name=config.get("test-name"), status="error", error=str(exc))
+        raise
+    _write_progress(runtime_context, "setup_end", test_name=config.get("test-name"), status="ok")
     #initilize needed LLMs
     apiAgent = AgentAPI("api-agent" , config)
     debugAgent = AgentDebug("debug-agent" , config)
+    success_probe = WrongPortSuccessProbe(config, runtime_context.get("progress_writer") if runtime_context else None)
+    debugAgent.runtime_context = {
+        **(runtime_context or {}),
+        "success_probe": success_probe,
+    }
     #set up the LLMs
     apiAgent.setupAgent()
     debugAgent.setupAgent()
 
     #Run the LLMs as needed
-    apiAgent.askQuestion()
+    _run_observed_phase(runtime_context, "api", apiAgent.askQuestion)
     debugAgent.agentAPIResponse = apiAgent.response
     debug_start_time = time.perf_counter()
-    debug_metrics = debugAgent.askQuestion()
+    debug_metrics = _run_observed_phase(runtime_context, "debug", debugAgent.askQuestion)
     debug_end_time = time.perf_counter()
-    debug_duration_s = debug_end_time - debug_start_time
+    debug_metrics = _normalize_metrics(
+        config,
+        debug_metrics,
+        "debug",
+        model=debugAgent.agentProperties.get("model") if debugAgent.agentProperties else None,
+        task_status=-1 if getattr(debugAgent, "_last_timeout", False) else _status_to_task_status(debugAgent.debugStatus),
+    )
+    _finalize_metrics(debug_metrics, debug_end_time - debug_start_time)
 
-    # Calculate the cost
-    debug_cost = calculate_cost(debug_metrics.get("model"), debug_metrics.get("input_tokens"), debug_metrics.get("output_tokens"))
+    if getattr(debugAgent, "_last_timeout", False):
+        print("\nDebug agent timed out. Skipping verification phase.\n")
+        store_metrics_entry(db_path, debug_metrics, debug_metrics.get("task_status"))
+        printFinishMessage()
+        return {
+            "status": False,
+            "debug_metrics": debug_metrics,
+            "verification_metrics": None,
+        }
     
     # call the verification agent to determine SUCCESS or FAILURE
     #-----------------------------------#
@@ -70,6 +177,7 @@ def allStepsAtOnce(configFile=None, config_overrides: Optional[Dict[str, Any]] =
     print("="*80 + "\n")
     
     verificationAgent = AgentVerification_v2("verification-agent", config)
+    verificationAgent.runtime_context = runtime_context or {}
     verificationAgent.setupAgent()
     
     # Pass the debug agent's response to the verification agent
@@ -77,9 +185,8 @@ def allStepsAtOnce(configFile=None, config_overrides: Optional[Dict[str, Any]] =
     
     # Run verification
     verification_start_time = time.perf_counter()
-    verification_metrics = verificationAgent.askQuestion()
+    verification_metrics = _run_observed_phase(runtime_context, "verification", verificationAgent.askQuestion)
     verification_end_time = time.perf_counter()
-    verification_duration_s = verification_end_time - verification_start_time
     
     # If verification returns None (error or unknown), fall back to debug agent's self-reported status
     #if verificationAgent.verificationStatus is None:
@@ -92,14 +199,14 @@ def allStepsAtOnce(configFile=None, config_overrides: Optional[Dict[str, Any]] =
 
     #-----------------------------------#
     
-    # Calculate the cost
-    verification_cost = calculate_cost(verification_metrics.get("model"), verification_metrics.get("input_tokens"), verification_metrics.get("output_tokens"))
-
-    # Update debug_metrics and verification_metrics
-    debug_metrics["duration_s"] = round(debug_duration_s, 2)
-    debug_metrics["cost"] = round(debug_cost, 4)
-    verification_metrics["duration_s"] = round(verification_duration_s, 2)
-    verification_metrics["cost"] = round(verification_cost, 4)
+    verification_metrics = _normalize_metrics(
+        config,
+        verification_metrics,
+        "verification",
+        model=verificationAgent.agentProperties.get("model") if verificationAgent.agentProperties else None,
+        task_status=-1 if getattr(verificationAgent, "_last_timeout", False) else None,
+    )
+    _finalize_metrics(verification_metrics, verification_end_time - verification_start_time)
 
     # Store metrics entry into the database
     store_metrics_entry(db_path, debug_metrics, verification_metrics.get("task_status"))
@@ -112,7 +219,11 @@ def allStepsAtOnce(configFile=None, config_overrides: Optional[Dict[str, Any]] =
         "verification_metrics": verification_metrics,
     }
 
-def stepByStep(configFile=None, config_overrides: Optional[Dict[str, Any]] = None):
+def stepByStep(
+    configFile=None,
+    config_overrides: Optional[Dict[str, Any]] = None,
+    runtime_context: Optional[Dict[str, Any]] = None,
+):
     """
         This function will run the knowledge and debug agent.
         The knowledge agent will return the response with steps to run
@@ -128,25 +239,51 @@ def stepByStep(configFile=None, config_overrides: Optional[Dict[str, Any]] = Non
     """
     #read config to initilize enviornment
     config = _load_runtime_config(configFile, config_overrides)
-    setUpEnvironment(config)
+    _write_progress(runtime_context, "setup_start", test_name=config.get("test-name"))
+    try:
+        setUpEnvironment(config)
+    except Exception as exc:
+        _write_progress(runtime_context, "setup_end", test_name=config.get("test-name"), status="error", error=str(exc))
+        raise
+    _write_progress(runtime_context, "setup_end", test_name=config.get("test-name"), status="ok")
     #initilize needed LLMs
     apiAgent = AgentAPI("api-agent" , config)
     debugAgent = AgentDebugStepByStep("debug-agent" , config)
+    debugAgent.runtime_context = runtime_context or {}
     #set up the LLMs
     apiAgent.setupAgent()
     debugAgent.setupAgent()
 
     #Run the LLMs as needed
-    apiAgent.askQuestion()
+    _run_observed_phase(runtime_context, "api", apiAgent.askQuestion)
     debugAgent.agentAPIResponse = apiAgent.response
     debugAgent.formProblemSolvingSteps()
-    debugAgent.executeProblemSteps()
+    debug_start_time = time.perf_counter()
+    debug_metrics = _run_observed_phase(runtime_context, "debug", debugAgent.executeProblemSteps)
+    debug_end_time = time.perf_counter()
+    debug_metrics = _normalize_metrics(
+        config,
+        debug_metrics,
+        "debug",
+        model=debugAgent.agentProperties.get("model") if debugAgent.agentProperties else None,
+        task_status=-1 if getattr(debugAgent, "_last_timeout", False) else _status_to_task_status(debugAgent.debugStatus),
+    )
+    _finalize_metrics(debug_metrics, debug_end_time - debug_start_time)
+    store_metrics_entry(db_path, debug_metrics, debug_metrics.get("task_status"))
     printFinishMessage()
 
-    return debugAgent.debugStatus
+    return {
+        "status": debugAgent.debugStatus is True,
+        "debug_metrics": debug_metrics,
+        "verification_metrics": None,
+    }
 
 
-def singleAgentApproach(configFile=None, config_overrides: Optional[Dict[str, Any]] = None):
+def singleAgentApproach(
+    configFile=None,
+    config_overrides: Optional[Dict[str, Any]] = None,
+    runtime_context: Optional[Dict[str, Any]] = None,
+):
     """
         This function will run a single agent which will do the
         reasoning on top of the actioning
@@ -157,18 +294,46 @@ def singleAgentApproach(configFile=None, config_overrides: Optional[Dict[str, An
     """
     #read config to initilize enviornment
     config = _load_runtime_config(configFile, config_overrides)
-    setUpEnvironment(config)
+    _write_progress(runtime_context, "setup_start", test_name=config.get("test-name"))
+    try:
+        setUpEnvironment(config)
+    except Exception as exc:
+        _write_progress(runtime_context, "setup_end", test_name=config.get("test-name"), status="error", error=str(exc))
+        raise
+    _write_progress(runtime_context, "setup_end", test_name=config.get("test-name"), status="ok")
     #initilize needed LLMs
     agent = SingleAgent("single-agent", config)
+    agent.runtime_context = {
+        **(runtime_context or {}),
+        "success_probe": WrongPortSuccessProbe(
+            config,
+            runtime_context.get("progress_writer") if runtime_context else None,
+        ),
+    }
     #set up the LLMs
     agent.setupAgent()
 
     #Run the LLMs as needed
-    agent.askQuestion()
+    debug_start_time = time.perf_counter()
+    debug_metrics = _run_observed_phase(runtime_context, "debug", agent.askQuestion)
+    debug_end_time = time.perf_counter()
+    debug_metrics = _normalize_metrics(
+        config,
+        debug_metrics,
+        "debug",
+        model=agent.agentProperties.get("model") if agent.agentProperties else None,
+        task_status=-1 if getattr(agent, "_last_timeout", False) else _status_to_task_status(agent.debugStatus),
+    )
+    _finalize_metrics(debug_metrics, debug_end_time - debug_start_time)
+    store_metrics_entry(db_path, debug_metrics, debug_metrics.get("task_status"))
     #agent.knowledgeResponse
     #agent.takeAction()
 
-    return agent.debugStatus
+    return {
+        "status": agent.debugStatus is True,
+        "debug_metrics": debug_metrics,
+        "verification_metrics": None,
+    }
 
 
 def run( debugType, configFile ):

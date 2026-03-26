@@ -3,6 +3,8 @@ import argparse
 import os
 import sys
 import tempfile
+import threading
+import time
 import types
 import unittest
 from pathlib import Path
@@ -22,13 +24,16 @@ if not hasattr(inspect, "getargspec"):
     inspect.getargspec = inspect.getfullargspec
 
 from debug_assistant_latest.config_merge import load_config_with_overrides, merge_config_overrides
-from debug_assistant_latest.ground_truth import CheckStatus, run_all_checks, run_check, validate_ground_truth_config
+from debug_assistant_latest.ground_truth import CheckStatus, execute_command, run_all_checks, run_check, validate_ground_truth_config
 from debug_assistant_latest.report import AgentMetrics, TestSummary, generate_aggregate_report, load_test_summary
 from debug_assistant_latest.runner import (
     TestResult,
+    _best_effort_configure_console_streams,
     _apply_repeat_overrides,
     _build_repeat_payload,
     _run_repeat_queue,
+    _safe_flush_stream,
+    _safe_write_to_stream,
     cmd_run_single,
     result_to_summary,
 )
@@ -39,8 +44,18 @@ from api_server_support import SessionState, knowledge_table_name
 import api_server_support
 import runtime_config
 import timeout_helpers
+import debug_assistant_latest.agent_helpers as agent_helpers
+import debug_assistant_latest.prompt_helpers as prompt_helpers
 from debug_assistant_latest import rag_api
 from debug_assistant_latest import rag_server_config
+from debug_assistant_latest.better_shell import BetterShellTools
+from runtime_progress import (
+    BlockedCommandThresholdError,
+    ProgressWriter,
+    get_wrong_port_debug_commands,
+    get_wrong_port_verification_commands,
+    is_wrong_port_windows_case,
+)
 from debug_assistant_latest.verification_base import parse_verification_status, print_verification_status
 
 
@@ -158,18 +173,21 @@ class RuntimeConfigTests(unittest.TestCase):
 
 
 class TimeoutHelperTests(unittest.TestCase):
-    def test_timeout_is_noop_on_windows(self):
+    def test_timeout_unblocks_caller_on_windows(self):
         def target():
+            time.sleep(0.2)
             return "ok"
 
-        fake_timeout = MagicMock()
-        fake_module = types.SimpleNamespace(timeout=fake_timeout, TimeoutError=RuntimeError)
+        fake_module = types.SimpleNamespace(timeout=MagicMock(), TimeoutError=RuntimeError)
 
         with patch.object(timeout_helpers, "timeout_decorator", fake_module), patch("timeout_helpers.os.name", "nt"):
-            decorated = timeout_helpers.timeout(480)(target)
+            decorated = timeout_helpers.timeout(0.01)(target)
+            started = time.perf_counter()
+            with self.assertRaises(timeout_helpers.TimeoutError):
+                decorated()
+            elapsed = time.perf_counter() - started
 
-        fake_timeout.assert_not_called()
-        self.assertIs(decorated, target)
+        self.assertLess(elapsed, 0.1)
 
     def test_timeout_uses_signals_off_windows(self):
         fake_decorator = object()
@@ -181,6 +199,266 @@ class TimeoutHelperTests(unittest.TestCase):
 
         fake_timeout.assert_called_once_with(480, use_signals=True)
         self.assertIs(result, fake_decorator)
+
+
+class AgentHelperTests(unittest.TestCase):
+    def test_build_llm_agent_disables_debug_logs_by_default_on_windows(self):
+        fake_factory = MagicMock(return_value="agent")
+
+        with patch.object(agent_helpers, "llmAgent", fake_factory), patch.object(
+            agent_helpers, "build_model", return_value="model"
+        ), patch.object(agent_helpers, "BetterShellTools", return_value="tool"), patch(
+            "debug_assistant_latest.agent_helpers.os.name", "nt"
+        ), patch.dict(os.environ, {}, clear=False):
+            result = agent_helpers.build_llm_agent("gpt-5-mini", ["i"], ["g"])
+
+        self.assertEqual(result, "agent")
+        self.assertFalse(fake_factory.call_args.kwargs["debug_mode"])
+        self.assertFalse(fake_factory.call_args.kwargs["show_tool_calls"])
+
+    def test_build_llm_agent_allows_windows_debug_override(self):
+        fake_factory = MagicMock(return_value="agent")
+
+        with patch.object(agent_helpers, "llmAgent", fake_factory), patch.object(
+            agent_helpers, "build_model", return_value="model"
+        ), patch.object(agent_helpers, "BetterShellTools", return_value="tool"), patch(
+            "debug_assistant_latest.agent_helpers.os.name", "nt"
+        ), patch.dict(os.environ, {"KUBELLM_AGENT_DEBUG_LOGS": "1"}, clear=False):
+            agent_helpers.build_llm_agent("gpt-5-mini", ["i"], ["g"])
+
+        self.assertTrue(fake_factory.call_args.kwargs["debug_mode"])
+        self.assertTrue(fake_factory.call_args.kwargs["show_tool_calls"])
+
+
+class PromptHelperTests(unittest.TestCase):
+    def test_get_tool_usage_rules_adds_windows_guidance(self):
+        with patch("debug_assistant_latest.prompt_helpers.os.name", "nt"):
+            rules = prompt_helpers.get_tool_usage_rules()
+
+        self.assertIn("PowerShell-compatible", rules)
+        self.assertIn("ownerReferences[0]", rules)
+        self.assertIn("kubectl port-forward", rules)
+
+
+class BetterShellTests(unittest.TestCase):
+    def test_run_shell_command_exposes_string_command_schema(self):
+        tool = BetterShellTools()
+
+        parameters = tool.functions["run_shell_command"].parameters
+
+        self.assertEqual(parameters["type"], "object")
+        self.assertEqual(parameters["required"], ["command"])
+        self.assertEqual(parameters["properties"]["command"]["type"], "string")
+        self.assertNotIn("args", parameters["properties"])
+
+    def test_run_shell_command_uses_powershell_on_windows(self):
+        tool = BetterShellTools()
+        fake_result = types.SimpleNamespace(stdout="ok\n", returncode=0)
+
+        with patch("subprocess.run", return_value=fake_result) as run_mock, patch(
+            "debug_assistant_latest.better_shell.os.name", "nt"
+        ):
+            output = tool.run_shell_command("Get-Location")
+
+        self.assertEqual(output, "ok\n")
+        args, kwargs = run_mock.call_args
+        self.assertEqual(args[0][:3], ["powershell", "-NoProfile", "-Command"])
+        self.assertFalse(kwargs["shell"])
+        self.assertEqual(kwargs["encoding"], "utf-8")
+        self.assertEqual(kwargs["errors"], "replace")
+        self.assertEqual(kwargs["timeout"], 120)
+
+    def test_run_shell_command_allows_direct_powershell_edit_on_windows(self):
+        tool = BetterShellTools()
+        fake_result = types.SimpleNamespace(stdout="", stderr="", returncode=0)
+        command = (
+            "(Get-Content 'C:\\repo\\wrong_port.yaml') "
+            "-replace 'containerPort: 8000','containerPort: 8765' | "
+            "Set-Content 'C:\\repo\\wrong_port.yaml'"
+        )
+
+        with patch("subprocess.run", return_value=fake_result) as run_mock, patch(
+            "debug_assistant_latest.better_shell.os.name", "nt"
+        ):
+            output = tool.run_shell_command(command)
+
+        self.assertEqual(output, "")
+        run_mock.assert_called_once()
+
+    def test_run_shell_command_blocks_known_bad_windows_pattern_with_actionable_error(self):
+        tool = BetterShellTools()
+        command = "kubectl port-forward pod/kube-wrong-port 8765:8765 & sleep 1; curl -s http://localhost:8765 | head -n 5"
+
+        with patch("debug_assistant_latest.better_shell.os.name", "nt"):
+            output = tool.run_shell_command(command)
+
+        self.assertIn("Error:", output)
+        self.assertIn("kubectl exec", output)
+        self.assertIn("kubectl get", output)
+
+    def test_run_shell_command_raises_after_repeated_blocked_commands(self):
+        tool = BetterShellTools(phase="debug", blocked_threshold=3)
+        command = "kubectl port-forward pod/kube-wrong-port 8765:8765"
+
+        with patch("debug_assistant_latest.better_shell.os.name", "nt"):
+            self.assertIn("Error:", tool.run_shell_command(command))
+            self.assertIn("Error:", tool.run_shell_command(command))
+            with self.assertRaises(BlockedCommandThresholdError):
+                tool.run_shell_command(command)
+
+    def test_run_shell_command_resets_blocked_counter_after_allowed_command(self):
+        tool = BetterShellTools(phase="debug", blocked_threshold=3)
+        blocked = "kubectl port-forward pod/kube-wrong-port 8765:8765"
+        fake_result = types.SimpleNamespace(stdout="ok\n", stderr="", returncode=0)
+
+        with patch("debug_assistant_latest.better_shell.os.name", "nt"), patch(
+            "subprocess.run", return_value=fake_result
+        ):
+            self.assertIn("Error:", tool.run_shell_command(blocked))
+            self.assertEqual(tool.run_shell_command("Get-Location"), "ok\n")
+
+        self.assertEqual(tool._consecutive_blocked, 0)
+
+    def test_run_shell_command_accepts_dict_command_payload(self):
+        tool = BetterShellTools()
+        fake_result = types.SimpleNamespace(stdout="ok\n", stderr="", returncode=0)
+
+        with patch("subprocess.run", return_value=fake_result) as run_mock, patch(
+            "debug_assistant_latest.better_shell.os.name", "nt"
+        ):
+            output = tool.run_shell_command({"command": "Get-Location"})
+
+        self.assertEqual(output, "ok\n")
+        args, kwargs = run_mock.call_args
+        self.assertEqual(args[0][:3], ["powershell", "-NoProfile", "-Command"])
+        self.assertEqual(args[0][-1], "Get-Location")
+        self.assertFalse(kwargs["shell"])
+
+    def test_run_shell_command_processed_entrypoint_accepts_legacy_command_payload(self):
+        tool = BetterShellTools()
+        fake_result = types.SimpleNamespace(stdout="ok\n", stderr="", returncode=0)
+        function = tool.functions["run_shell_command"]
+        function.process_entrypoint()
+
+        with patch("subprocess.run", return_value=fake_result) as run_mock, patch(
+            "debug_assistant_latest.better_shell.os.name", "nt"
+        ):
+            output = function.entrypoint(command={"command": "Get-Location"})
+
+        self.assertEqual(output, "ok\n")
+        args, kwargs = run_mock.call_args
+        self.assertEqual(args[0][-1], "Get-Location")
+        self.assertFalse(kwargs["shell"])
+
+    def test_run_shell_command_returns_actionable_error_for_non_command_payload(self):
+        tool = BetterShellTools()
+
+        with patch("debug_assistant_latest.better_shell.os.name", "nt"):
+            output = tool.run_shell_command({"type": "string"})
+
+        self.assertIn("Error:", output)
+        self.assertIn("literal shell command string", output)
+
+    def test_build_llm_agent_ollama_request_kwargs_include_shell_tool_schema(self):
+        agent = agent_helpers.build_llm_agent("llama3.1:8b", ["i"], ["g"])
+
+        agent.update_model()
+        tools = agent.model.request_kwargs["tools"]
+
+        self.assertEqual(len(tools), 1)
+        parameters = tools[0]["function"]["parameters"]
+        self.assertEqual(parameters["properties"]["command"]["type"], "string")
+        self.assertEqual(parameters["required"], ["command"])
+        self.assertNotIn("args", parameters["properties"])
+
+
+class RunnerStreamTests(unittest.TestCase):
+    def test_safe_write_to_stream_replaces_unencodable_console_text(self):
+        class FakeStream:
+            encoding = "cp1252"
+
+            def __init__(self):
+                self.writes = []
+
+            def write(self, data):
+                data.encode(self.encoding)
+                self.writes.append(data)
+
+            def flush(self):
+                return None
+
+        stream = FakeStream()
+        _safe_write_to_stream(stream, "step -> next \u2192 done")
+
+        self.assertEqual(stream.writes, ["step -> next ? done"])
+
+    def test_safe_flush_stream_swallows_oserror(self):
+        class FakeStream:
+            def flush(self):
+                raise OSError("bad handle")
+
+        _safe_flush_stream(FakeStream())
+
+    def test_best_effort_configure_console_streams_reconfigures_streams(self):
+        stdout_stream = MagicMock()
+        stderr_stream = MagicMock()
+
+        with patch("sys.stdout", stdout_stream), patch("sys.stderr", stderr_stream):
+            _best_effort_configure_console_streams()
+
+        stdout_stream.reconfigure.assert_called_once_with(encoding="utf-8", errors="replace")
+        stderr_stream.reconfigure.assert_called_once_with(encoding="utf-8", errors="replace")
+
+
+class ProgressWriterTests(unittest.TestCase):
+    def test_progress_writer_serializes_concurrent_jsonl_writes(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            writer = ProgressWriter(Path(tmpdir) / "progress.log")
+
+            def emit(prefix):
+                for index in range(20):
+                    writer.write_event("thread_event", prefix=prefix, index=index)
+
+            threads = [threading.Thread(target=emit, args=(name,)) for name in ("a", "b", "c")]
+            for thread in threads:
+                thread.start()
+            for thread in threads:
+                thread.join()
+            writer.close()
+
+            lines = (Path(tmpdir) / "progress.log").read_text(encoding="utf-8").splitlines()
+
+        self.assertEqual(len(lines), 60)
+        records = [json.loads(line) for line in lines]
+        self.assertEqual(sorted(record["seq"] for record in records), list(range(1, 61)))
+
+
+class WrongPortRuntimeTests(unittest.TestCase):
+    def test_is_wrong_port_windows_case_requires_windows_and_case_name(self):
+        config = {"test-name": "wrong_port"}
+
+        with patch("runtime_progress.os.name", "nt"):
+            self.assertTrue(is_wrong_port_windows_case(config))
+            self.assertFalse(is_wrong_port_windows_case({"test-name": "other_case"}))
+
+        with patch("runtime_progress.os.name", "posix"):
+            self.assertFalse(is_wrong_port_windows_case(config))
+
+    def test_wrong_port_command_builders_include_fix_and_exec_checks(self):
+        config = {
+            "test-name": "wrong_port",
+            "test-directory": "C:\\repo\\debug_assistant_latest\\troubleshooting\\wrong_port\\",
+            "yaml-file-name": "wrong_port.yaml",
+        }
+
+        debug_commands = get_wrong_port_debug_commands(config)
+        verification_commands = get_wrong_port_verification_commands(config)
+
+        self.assertIn("containerPort: 8765", debug_commands[1])
+        self.assertTrue(any("kubectl wait --for=condition=Ready pod/kube-wrong-port" in command for command in debug_commands))
+        self.assertTrue(any("urllib.request.urlopen('http://localhost:8765/')" in command for command in debug_commands))
+        self.assertIn("Get-Content 'C:\\repo\\debug_assistant_latest\\troubleshooting\\wrong_port\\wrong_port.yaml'", verification_commands[0])
+        self.assertTrue(any("kubectl exec kube-wrong-port -- python3 -c" in command for command in verification_commands))
 
 
 class AssistantIntegrationTests(unittest.TestCase):
@@ -250,6 +528,39 @@ class AssistantIntegrationTests(unittest.TestCase):
 
 
 class GroundTruthTests(unittest.TestCase):
+    def test_execute_command_uses_direct_argv_on_windows_for_jsonpath(self):
+        fake_result = types.SimpleNamespace(stdout="True\n", stderr="", returncode=0)
+        command = "kubectl get pod test -o jsonpath='{.status.conditions[?(@.type==\"Ready\")].status}'"
+
+        with patch("subprocess.run", return_value=fake_result) as run_mock, patch(
+            "debug_assistant_latest.ground_truth.os.name", "nt"
+        ):
+            output, exit_code, error = execute_command(command)
+
+        self.assertEqual((output, exit_code, error), ("True", 0, None))
+        args, kwargs = run_mock.call_args
+        self.assertEqual(
+            args[0],
+            ["kubectl", "get", "pod", "test", "-o", 'jsonpath={.status.conditions[?(@.type=="Ready")].status}'],
+        )
+        self.assertFalse(kwargs["shell"])
+        self.assertEqual(kwargs["encoding"], "utf-8")
+        self.assertEqual(kwargs["errors"], "replace")
+
+    def test_execute_command_uses_powershell_on_windows_when_shell_is_required(self):
+        fake_result = types.SimpleNamespace(stdout="clean\n", stderr="", returncode=0)
+        command = "kubectl logs test 2>&1 | grep boom || echo clean"
+
+        with patch("subprocess.run", return_value=fake_result) as run_mock, patch(
+            "debug_assistant_latest.ground_truth.os.name", "nt"
+        ):
+            output, exit_code, error = execute_command(command)
+
+        self.assertEqual((output, exit_code, error), ("clean", 0, None))
+        args, kwargs = run_mock.call_args
+        self.assertEqual(args[0][:3], ["powershell", "-NoProfile", "-Command"])
+        self.assertFalse(kwargs["shell"])
+
     def test_run_check_skips_when_dependency_missing(self):
         result = run_check(
             {
@@ -787,10 +1098,14 @@ class RunnerTests(unittest.TestCase):
                 debug_model=None,
                 api_model=None,
                 verification_model=None,
+                embedder=None,
+                embedder_provider=None,
                 technique="allStepsAtOnce",
                 backup_before_run=False,
                 teardown_after_run=False,
                 minikube_profile=None,
+                rag_api_url=None,
+                skip_preflight=True,
             )
 
             fake_result = TestResult(
@@ -811,7 +1126,8 @@ class RunnerTests(unittest.TestCase):
             ) as save_run_config_mock, patch(
                 "debug_assistant_latest.runner.save_test_summary"
             ) as save_test_summary_mock, patch(
-                "debug_assistant_latest.runner.generate_aggregate_report", return_value={"ok": True}
+                "debug_assistant_latest.runner.generate_aggregate_report",
+                return_value=types.SimpleNamespace(passed=1, failed=0, errors=0),
             ) as generate_report_mock, patch(
                 "debug_assistant_latest.runner.save_aggregate_report"
             ) as save_aggregate_mock, patch(
@@ -825,6 +1141,59 @@ class RunnerTests(unittest.TestCase):
             generate_report_mock.assert_called_once()
             save_aggregate_mock.assert_called_once()
             print_console_mock.assert_called_once()
+
+    def test_cmd_run_single_preflight_failure_writes_terminal_artifacts(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            args = argparse.Namespace(
+                output_dir=Path(tmpdir),
+                debug_model=None,
+                api_model=None,
+                verification_model=None,
+                embedder=None,
+                embedder_provider=None,
+                technique="allStepsAtOnce",
+                backup_before_run=False,
+                teardown_after_run=False,
+                minikube_profile="test-profile",
+                rag_api_url=None,
+                skip_preflight=False,
+            )
+            preflight_result = {
+                "passed": False,
+                "checks": [
+                    {"name": "docker_engine", "passed": False, "message": "engine down"},
+                    {"name": "cluster_access", "passed": False, "message": "kubectl get nodes failed"},
+                ],
+            }
+
+            with patch("debug_assistant_latest.runner.run_preflight", return_value=preflight_result), patch(
+                "debug_assistant_latest.runner.print_preflight_result"
+            ), patch(
+                "debug_assistant_latest.runner.run_single_test"
+            ) as run_single_mock, patch(
+                "debug_assistant_latest.runner.print_console_summary"
+            ):
+                exit_code = cmd_run_single(args, "wrong_port")
+
+            self.assertEqual(exit_code, 1)
+            run_single_mock.assert_not_called()
+            summary_path = Path(tmpdir) / "wrong_port" / "summary.json"
+            aggregate_path = Path(tmpdir) / "aggregate.json"
+            progress_path = Path(tmpdir) / "wrong_port" / "progress.log"
+            self.assertTrue(summary_path.exists())
+            self.assertTrue(aggregate_path.exists())
+            self.assertTrue(progress_path.exists())
+
+            summary = json.loads(summary_path.read_text(encoding="utf-8"))
+            self.assertEqual(summary["status"], "ERROR")
+            self.assertIn("Preflight failed", summary["error_message"])
+
+            progress_events = [
+                json.loads(line)["event"]
+                for line in progress_path.read_text(encoding="utf-8").splitlines()
+            ]
+            self.assertIn("preflight_end", progress_events)
+            self.assertEqual(progress_events[-1], "run_end")
 
 
 class ApiServerRouteTests(unittest.TestCase):
@@ -1028,12 +1397,15 @@ class ApiServerSupportTests(unittest.TestCase):
         self.assertEqual(knowledge_table_name("nomic-embed-text"), "local_rag_documents_nomic-embed-text")
 
     def test_load_knowledge_document_uses_shared_embedder_builder(self):
+        from phi.document import Document
+
         fake_kb = MagicMock()
         fake_embedder = MagicMock()
         fake_embedder.get_embedding_and_usage.return_value = ([0.1, 0.2], {"total_tokens": 1})
 
         with patch("api_server_support.build_embedder", return_value=fake_embedder) as build_embedder_mock, patch(
-            "api_server_support.scrape_url_to_document", return_value="doc"
+            "api_server_support.scrape_url_to_document",
+            return_value=Document(content="doc", meta_data={"source": "https://example.com"}),
         ), patch("phi.agent.AgentKnowledge", return_value=fake_kb), patch(
             "phi.vectordb.pgvector.PgVector", return_value="vector_db"
         ):
@@ -1047,7 +1419,9 @@ class ApiServerSupportTests(unittest.TestCase):
 
         build_embedder_mock.assert_called_once_with("text-embedding-3-small", provider="openai")
         fake_embedder.get_embedding_and_usage.assert_called_once_with("kubellm embedder preflight")
-        fake_kb.load_documents.assert_called_once_with(["doc"])
+        loaded_documents = fake_kb.load_documents.call_args.args[0]
+        self.assertEqual(len(loaded_documents), 1)
+        self.assertEqual(loaded_documents[0].content, "doc")
 
     def test_load_knowledge_document_surfaces_provider_preflight_error(self):
         fake_embedder = MagicMock()
@@ -1062,6 +1436,39 @@ class ApiServerSupportTests(unittest.TestCase):
                     "postgresql://example",
                     embeddings_provider="openai",
                 )
+
+    def test_load_knowledge_document_chunks_large_documents_before_load(self):
+        from phi.document import Document
+
+        fake_kb = MagicMock()
+        fake_embedder = MagicMock()
+        fake_embedder.get_embedding_and_usage.return_value = ([0.1, 0.2], {"total_tokens": 1})
+        large_document = Document(
+            content=("0123456789 " * 600),
+            meta_data={"source": "https://example.com", "title": "Example"},
+        )
+
+        with patch("api_server_support.build_embedder", return_value=fake_embedder), patch(
+            "api_server_support.scrape_url_to_document", return_value=large_document
+        ), patch("phi.agent.AgentKnowledge", return_value=fake_kb), patch(
+            "phi.vectordb.pgvector.PgVector", return_value="vector_db"
+        ):
+            api_server_support.load_knowledge_document(
+                "https://example.com",
+                "local_rag_documents_nomic-embed-text",
+                "nomic-embed-text",
+                "postgresql://example",
+                embeddings_provider="ollama",
+            )
+
+        loaded_documents = fake_kb.load_documents.call_args.args[0]
+        self.assertGreater(len(loaded_documents), 1)
+        self.assertTrue(
+            all(len(doc.content) <= api_server_support.EMBEDDING_CHUNK_SIZE_CHARS for doc in loaded_documents)
+        )
+        self.assertEqual(loaded_documents[0].meta_data["source"], "https://example.com")
+        self.assertEqual(loaded_documents[0].meta_data["chunk_index"], 1)
+        self.assertEqual(loaded_documents[-1].meta_data["chunk_count"], len(loaded_documents))
 
 
 if __name__ == "__main__":

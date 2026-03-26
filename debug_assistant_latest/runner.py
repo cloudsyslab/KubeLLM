@@ -60,6 +60,7 @@ from report import (
     save_run_config,
     print_console_summary,
 )
+from dashboard import build_dashboard_data, print_dashboard
 from ground_truth import (
     run_all_checks as run_ground_truth_checks,
     format_results as format_ground_truth_results,
@@ -67,7 +68,10 @@ from ground_truth import (
     validate_ground_truth_config,
     GroundTruthResult,
 )
+from preflight import print_preflight_result, run_preflight
 from rag_server_config import RAG_API_URL_ENV, resolve_client_base_url
+from result_interpreter import interpret_run
+from runtime_progress import ProgressWriter
 
 
 @dataclass
@@ -75,7 +79,7 @@ class TestResult:
     """Result of a single test execution."""
     test_name: str
     success: bool
-    verified: bool
+    verified: Optional[bool]
     debug_self_report: Optional[bool]
     duration_s: float
     error: Optional[str]
@@ -103,6 +107,49 @@ def resolve_rag_api_url_for_args(args) -> str:
     return resolve_client_base_url(getattr(args, "rag_api_url", None))
 
 
+def _display_path(path: Path) -> str:
+    try:
+        return path.relative_to(REPO_ROOT).as_posix()
+    except ValueError:
+        return str(path)
+
+
+def _best_effort_configure_console_streams() -> None:
+    """Force UTF-8 console encoding when the active stream supports it."""
+    for stream in (sys.stdout, sys.stderr):
+        reconfigure = getattr(stream, "reconfigure", None)
+        if callable(reconfigure):
+            try:
+                reconfigure(encoding="utf-8", errors="replace")
+            except (OSError, ValueError):
+                pass
+
+
+def _safe_write_to_stream(stream, data) -> None:
+    """Best-effort stream write that never lets console encoding abort the run."""
+    text = data if isinstance(data, str) else str(data)
+    encoding = getattr(stream, "encoding", None) or "utf-8"
+    try:
+        safe_text = text.encode(encoding, errors="replace").decode(encoding, errors="replace")
+    except (LookupError, ValueError):
+        safe_text = text.encode("utf-8", errors="replace").decode("utf-8", errors="replace")
+
+    try:
+        stream.write(safe_text)
+    except (OSError, UnicodeError, ValueError):
+        try:
+            stream.write(safe_text.encode("ascii", errors="replace").decode("ascii"))
+        except (OSError, UnicodeError, ValueError):
+            return
+
+
+def _safe_flush_stream(stream) -> None:
+    try:
+        stream.flush()
+    except (OSError, ValueError):
+        pass
+
+
 def _has_ground_truth_config(test_name: str, overrides: dict) -> bool:
     """Best-effort check for whether a test case has deterministic GT configured."""
     try:
@@ -111,6 +158,160 @@ def _has_ground_truth_config(test_name: str, overrides: dict) -> bool:
     except Exception:
         return False
     return bool(config.get("ground-truth"))
+
+
+def _extract_execution_result(result: Any) -> tuple[bool, Optional[bool], Optional[bool], Dict[str, Any], Optional[str]]:
+    if isinstance(result, dict):
+        success = result.get("status") is True
+        metrics: Dict[str, Any] = {}
+        debug_metrics = result.get("debug_metrics")
+        verification_metrics = result.get("verification_metrics")
+
+        debug_self_report = None
+        if isinstance(debug_metrics, dict):
+            metrics["debug"] = debug_metrics
+            task_status = debug_metrics.get("task_status")
+            if task_status == 1:
+                debug_self_report = True
+            elif task_status == 0:
+                debug_self_report = False
+
+        verified = success if isinstance(verification_metrics, dict) else None
+        if isinstance(verification_metrics, dict):
+            metrics["verification"] = verification_metrics
+
+        derived_error = None
+        if not success and isinstance(debug_metrics, dict) and debug_metrics.get("task_status") == -1:
+            derived_error = "Timeout: agent execution exceeded 480s"
+
+        return success, verified, debug_self_report, metrics, derived_error
+
+    success = result is True
+    return success, success, None, {}, None
+
+
+def _result_status(result: TestResult) -> str:
+    error_text = (result.error or "").lower()
+    if "timeout" in error_text:
+        return "TIMEOUT"
+
+    debug_metrics = result.metrics.get("debug") if isinstance(result.metrics, dict) else None
+    if isinstance(debug_metrics, dict) and debug_metrics.get("task_status") == -1:
+        return "TIMEOUT"
+
+    return "PASS" if result.success else ("ERROR" if result.error else "FAIL")
+
+
+def _read_error_context(log_dir: Path, line_limit: int = 20) -> Optional[str]:
+    stderr_log = log_dir / "stderr.log"
+    if not stderr_log.exists():
+        return None
+
+    lines = stderr_log.read_text(encoding="utf-8", errors="replace").splitlines()
+    excerpt = "\n".join(lines[:line_limit]).strip()
+    return excerpt or None
+
+
+def _runs_root() -> Path:
+    return REPO_ROOT / ".local" / "test_runs"
+
+
+def _run_dirs() -> List[Path]:
+    root = _runs_root()
+    if not root.exists():
+        return []
+    return sorted(
+        [path for path in root.iterdir() if path.is_dir()],
+        key=lambda path: (path.stat().st_mtime, path.name),
+        reverse=True,
+    )
+
+
+def _is_diagnosable_run_dir(run_dir: Path) -> bool:
+    if (run_dir / "aggregate.json").exists():
+        return True
+    if any(run_dir.rglob("summary.json")):
+        return True
+    return any(run_dir.rglob("stderr.log")) or any(run_dir.rglob("stdout.log"))
+
+
+def get_latest_run_dir(*, diagnosable_only: bool = False) -> Optional[Path]:
+    for run_dir in _run_dirs():
+        if not diagnosable_only or _is_diagnosable_run_dir(run_dir):
+            return run_dir
+    return None
+
+
+def _run_selected_preflight(args, test_names: Optional[List[str]]) -> int:
+    result = run_preflight(
+        test_names=test_names,
+        overrides=build_overrides_from_args(args),
+        rag_api_url=resolve_rag_api_url_for_args(args),
+        minikube_profile=getattr(args, "minikube_profile", None),
+    )
+    print_preflight_result(result)
+    return 0 if result["passed"] else 1
+
+
+def _maybe_run_preflight(args, test_names: List[str]) -> int:
+    if getattr(args, "skip_preflight", False):
+        return 0
+
+    exit_code = _run_selected_preflight(args, test_names)
+    if exit_code != 0:
+        print("[ERROR] Preflight failed. Re-run with --skip-preflight only if you understand the risk.")
+    return exit_code
+
+
+def _run_preflight_result(args, test_names: List[str]) -> Optional[dict]:
+    if getattr(args, "skip_preflight", False):
+        return None
+    result = run_preflight(
+        test_names=test_names,
+        overrides=build_overrides_from_args(args),
+        rag_api_url=resolve_rag_api_url_for_args(args),
+        minikube_profile=getattr(args, "minikube_profile", None),
+    )
+    print_preflight_result(result)
+    return result
+
+
+def _summarize_preflight_failure(result: dict) -> str:
+    failures = [check for check in result.get("checks", []) if not check.get("passed")]
+    if not failures:
+        return "Preflight failed"
+    return "Preflight failed: " + "; ".join(
+        f"{check.get('name')}: {check.get('message')}" for check in failures
+    )
+
+
+def _write_text_log(path: Path, text: str) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(text, encoding="utf-8")
+
+
+def _build_failed_result(test_name: str, log_dir: Path, error_message: str, overrides: Optional[dict] = None) -> TestResult:
+    now = datetime.now().isoformat()
+    return TestResult(
+        test_name=test_name,
+        success=False,
+        verified=None,
+        debug_self_report=None,
+        duration_s=0.0,
+        error=error_message,
+        metrics={},
+        log_dir=log_dir,
+        started_at=now,
+        finished_at=now,
+        ground_truth_passed=None,
+        ground_truth_configured=_has_ground_truth_config(test_name, overrides or {}),
+    )
+
+
+def _print_run_footer(output_dir: Path, summaries: List[TestSummary]) -> None:
+    print(f"RUN_DIR: {_display_path(output_dir)}")
+    for summary in sorted(summaries, key=lambda item: item.test_name):
+        print(f"RESULT: {summary.test_name} {summary.status} {summary.duration_s:.2f}s")
 
 
 def run_single_test_in_process(
@@ -186,24 +387,19 @@ def run_single_test_in_process(
             try:
                 if technique == "allStepsAtOnce":
                     result = allStepsAtOnce(configFile=str(config_path), config_overrides=overrides)
-                    # allStepsAtOnce returns dict with status and metrics
-                    if isinstance(result, dict):
-                        success = result.get("status") is True
-                        verified = result.get("status") is True
-                        metrics = {"debug": result.get("debug_metrics", {}), "verification": result.get("verification_metrics", {})}
-                    else:
-                        success = result is True
-                        verified = result is True
+                    success, verified, debug_self_report, metrics, derived_error = _extract_execution_result(result)
+                    if error is None and derived_error:
+                        error = derived_error
                 elif technique == "stepByStep":
                     result = stepByStep(configFile=str(config_path), config_overrides=overrides)
-                    # stepByStep has no verification agent
-                    success = result is True
-                    verified = None  # No verification performed
+                    success, verified, debug_self_report, metrics, derived_error = _extract_execution_result(result)
+                    if error is None and derived_error:
+                        error = derived_error
                 elif technique == "singleAgent":
                     result = singleAgentApproach(configFile=str(config_path), config_overrides=overrides)
-                    # singleAgent has no verification agent
-                    success = result is True
-                    verified = None  # No verification performed
+                    success, verified, debug_self_report, metrics, derived_error = _extract_execution_result(result)
+                    if error is None and derived_error:
+                        error = derived_error
                 else:
                     raise ValueError(f"Unknown technique: {technique}")
 
@@ -267,6 +463,7 @@ def run_single_test(
     backup_before_run: bool = False,
     teardown_after_run: bool = False,
     forced_backup_warning: bool = False,
+    runtime_context: Optional[Dict[str, Any]] = None,
 ) -> TestResult:
     """
     Run a single test case (in the current process).
@@ -295,9 +492,21 @@ def run_single_test(
     test_started = False  # Guard: only teardown if test actually started
     ground_truth_passed = None
     ground_truth_configured = False
+    runtime_context = dict(runtime_context or {})
+    runtime_context.setdefault("blocked_threshold", 3)
+    progress_writer = runtime_context.get("progress_writer")
+
+    _best_effort_configure_console_streams()
 
     if verbose:
         print(f"[RUNNING] {test_name} ({technique})")
+    if progress_writer:
+        progress_writer.write_event(
+            "test_start",
+            test_name=test_name,
+            technique=technique,
+            output_dir=str(output_dir),
+        )
 
     try:
         from main import allStepsAtOnce, stepByStep, singleAgentApproach
@@ -323,6 +532,12 @@ def run_single_test(
 
         # Save effective config for audit trail
         save_effective_config(config, log_dir / "config_effective.json")
+        if progress_writer:
+            progress_writer.write_event(
+                "config_effective_saved",
+                test_name=test_name,
+                path=str(log_dir / "config_effective.json"),
+            )
 
         # Mark test as started (backup succeeded, about to run test)
         test_started = True
@@ -335,22 +550,26 @@ def run_single_test(
                 def __init__(self, *streams):
                     self.streams = streams
 
+                @property
+                def encoding(self):
+                    if not self.streams:
+                        return "utf-8"
+                    return getattr(self.streams[0], "encoding", None) or "utf-8"
+
+                def isatty(self):
+                    if not self.streams:
+                        return False
+                    isatty = getattr(self.streams[0], "isatty", None)
+                    return bool(callable(isatty) and isatty())
+
                 def write(self, data):
                     for s in self.streams:
-                        try:
-                            s.write(data)
-                        except UnicodeEncodeError:
-                            encoding = getattr(s, "encoding", None) or "utf-8"
-                            safe_data = data.encode(encoding, errors="replace").decode(encoding)
-                            if hasattr(s, "buffer"):
-                                s.buffer.write(safe_data.encode(encoding, errors="replace"))
-                            else:
-                                s.write(safe_data)
-                        s.flush()
+                        _safe_write_to_stream(s, data)
+                        _safe_flush_stream(s)
 
                 def flush(self):
                     for s in self.streams:
-                        s.flush()
+                        _safe_flush_stream(s)
 
             old_stdout, old_stderr = sys.stdout, sys.stderr
             if verbose:
@@ -362,30 +581,39 @@ def run_single_test(
 
             try:
                 if technique == "allStepsAtOnce":
-                    result = allStepsAtOnce(configFile=str(config_path), config_overrides=overrides)
-                    # allStepsAtOnce returns dict with status and metrics
-                    if isinstance(result, dict):
-                        success = result.get("status") is True
-                        verified = result.get("status") is True
-                        metrics = {"debug": result.get("debug_metrics", {}), "verification": result.get("verification_metrics", {})}
-                    else:
-                        success = result is True
-                        verified = result is True
+                    result = allStepsAtOnce(
+                        configFile=str(config_path),
+                        config_overrides=overrides,
+                        runtime_context=runtime_context,
+                    )
+                    success, verified, debug_self_report, metrics, derived_error = _extract_execution_result(result)
+                    if error is None and derived_error:
+                        error = derived_error
                 elif technique == "stepByStep":
-                    result = stepByStep(configFile=str(config_path), config_overrides=overrides)
-                    # stepByStep has no verification agent
-                    success = result is True
-                    verified = None  # No verification performed
+                    result = stepByStep(
+                        configFile=str(config_path),
+                        config_overrides=overrides,
+                        runtime_context=runtime_context,
+                    )
+                    success, verified, debug_self_report, metrics, derived_error = _extract_execution_result(result)
+                    if error is None and derived_error:
+                        error = derived_error
                 elif technique == "singleAgent":
-                    result = singleAgentApproach(configFile=str(config_path), config_overrides=overrides)
-                    # singleAgent has no verification agent
-                    success = result is True
-                    verified = None  # No verification performed
+                    result = singleAgentApproach(
+                        configFile=str(config_path),
+                        config_overrides=overrides,
+                        runtime_context=runtime_context,
+                    )
+                    success, verified, debug_self_report, metrics, derived_error = _extract_execution_result(result)
+                    if error is None and derived_error:
+                        error = derived_error
                 else:
                     raise ValueError(f"Unknown technique: {technique}")
 
                 # Run ground truth verification if configured
                 if ground_truth_configured:
+                    if progress_writer:
+                        progress_writer.write_event("ground_truth_start", test_name=test_name)
                     print("\n" + "=" * 60)
                     print("Running ground truth verification...")
                     gt_result = run_ground_truth_checks(config)
@@ -395,6 +623,15 @@ def run_single_test(
                         ground_truth_passed = gt_result.passed
                         if not gt_result.passed:
                             success = False
+                        if progress_writer:
+                            progress_writer.write_event(
+                                "ground_truth_end",
+                                test_name=test_name,
+                                passed=gt_result.passed,
+                                summary=gt_result.summary,
+                            )
+                    elif progress_writer:
+                        progress_writer.write_event("ground_truth_end", test_name=test_name, passed=None)
 
             finally:
                 sys.stdout, sys.stderr = old_stdout, old_stderr
@@ -406,6 +643,8 @@ def run_single_test(
             print(f"[ERROR] {test_name}: {error}")
         with open(stderr_log, "a", encoding="utf-8") as f:
             f.write(f"\n\nEXCEPTION:\n{traceback.format_exc()}")
+        if progress_writer:
+            progress_writer.write_event("test_error", test_name=test_name, error=error)
 
     # Opt-in teardown after run (only if test started; log warnings to stderr.log)
     if teardown_after_run and test_started:
@@ -428,6 +667,16 @@ def run_single_test(
     status = "PASS" if success else ("ERROR" if error else "FAIL")
     if verbose:
         print(f"[{status}] {test_name} ({duration:.1f}s)")
+    if progress_writer:
+        progress_writer.write_event(
+            "test_end",
+            test_name=test_name,
+            status=status,
+            duration_s=round(duration, 3),
+            success=success,
+            verified=verified,
+            error=error,
+        )
 
     return TestResult(
         test_name=test_name,
@@ -666,7 +915,7 @@ def run_tests_parallel(
 
 def result_to_summary(result: TestResult, technique: str, overrides: dict) -> TestSummary:
     """Convert a TestResult to a TestSummary for reporting."""
-    status = "PASS" if result.success else ("ERROR" if result.error else "FAIL")
+    status = _result_status(result)
 
     return TestSummary(
         test_name=result.test_name,
@@ -678,6 +927,7 @@ def result_to_summary(result: TestResult, technique: str, overrides: dict) -> Te
         finished_at=result.finished_at,
         duration_s=result.duration_s,
         error_message=result.error,
+        error_context=_read_error_context(result.log_dir),
         metrics=normalize_metrics_map(result.metrics),
         config_overrides_applied=overrides,
         ground_truth_passed=result.ground_truth_passed,
@@ -706,6 +956,57 @@ def cmd_list(args):
         for tc in test_cases:
             print(f"  {tc}")
 
+    return 0
+
+
+def cmd_latest_run(args):
+    run_dir = get_latest_run_dir()
+    if run_dir is None:
+        print("No run directories found")
+        return 1
+    print(_display_path(run_dir))
+    return 0
+
+
+def cmd_preflight(args):
+    test_names = None
+    if args.run_many:
+        test_names = match_pattern(args.run_many)
+        if not test_names:
+            print(f"No test cases match pattern: {args.run_many}")
+            return 1
+    elif args.test_case:
+        available = list_test_cases()
+        if args.test_case not in available:
+            print(f"Unknown test case: {args.test_case}")
+            print(f"Available: {', '.join(available)}")
+            return 1
+        test_names = [args.test_case]
+
+    return _run_selected_preflight(args, test_names)
+
+
+def cmd_diagnose(args, run_dir: Path):
+    try:
+        diagnosis = interpret_run(run_dir)
+    except Exception as exc:
+        print(f"Could not diagnose run {run_dir}: {exc}")
+        return 1
+    print(json.dumps(diagnosis.to_dict(), indent=2))
+    return 0
+
+
+def cmd_diagnose_last(args):
+    run_dir = get_latest_run_dir(diagnosable_only=True)
+    if run_dir is None:
+        print("No diagnosable run directories found")
+        return 1
+    return cmd_diagnose(args, run_dir)
+
+
+def cmd_dashboard(args):
+    data = build_dashboard_data(_runs_root())
+    print_dashboard(data)
     return 0
 
 
@@ -778,6 +1079,8 @@ def cmd_run_single(args, test_name: str):
     output_dir = get_output_dir(run_id, args.output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
     rag_api_url = resolve_rag_api_url_for_args(args)
+    log_dir = output_dir / test_name
+    log_dir.mkdir(parents=True, exist_ok=True)
 
     overrides = build_overrides_from_args(args)
     technique = args.technique
@@ -803,33 +1106,103 @@ def cmd_run_single(args, test_name: str):
         "rag_api_url": rag_api_url,
     }
     save_run_config(run_config, output_dir)
+    progress_writer = ProgressWriter(log_dir / "progress.log")
+    progress_writer.write_event(
+        "run_start",
+        run_id=run_id,
+        test_name=test_name,
+        technique=technique,
+        rag_api_url=rag_api_url,
+        output_dir=str(output_dir),
+    )
 
     print(f"Output directory: {output_dir}")
     print(f"RAG API URL: {rag_api_url}")
     print()
 
     wall_start = time.perf_counter()
-    result = run_single_test(
-        test_name, technique, overrides, output_dir,
-        verbose=True,
-        backup_before_run=backup_before_run,
-        teardown_after_run=teardown_after_run,
-        forced_backup_warning=forced_backup_warning,
-    )
-    wall_end = time.perf_counter()
+    result = None
 
-    # Generate summary
-    summary = result_to_summary(result, technique, overrides)
-    save_test_summary(summary, result.log_dir)
+    try:
+        if getattr(args, "skip_preflight", False):
+            progress_writer.write_event("preflight_skipped", test_name=test_name)
+            preflight_result = None
+        else:
+            progress_writer.write_event("preflight_start", test_name=test_name)
+            preflight_result = _run_preflight_result(args, [test_name])
+        if preflight_result is not None:
+            if preflight_result["passed"]:
+                progress_writer.write_event("preflight_end", test_name=test_name, status="ok")
+            else:
+                error_message = _summarize_preflight_failure(preflight_result)
+                progress_writer.write_event(
+                    "preflight_end",
+                    test_name=test_name,
+                    status="error",
+                    error=error_message,
+                )
+                print("[ERROR] Preflight failed. Re-run with --skip-preflight only if you understand the risk.")
+                _write_text_log(log_dir / "stdout.log", "")
+                _write_text_log(log_dir / "stderr.log", error_message + "\n")
+                result = _build_failed_result(test_name, log_dir, error_message, overrides=overrides)
+        if result is None:
+            result = run_single_test(
+                test_name,
+                technique,
+                overrides,
+                output_dir,
+                verbose=True,
+                backup_before_run=backup_before_run,
+                teardown_after_run=teardown_after_run,
+                forced_backup_warning=forced_backup_warning,
+                runtime_context={"progress_writer": progress_writer, "blocked_threshold": 3},
+            )
+        wall_end = time.perf_counter()
 
-    # Generate aggregate report (even for single test)
-    aggregate = generate_aggregate_report(
-        [summary], run_config, run_id, wall_clock_s=wall_end - wall_start
-    )
-    save_aggregate_report(aggregate, output_dir)
-    print_console_summary(aggregate, output_dir)
+        summary = result_to_summary(result, technique, overrides)
+        save_test_summary(summary, result.log_dir)
+        progress_writer.write_event(
+            "summary_written",
+            test_name=test_name,
+            path=str(result.log_dir / "summary.json"),
+            status=summary.status,
+        )
 
-    return 0 if result.success else 1
+        aggregate = generate_aggregate_report(
+            [summary], run_config, run_id, wall_clock_s=wall_end - wall_start
+        )
+        save_aggregate_report(aggregate, output_dir)
+        progress_writer.write_event(
+            "aggregate_written",
+            test_name=test_name,
+            path=str(output_dir / "aggregate.json"),
+            passed=aggregate.passed,
+            failed=aggregate.failed,
+            errors=aggregate.errors,
+        )
+        print_console_summary(aggregate, output_dir)
+        _print_run_footer(output_dir, [summary])
+
+        exit_code = 0 if result.success else 1
+        progress_writer.write_event(
+            "run_end",
+            test_name=test_name,
+            status=summary.status,
+            exit_code=exit_code,
+            duration_s=round(wall_end - wall_start, 3),
+        )
+        return exit_code
+    except Exception as exc:
+        progress_writer.write_event(
+            "run_end",
+            test_name=test_name,
+            status="ERROR",
+            exit_code=1,
+            error=str(exc),
+        )
+        raise
+    finally:
+        progress_writer.close()
 
 
 def cmd_run_many(args):
@@ -846,6 +1219,10 @@ def cmd_run_many(args):
         for tc in matched:
             print(f"  {tc}")
         return 0
+
+    preflight_exit = _maybe_run_preflight(args, matched)
+    if preflight_exit != 0:
+        return preflight_exit
 
     run_id = get_timestamp_id()
     output_dir = get_output_dir(run_id, args.output_dir)
@@ -906,6 +1283,7 @@ def cmd_run_many(args):
     )
     save_aggregate_report(aggregate, output_dir)
     print_console_summary(aggregate, output_dir)
+    _print_run_footer(output_dir, summaries)
 
     # Return non-zero if any test failed
     failed = sum(1 for r in results if not r.success)
@@ -1148,6 +1526,8 @@ def _run_repeat_queue(args, mode, base_run_id, base_output_dir):
 
 
 def main():
+    _best_effort_configure_console_streams()
+
     parser = argparse.ArgumentParser(
         description="KubeLLM Test Runner - orchestrate Kubernetes troubleshooting tests",
         formatter_class=argparse.RawDescriptionHelpFormatter,
@@ -1172,6 +1552,37 @@ Examples:
         "--list", "-l",
         action="store_true",
         help="List available test cases",
+    )
+    parser.add_argument(
+        "--latest-run",
+        action="store_true",
+        help="Print the most recent run directory and exit",
+    )
+    parser.add_argument(
+        "--preflight",
+        action="store_true",
+        help="Run structured preflight checks and exit",
+    )
+    parser.add_argument(
+        "--skip-preflight",
+        action="store_true",
+        help="Skip automatic preflight checks before executing tests",
+    )
+    parser.add_argument(
+        "--diagnose",
+        type=Path,
+        metavar="RUN_DIR",
+        help="Diagnose a specific run directory",
+    )
+    parser.add_argument(
+        "--diagnose-last",
+        action="store_true",
+        help="Diagnose the most recent diagnosable run directory",
+    )
+    parser.add_argument(
+        "--dashboard",
+        action="store_true",
+        help="Show a simple dashboard over historical run data",
     )
 
     # Multi-run
@@ -1302,8 +1713,23 @@ Examples:
     if args.list:
         return cmd_list(args)
 
+    if args.latest_run:
+        return cmd_latest_run(args)
+
+    if args.preflight:
+        return cmd_preflight(args)
+
     if args.validate_ground_truth:
         return cmd_validate_ground_truth(args)
+
+    if args.diagnose:
+        return cmd_diagnose(args, args.diagnose)
+
+    if args.diagnose_last:
+        return cmd_diagnose_last(args)
+
+    if args.dashboard:
+        return cmd_dashboard(args)
 
     if args.verify_only:
         if not args.test_case:

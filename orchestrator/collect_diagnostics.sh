@@ -1,7 +1,18 @@
 #!/usr/bin/env bash
+# Snapshot cluster state into .local/diagnostics/<timestamp>/ using kubectl.
+#
+# Uses the same default kubeconfig file as preflight.sh (~/.kube/kubellm-minikube.conf).
+# Override with KUBELLM_KUBECONFIG_PATH, or KUBECONFIG if it is a single file path (no ':').
 set -euo pipefail
 
-KUBECONFIG_PATH="${KUBECONFIG_PATH:-$HOME/.kube/minh-admin.conf}"
+# Resolve single-file path for kubectl --kubeconfig (same default as preflight.sh output).
+if [[ -n "${KUBELLM_KUBECONFIG_PATH:-}" ]]; then
+  KUBECONFIG_PATH="$KUBELLM_KUBECONFIG_PATH"
+elif [[ -n "${KUBECONFIG:-}" ]] && [[ "$KUBECONFIG" != *:* ]]; then
+  KUBECONFIG_PATH="$KUBECONFIG"
+else
+  KUBECONFIG_PATH="${HOME}/.kube/kubellm-minikube.conf"
+fi
 OUT_DIR=".local/diagnostics/$(date -u +%Y%m%d_%H%M%S)"
 mkdir -p "$OUT_DIR"
 
