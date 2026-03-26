@@ -1,0 +1,188 @@
+{
+  "status": "complete",
+  "summary": "The strongest pattern I found is a staged verifier, not a single tool: first confirm the cited code exists with `rg`, then confirm the structure with an AST backend, then run a claim-specific property check such as a sanitizer/source/sink rule. Official docs are strong enough now to build this with off-the-shelf components: `ripgrep` for exact anchoring, `tree-sitter` or `ast-grep` for syntax-aware matching, and `Semgrep` for higher-level property checks. Among commercial tools, Qodo is the clearest public example of deterministic post-generation validation because it documents location matching and tree-sitter syntax checks before enabling one-click apply; CodeRabbit publicly documents heavy use of sandboxed third-party static tools, path filters, and syntax-aware instructions; GitHub Copilot’s public docs still emphasize human verification and custom instructions rather than published deterministic validators. Academic evidence is thinner on deployment architecture, but recent code-review benchmarks are already using rule-based location and syntax checks, which is directly reusable in a production review pipeline.",
+  "findings": [
+    {
+      "claim": "Use `ripgrep` as the first-pass evidence gate because it returns line-precise hits without needing AST parsing.",
+      "source": "https://raw.githubusercontent.com/BurntSushi/ripgrep/master/GUIDE.md",
+      "confidence": "high",
+      "evidence": "\"ripgrep also included the line number for each line by default.\""
+    },
+    {
+      "claim": "Use `rg --json` when the verifier needs machine-readable evidence records instead of terminal text.",
+      "source": "https://raw.githubusercontent.com/BurntSushi/ripgrep/master/README.md",
+      "confidence": "high",
+      "evidence": "\"supports the `rg --json` output format\""
+    },
+    {
+      "claim": "Tree-sitter can validate claims only inside the reported hunk or line window, which is useful for confirming that a finding is anchored to the claimed diff location.",
+      "source": "https://tree-sitter.github.io/tree-sitter/cli/query.html",
+      "confidence": "high",
+      "evidence": "\"Only the matches that are fully contained within the provided row range will be returned.\""
+    },
+    {
+      "claim": "Tree-sitter queries support textual constraints over captures, so they can verify that the matched AST node is the exact symbol or method named in the review comment.",
+      "source": "https://tree-sitter.github.io/tree-sitter/using-parsers/queries/3-predicates-and-directives.html",
+      "confidence": "high",
+      "evidence": "\"#eq?\", \"#match?\", \"#any-of?\", \"#is?\""
+    },
+    {
+      "claim": "If you embed raw Tree-sitter yourself, predicate handling is not automatic; use the CLI or a higher-level binding, or implement predicate evaluation yourself.",
+      "source": "https://tree-sitter.github.io/tree-sitter/using-parsers/queries/3-predicates-and-directives.html",
+      "confidence": "high",
+      "evidence": "\"Predicates and directives are not handled directly by the Tree-sitter C library.\""
+    },
+    {
+      "claim": "ast-grep is a strong structural verifier because it supports relational and logical AST rules plus exact source ranges.",
+      "source": "https://ast-grep.github.io/reference/rule.html",
+      "confidence": "high",
+      "evidence": "\"inside\", \"has\", \"precedes\", \"follows\" ... and a `RangeObject` with `line` and `column`."
+    },
+    {
+      "claim": "ast-grep can run ad hoc verifier rules and emit structured JSON, which makes it practical as a subprocess backend behind an LLM reviewer.",
+      "source": "https://ast-grep.github.io/guide/rule-config.html",
+      "confidence": "high",
+      "evidence": "\"ast-grep scan --rule\" and \"--inline-rules\" are documented as ways to run a rule."
+    },
+    {
+      "claim": "ast-grep has a native JSON mode with per-match file and range data, so it can return verifier output in a pipeline-friendly format.",
+      "source": "https://ast-grep.github.io/guide/tools/json.html",
+      "confidence": "high",
+      "evidence": "\"`--json` will output results in JSON format\" and the match object includes `file` and `range`."
+    },
+    {
+      "claim": "Semgrep supports both one-off claim checks and reusable repo-specific verifier rules.",
+      "source": "https://semgrep.dev/docs/running-rules",
+      "confidence": "high",
+      "evidence": "\"Use the `-e` or `--pattern` flags for ephemeral rules\" and \"`semgrep scan --config PATH/TO/RULE_NAME.YAML`\"."
+    },
+    {
+      "claim": "Semgrep is well-suited for 'missing validation' or 'untrusted input reaches dangerous sink' checks because it models sources, sanitizers, propagators, and sinks.",
+      "source": "https://semgrep.dev/docs/writing-rules/data-flow/taint-mode/overview",
+      "confidence": "high",
+      "evidence": "\"If tainted data is not ... sanitized, taint analysis reports a finding whenever tainted data reaches ... a sink.\""
+    },
+    {
+      "claim": "Semgrep’s own guidance for reducing false positives is to tune noisy rules and use richer analyses rather than trusting a raw rule set unchanged.",
+      "source": "https://semgrep.dev/docs/kb/semgrep-code/reduce-false-positives",
+      "confidence": "high",
+      "evidence": "\"Fork and customize that rule\" and \"These analyses both reduce false positives\"."
+    },
+    {
+      "claim": "Semgrep’s dataflow engine is useful but not a proof system; it explicitly expects both false positives and false negatives, so it should be one verifier stage, not the whole gate.",
+      "source": "https://semgrep.dev/docs/writing-rules/data-flow/data-flow-overview",
+      "confidence": "high",
+      "evidence": "\"Expect both false positives and false negatives.\""
+    },
+    {
+      "claim": "Recent academic code-review evaluation is already using deterministic validators: CodeFuse-CR-Bench combines rule-based location/syntax checks with model-based quality judgments.",
+      "source": "https://arxiv.org/abs/2509.14856",
+      "confidence": "high",
+      "evidence": "\"combines rule-based checks for location and syntax with model-based judgments\""
+    },
+    {
+      "claim": "CodeRabbit publicly documents that it runs third-party static-analysis tools in a sandbox and attaches structured file/line issue output to reviews.",
+      "source": "https://docs.coderabbit.ai/tools/tools",
+      "confidence": "high",
+      "evidence": "\"All tool runs are done in a secure sandboxed execution environment\" and output includes \"file, line number, and the issue detected.\""
+    },
+    {
+      "claim": "CodeRabbit has deterministic noise filters before review output: it excludes files that do not benefit from review, such as generated code, binaries, and lock files.",
+      "source": "https://docs.coderabbit.ai/configuration/path-instructions",
+      "confidence": "high",
+      "evidence": "\"Path filters exclude files that don’t benefit from review: lock files, binaries, and generated code.\""
+    },
+    {
+      "claim": "CodeRabbit exposes syntax-aware review customization, which is relevant if you want repo-specific deterministic checks alongside the LLM.",
+      "source": "https://docs.coderabbit.ai/configuration/path-instructions",
+      "confidence": "high",
+      "evidence": "\"AST-based instructions\" are described as \"precise, syntax-aware review instructions.\""
+    },
+    {
+      "claim": "CodeRabbit’s tool layer is broad enough to act as a verification backend, and it explicitly includes `ast-grep` and `Semgrep` among supported tools.",
+      "source": "https://docs.coderabbit.ai/reference/tools-reference",
+      "confidence": "high",
+      "evidence": "\"CodeRabbit supports integration with 50 static analysis tools\" and lists both \"Ast-grep\" and \"Semgrep\"."
+    },
+    {
+      "claim": "CodeRabbit’s documented tool integrations use deterministic safety controls such as sandboxing, JSON output, and fail-closed behavior for unsafe configs.",
+      "source": "https://docs.coderabbit.ai/tools/golangci-lint",
+      "confidence": "high",
+      "evidence": "\"We run golangci-lint in a sandbox with `--out-format=json`\" and \"we fail-closed.\""
+    },
+    {
+      "claim": "Qodo documents an explicit deterministic verification layer before enabling direct application of review suggestions.",
+      "source": "https://qodo-merge-docs.qodo.ai/core-abilities/code_validation/",
+      "confidence": "high",
+      "evidence": "\"Localization\" checks that line numbers and surrounding code match repo code, and \"tree-sitter syntax processing will not throw an error.\""
+    },
+    {
+      "claim": "Qodo also does a second-pass suggestion filter after validation by scoring and dropping incorrect suggestions.",
+      "source": "https://qodo-merge-docs.qodo.ai/core-abilities/self_reflection/",
+      "confidence": "high",
+      "evidence": "\"filter out incorrect ones (with a score of 0)\" and `suggestions_score_threshold = 0`."
+    },
+    {
+      "claim": "Qodo’s public benchmark is useful directional evidence because it measures precision/recall/F1 on injected, verified issues, but it is still vendor-authored.",
+      "source": "https://www.qodo.ai/ai-code-review-benchmark/",
+      "confidence": "medium",
+      "evidence": "\"Results are based on precision, recall, and F1 score\" and it uses \"injecting verified bugs and best practice violations.\""
+    },
+    {
+      "claim": "GitHub Copilot’s public docs frame false-positive handling primarily as human verification because hallucinated review comments can occur.",
+      "source": "https://docs.github.com/en/copilot/responsible-use/code-review",
+      "confidence": "high",
+      "evidence": "\"may highlight problems ... that do not exist\" and comments \"should be carefully reviewed\"."
+    },
+    {
+      "claim": "GitHub Copilot reviews are advisory rather than blocking, and the main documented tuning knob is repo/path-specific custom instructions.",
+      "source": "https://docs.github.com/en/copilot/how-tos/use-copilot-agents/request-a-code-review/use-code-review",
+      "confidence": "high",
+      "evidence": "Custom instructions can be repo-wide or \"path specific\" and Copilot reviews \"will not block merging changes.\""
+    }
+  ],
+  "artifacts": [
+    {
+      "type": "code_sample",
+      "path": "artifact:rg-evidence-check",
+      "description": "Exact-text and context anchoring for a claimed review finding before any AST work",
+      "content": "rg -n --no-heading --fixed-strings \"sanitize_input(data)\" src/app.py\nrg -n -C 2 --no-heading \"sanitize_input|validate_input|escape\" src/app.py\nrg --json --fixed-strings \"sanitize_input(data)\" src/app.py"
+    },
+    {
+      "type": "code_sample",
+      "path": "artifact:tree-sitter-structural-window",
+      "description": "Scoped Tree-sitter query that only validates the claim inside the reported hunk",
+      "content": "# claim.scm\n(call_expression\n  function: (member_expression\n    object: (identifier) @obj\n    property: (property_identifier) @method)\n  arguments: (arguments) @args)\n(#eq? @obj \"schema\")\n(#eq? @method \"parse\")\n\n# validate only the claimed window\ntree-sitter query claim.scm src/handler.ts --containing-row-range 40:80 -c"
+    },
+    {
+      "type": "code_sample",
+      "path": "artifact:semgrep-taint-rule",
+      "description": "Property-based verifier for a common review claim: unvalidated request data reaches a dangerous sink",
+      "content": "rules:\n  - id: req-body-to-shell-without-validation\n    languages: [javascript, typescript]\n    severity: ERROR\n    mode: taint\n    pattern-sources:\n      - pattern: req.body\n    pattern-sanitizers:\n      - pattern-either:\n          - pattern: schema.parse(req.body)\n          - pattern: validate(req.body)\n    pattern-sinks:\n      - pattern: exec(...)\n\n# run\nsemgrep scan --config rules/req-body-to-shell-without-validation.yml src/"
+    },
+    {
+      "type": "code_sample",
+      "path": "artifact:ast-grep-structural-rule",
+      "description": "AST-backed verifier for a precise structural issue that an LLM reviewer might flag",
+      "content": "id: no-await-in-promise-all\nlanguage: TypeScript\nrule:\n  pattern: Promise.all($A)\n  has:\n    pattern: await $_\n    stopBy: end\n\n# run\nast-grep scan --rule rules/no-await-in-promise-all.yml src/ --json=stream"
+    },
+    {
+      "type": "data",
+      "path": "artifact:recommended-verification-order",
+      "description": "Suggested deterministic gating order for an LLM code-review verifier",
+      "content": "[\n  {\"stage\": 1, \"gate\": \"exact_text_anchor\", \"backend\": \"ripgrep\", \"drop_when\": \"quoted code or symbol is absent from the claimed file/hunk\"},\n  {\"stage\": 2, \"gate\": \"structural_match\", \"backend\": \"tree-sitter or ast-grep\", \"drop_when\": \"the claimed AST shape is absent in the reported location\"},\n  {\"stage\": 3, \"gate\": \"property_check\", \"backend\": \"Semgrep or ast-grep custom rule\", \"drop_when\": \"a sanitizer/guard exists or the claimed source-to-sink flow does not exist\"},\n  {\"stage\": 4, \"gate\": \"scope_filter\", \"backend\": \"path filters\", \"drop_when\": \"the file is generated, binary, lock/build output, or otherwise intentionally ignored\"},\n  {\"stage\": 5, \"gate\": \"presentation_threshold\", \"backend\": \"review UI or policy layer\", \"drop_when\": \"the claim is unverifiable, contradicted, or below the confidence threshold\"}\n]"
+    }
+  ],
+  "gaps": [
+    "No public GitHub Copilot documentation was found that describes deterministic post-generation verification backends comparable to Qodo’s documented location and syntax checks.",
+    "No public CodeRabbit document was found that fully explains its LLM comment suppression/ranking algorithm; the public record is clearer about tool integrations, path filters, profiles, and sandboxing than about final comment selection.",
+    "I did not find a peer-reviewed paper from 2024-2026 that directly compares `ripgrep`, `tree-sitter`, `ast-grep`, and `Semgrep` as post-generation verifiers for pull-request review comments under one benchmark.",
+    "The strongest public academic evidence I found is about evaluation methodology, not detailed production architecture; deployment details for enterprise tools remain partially opaque."
+  ],
+  "escalations": [
+    "Vendor benchmarks from Qodo and similar sources are directionally useful but biased; do not treat them as proof that a verifier design will generalize to your repos without replaying your own historical PRs.",
+    "Absence-style checks such as 'no input validation' are not binary truths unless you maintain a repo-specific catalog of validators, sanitizers, wrapper utilities, and framework conventions.",
+    "If you use raw Tree-sitter bindings, predicate/directive handling is your responsibility; using the CLI, ast-grep, or a higher-level binding is safer for a production verifier.",
+    "Filtering generated code, lock files, binaries, and build artifacts is not optional; vendors like CodeRabbit do this up front because validating LLM findings on noisy files wastes both review budget and verifier capacity."
+  ]
+}

@@ -1,14 +1,15 @@
 # kubeLLM 🤖
 
-KubeLLM is an LLM-based multi-agent framework that manages your kubernetes clusters all on its own. KubeLLM takes in ONE formatted prompt and it will automatically diagnose and apply fixes to Kubernetes configuration issues. 
+KubeLLM is an LLM-based multi-agent framework that manages your kubernetes clusters all on its own. KubeLLM takes in ONE formatted prompt and it will automatically diagnose and apply fixes to Kubernetes configuration issues.
+
+**Full documentation index:** [docs/README.md](docs/README.md) (architecture, agent iteration loop, operations, history).
 
 ---
 
-### Lab vs Local Execution
-- The lab server is the reference environment for full Kubernetes troubleshooting runs.
-- Local development is also supported if the same prerequisites are available on your machine.
-- The runner and the FastAPI RAG server now default to the same local URL: `http://127.0.0.1:8000`.
-- Only set `RAG_API_URL` when the runner must talk to a server on another host.
+### Execution environment
+- Develop and run tests from your machine; use Docker, Kubernetes (for example Minikube), pgvector, and the RAG API as described below.
+- The runner and the FastAPI RAG server default to the same URL on loopback: `http://127.0.0.1:8000`.
+- Set `RAG_API_URL` or `--rag-api-url` when the RAG API runs on another host.
 
 ---
 
@@ -57,7 +58,7 @@ For Ollama-only configs, `OPENAI_API_KEY` is not required unless you explicitly 
 
 You also need:
 - Docker available on the machine running tests
-- A working Kubernetes environment (Minikube on the lab server, or locally if you want to run the full path off-lab)
+- A working Kubernetes environment (for example Minikube) when running cluster-backed tests
 - PostgreSQL/pgvector running locally on port `5532`
 - The RAG API server running and reachable by the client code
 
@@ -90,7 +91,7 @@ bash start_apiserver.sh
 ```
 
 RAG API URL precedence:
-- `python debug_assistant_latest/runner.py ... --rag-api-url <url>`
+- `python3 debug_assistant_latest/runner.py ... --rag-api-url <url>`
 - `RAG_API_URL` from the shell or `.env`
 - default `http://127.0.0.1:${RAG_SERVER_PORT:-8000}`
 
@@ -100,12 +101,12 @@ Server bind defaults:
 
 Set `RAG_SERVER_HOST=0.0.0.0` only when you intentionally want remote clients to reach the API server. If you do that from another machine, also set `RAG_API_URL` (or `--rag-api-url`) to the externally reachable URL.
 
-#### Lab Server Workflow
-When the runner and the API server are both on the lab server, leave `RAG_API_URL` unset and use the default loopback URL. The normal flow is:
+#### Typical workflow
+When the runner and API server run on the same machine, leave `RAG_API_URL` unset unless you intentionally split them. A typical flow:
 
 1. Go to the repo:
 ```bash
-cd ~/kubellm-minh-testing
+cd /path/to/KubeLLM-main
 ```
 
 2. Start the RAG API server:
@@ -149,12 +150,12 @@ python3 debug_assistant_latest/runner.py wrong_port --embedder text-embedding-3-
 
 Use a specific Minikube profile:
 ```bash
-python3 debug_assistant_latest/runner.py wrong_port --minikube-profile minh
+python3 debug_assistant_latest/runner.py wrong_port --minikube-profile minikube
 ```
 
 Point the runner at a non-default API server:
 ```bash
-python3 debug_assistant_latest/runner.py wrong_port --rag-api-url http://lab-host:8000
+python3 debug_assistant_latest/runner.py wrong_port --rag-api-url http://other-host:8000
 ```
 
 Run with automatic backup and teardown:
@@ -181,9 +182,15 @@ cat .local/test_runs/*/wrong_port/stdout.log
 cat .local/test_runs/*/wrong_port/stderr.log
 ```
 
-Find the latest runs:
+Find the latest run directory:
 ```bash
-ls -lt .local/test_runs/ | head -5
+python3 debug_assistant_latest/runner.py --latest-run
+```
+
+Structured diagnosis and history:
+```bash
+python3 debug_assistant_latest/runner.py --diagnose-last
+python3 debug_assistant_latest/runner.py --dashboard
 ```
 
 #### Cleanup
