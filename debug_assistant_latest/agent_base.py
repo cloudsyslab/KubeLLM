@@ -4,6 +4,7 @@ class Agent:
         self.config = config
         self.agent = None
         self.prompt = ""
+        self.runtime_context = {}
 
     def prepareAgent(self):
         """Prepare the assistant based on the config file."""

@@ -13,7 +13,9 @@ Key features:
 """
 
 import json
+import os
 import re
+import shlex
 import subprocess
 import time
 from dataclasses import dataclass, field, asdict
@@ -100,6 +102,25 @@ def load_ground_truth(config: Dict[str, Any]) -> Optional[Dict[str, Any]]:
     return config.get("ground-truth")
 
 
+def _split_windows_command(cmd: str) -> Optional[List[str]]:
+    """Return argv for simple Windows commands that do not need a shell."""
+    try:
+        argv = shlex.split(cmd, posix=True)
+    except ValueError:
+        return None
+
+    if not argv:
+        return None
+
+    for token in argv:
+        if token in {"|", "||", "&&", ";", "&", "<", ">", ">>"}:
+            return None
+        if re.match(r"^\d*(?:>>?|<|>&).*$", token):
+            return None
+
+    return argv
+
+
 def execute_command(cmd: str, timeout_s: float = 30) -> tuple[str, int, Optional[str]]:
     """Execute a shell command and return (stdout, exit_code, error).
 
@@ -114,13 +135,38 @@ def execute_command(cmd: str, timeout_s: float = 30) -> tuple[str, int, Optional
         - error_message: Error string if command failed, None otherwise
     """
     try:
-        result = subprocess.run(
-            cmd,
-            shell=True,
-            capture_output=True,
-            text=True,
-            timeout=timeout_s,
-        )
+        run_kwargs = {
+            "capture_output": True,
+            "text": True,
+            "timeout": timeout_s,
+            "encoding": "utf-8",
+            "errors": "replace",
+        }
+        if os.name == "nt":
+            argv = _split_windows_command(cmd)
+            if argv is not None:
+                result = subprocess.run(
+                    argv,
+                    shell=False,
+                    **run_kwargs,
+                )
+            else:
+                result = subprocess.run(
+                    [
+                        "powershell",
+                        "-NoProfile",
+                        "-Command",
+                        f"& {cmd}; if ($LASTEXITCODE -ne $null) {{ exit $LASTEXITCODE }}",
+                    ],
+                    shell=False,
+                    **run_kwargs,
+                )
+        else:
+            result = subprocess.run(
+                cmd,
+                shell=True,
+                **run_kwargs,
+            )
         return (
             result.stdout.strip(),
             result.returncode,

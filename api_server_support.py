@@ -1,5 +1,5 @@
 from dataclasses import dataclass, field
-from typing import Optional
+from typing import List, Optional
 
 import requests
 from bs4 import BeautifulSoup
@@ -7,6 +7,8 @@ from bs4 import BeautifulSoup
 from runtime_config import OPENAI_PROVIDER, OLLAMA_PROVIDER, build_embedder
 
 DEFAULT_ASSISTANT_MESSAGE = "Upload a doc and ask me questions..."
+EMBEDDING_CHUNK_SIZE_CHARS = 4000
+EMBEDDING_CHUNK_OVERLAP_CHARS = 400
 
 
 @dataclass
@@ -53,7 +55,75 @@ def scrape_url_to_document(url: str):
         tag.decompose()
 
     text = soup.get_text(separator="\n", strip=True)
-    return Document(content=text, metadata={"source": url, "title": title})
+    return Document(content=text, meta_data={"source": url, "title": title})
+
+
+def _chunk_text_for_embedding(
+    text: str,
+    *,
+    max_chars: int = EMBEDDING_CHUNK_SIZE_CHARS,
+    overlap_chars: int = EMBEDDING_CHUNK_OVERLAP_CHARS,
+) -> List[str]:
+    normalized = text.strip()
+    if not normalized:
+        return []
+    if max_chars <= 0:
+        raise ValueError("max_chars must be positive")
+    if overlap_chars < 0 or overlap_chars >= max_chars:
+        raise ValueError("overlap_chars must be non-negative and smaller than max_chars")
+
+    chunks: List[str] = []
+    start = 0
+    text_length = len(normalized)
+    min_breakpoint = max_chars // 2
+
+    while start < text_length:
+        end = min(text_length, start + max_chars)
+        if end < text_length:
+            newline_break = normalized.rfind("\n", start, end)
+            if newline_break >= start + min_breakpoint:
+                end = newline_break
+            else:
+                space_break = normalized.rfind(" ", start, end)
+                if space_break >= start + min_breakpoint:
+                    end = space_break
+
+        chunk = normalized[start:end].strip()
+        if chunk:
+            chunks.append(chunk)
+
+        if end >= text_length:
+            break
+
+        next_start = max(0, end - overlap_chars)
+        if next_start <= start:
+            next_start = end
+        start = next_start
+
+    return chunks
+
+
+def _prepare_documents_for_embedding(document) -> List:
+    from phi.document import Document
+
+    chunks = _chunk_text_for_embedding(document.content)
+    if len(chunks) <= 1:
+        return [document]
+
+    base_meta = dict(getattr(document, "meta_data", {}) or {})
+    prepared_documents = []
+    for index, chunk in enumerate(chunks, start=1):
+        meta_data = dict(base_meta)
+        meta_data["chunk_index"] = index
+        meta_data["chunk_count"] = len(chunks)
+        prepared_documents.append(
+            Document(
+                content=chunk,
+                name=document.name,
+                meta_data=meta_data,
+            )
+        )
+    return prepared_documents
 
 
 def load_knowledge_document(
@@ -94,4 +164,4 @@ def load_knowledge_document(
             embedder=embedder,
         )
     )
-    kb.load_documents([scrape_url_to_document(url)])
+    kb.load_documents(_prepare_documents_for_embedding(scrape_url_to_document(url)))

@@ -1,0 +1,90 @@
+{
+  "status": "complete",
+  "summary": "Research across Anthropic, CrewAI, AG2, LangChain, OpenAI Agents/Swarm, Ollama, OpenCode, and A2A shows a clean split between isolated-worker patterns and handoff/team patterns. Your current review flow matches the isolated-worker family: a local supervisor delegates bounded tasks, workers return structured findings, and synthesis stays local. The smallest portable abstraction is therefore a repo-owned worker execution adapter with static worker profiles, dynamic task invocations, and local schema validation after every run. Official docs are useful but vendor-biased: each runtime presents its own primitives as the default, and none of the named runtimes exposes a shared backend-neutral worker-result contract.",
+  "findings": [
+    {
+      "claim": "The repo already points toward a backend-agnostic worker contract, but the execution step is still hardcoded to Codex CLI.",
+      "source": "C:/Users/minhl/OneDrive/Desktop/llmsandbox/skills/review/SKILL.md | C:/Users/minhl/OneDrive/Desktop/llmsandbox/codex-prompts/review-skill/review-skill-2026-03-25.md",
+      "confidence": "high",
+      "evidence": "`skills/review/SKILL.md` launches `codex exec --full-auto --json`; the local design note calls for an 'input prompt + output schema' abstraction."
+    },
+    {
+      "claim": "Anthropic's subagent model is a strong conceptual match for review workers because it uses isolated contexts, configurable tools/permissions, and optional concurrent background execution.",
+      "source": "https://code.claude.com/docs/en/sub-agents",
+      "confidence": "high",
+      "evidence": "Docs say each subagent has 'its own context window'; background subagents 'run concurrently'."
+    },
+    {
+      "claim": "Anthropic agent teams are a different, heavier backend pattern intended for peer coordination rather than simple worker fan-out.",
+      "source": "https://code.claude.com/docs/en/agent-teams",
+      "confidence": "high",
+      "evidence": "A 'team lead' coordinates teammates that 'communicate directly', and the comparison table marks token cost as 'Higher'."
+    },
+    {
+      "claim": "CrewAI's task interface is a useful template for a portable worker contract because it separates task invocation from agent identity and includes native schema and validation hooks.",
+      "source": "https://docs.crewai.com/en/concepts/tasks",
+      "confidence": "high",
+      "evidence": "Task fields include `expected_output`, `agent`, `context`, `output_json`, `output_pydantic`, `guardrail`, and `guardrail_max_retries`."
+    },
+    {
+      "claim": "AG2 defines delegation primarily as transition logic, where tools can return routing targets plus updated context, which is richer than a one-shot review worker needs.",
+      "source": "https://docs.ag2.ai/latest/docs/user-guide/advanced-concepts/orchestration/group-chat/handoffs/",
+      "confidence": "medium",
+      "evidence": "Docs show `ReplyResult(message, target, context_variables)` and say AG2 has 'four main ways' to define handoffs."
+    },
+    {
+      "claim": "LangChain's subagent pattern is closer to this review workflow than its handoff pattern: subagents are stateless and isolated, while handoffs are state-driven conversational transfers.",
+      "source": "https://docs.langchain.com/oss/python/langchain/multi-agent/subagents | https://docs.langchain.com/oss/python/langchain/multi-agent/handoffs | https://docs.langchain.com/oss/python/langchain/multi-agent/index",
+      "confidence": "high",
+      "evidence": "Subagents are 'stateless' with a 'clean context window'; the overview says they add 'one extra call' in exchange for 'centralized control'."
+    },
+    {
+      "claim": "OpenAI's Agents SDK explicitly separates handoffs from nested worker execution, which supports using a worker-as-tool adapter instead of making handoffs the universal abstraction.",
+      "source": "https://openai.github.io/openai-agents-python/handoffs/",
+      "confidence": "high",
+      "evidence": "Docs expose `input_type`, `on_handoff`, and `input_filter`, and recommend `Agent.as_tool(parameters=...)` for a 'nested specialist'."
+    },
+    {
+      "claim": "Swarm is a good conceptual minimum for agent orchestration, but it remains handoff-centric and does not provide a portable worker-result contract by itself.",
+      "source": "https://github.com/openai/swarm",
+      "confidence": "high",
+      "evidence": "Swarm exposes two primitives, `Agent`s and handoffs, and is 'stateless between calls'."
+    },
+    {
+      "claim": "Alternative execution backends are already viable: Claude Code CLI exposes machine-readable JSON transport, Ollama exposes JSON-schema-constrained output, and OpenCode exposes provider/model and subagent permission controls.",
+      "source": "https://code.claude.com/docs/en/common-workflows | https://docs.ollama.com/capabilities/structured-outputs | https://opencode.ai/docs/agents/",
+      "confidence": "high",
+      "evidence": "Anthropic examples use `--output-format json`; Ollama says use `format` with JSON schema; OpenCode documents `provider/model-id` and `permission.task`."
+    },
+    {
+      "claim": "A2A is the clearest current protocol-level option for cross-agent interoperability, but it solves a broader service-to-service problem than the minimal backend adapter needed here.",
+      "source": "https://a2a-protocol.org/latest/topics/what-is-a2a/ | https://a2a-protocol.org/latest/specification/",
+      "confidence": "medium",
+      "evidence": "A2A standardizes agent communication, supports long-running tasks, and defines Agent Cards, tasks, messages, artifacts, and streaming."
+    }
+  ],
+  "artifacts": [
+    {
+      "type": "file_created",
+      "path": "C:/Users/minhl/OneDrive/Desktop/llmsandbox/discoveries/multi-agent-backend-abstraction-2026-03-25.md",
+      "description": "Full discovery report with comparison matrix, recommendation, quick wins, and source list.",
+      "content": "Saved research report covering repo context, framework comparisons, recommended adapter layers, and work to avoid."
+    },
+    {
+      "type": "code_sample",
+      "path": "worker-backend-interface",
+      "description": "Minimal portable worker abstraction that preserves the current supervisor-plus-worker review flow while allowing backend swaps.",
+      "content": "type WorkerProfile = {\n  id: string\n  description: string\n  systemPrompt?: string\n  model?: string\n  tools?: string[]\n  permissions?: Record<string, string>\n  backendHints?: {\n    runtime?: string\n    effort?: 'low' | 'medium' | 'high'\n    background?: boolean\n  }\n}\n\ntype WorkerRequest = {\n  workerProfileId: string\n  prompt: string\n  outputSchema: object\n  contextFiles?: string[]\n  attachments?: string[]\n  timeoutMs?: number\n  metadata?: Record<string, unknown>\n}\n\ntype WorkerResult<T = unknown> = {\n  status: 'complete' | 'partial' | 'failed'\n  structured: T | null\n  rawText: string\n  events?: unknown[]\n  usage?: {\n    inputTokens?: number\n    outputTokens?: number\n    durationMs?: number\n    costUsd?: number\n  }\n  error?: {\n    code: string\n    message: string\n    retryable: boolean\n  }\n}\n\ninterface WorkerBackend {\n  name: string\n  capabilities(): {\n    nativeSchema: boolean\n    streaming: boolean\n    background: boolean\n    isolatedContext: boolean\n    toolsConfigurable: boolean\n    permissionsConfigurable: boolean\n  }\n  execute<T>(request: WorkerRequest): Promise<WorkerResult<T>>\n}"
+    }
+  ],
+  "gaps": [
+    "I did not find an official shared worker-result schema used across Anthropic, OpenAI Agents, LangChain, CrewAI, and AG2; each runtime defines its own native primitives.",
+    "Several official docs are living documentation without explicit publication dates, so recency had to be inferred from current version markers like CrewAI 1.11.1, AG2 0.11.4, and Agents SDK 0.13.1.",
+    "Claude Code and OpenCode docs clearly document agent configuration and JSON transport, but they do not document a backend-neutral typed worker output contract comparable to your current Codex schema."
+  ],
+  "escalations": [
+    "Decide whether the first abstraction target is only isolated workers or also handoff/team semantics; those are materially different APIs and should not be conflated.",
+    "Make local schema validation mandatory even when a backend advertises native schema support; this is the main trust boundary that preserves portability.",
+    "If remote worker services or cross-organization agent interoperability are near-term goals, scope A2A as a second protocol layer instead of folding that complexity into the first adapter."
+  ]
+}

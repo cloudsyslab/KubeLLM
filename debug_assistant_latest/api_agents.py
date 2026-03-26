@@ -6,6 +6,7 @@ from rag_api import (
     initialize_assistant,
     start_new_run,
 )
+from prompt_helpers import get_runtime_execution_guidance
 from utils import traverseRelevantFiles
 
 
@@ -49,6 +50,9 @@ class AgentAPI(Agent):
                 + " "
                 + self.config["knowledge-prompt"]["system-prompt"]
             )
+            runtime_guidance = get_runtime_execution_guidance()
+            if runtime_guidance:
+                self.prompt += " " + runtime_guidance
 
             for relevantFileType in ["deployment", "application", "service", "dockerfile"]:
                 self.prompt = traverseRelevantFiles(self.config, relevantFileType, self.prompt)
