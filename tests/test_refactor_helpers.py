@@ -23,15 +23,21 @@ sys.path.insert(0, str(DEBUG_DIR))
 if not hasattr(inspect, "getargspec"):
     inspect.getargspec = inspect.getfullargspec
 
-from debug_assistant_latest.config_merge import load_config_with_overrides, merge_config_overrides
+from debug_assistant_latest.config_merge import (
+    apply_runner_llm_env_defaults,
+    load_config_with_overrides,
+    merge_config_overrides,
+)
 from debug_assistant_latest.ground_truth import CheckStatus, execute_command, run_all_checks, run_check, validate_ground_truth_config
 from debug_assistant_latest.report import AgentMetrics, TestSummary, generate_aggregate_report, load_test_summary
-from debug_assistant_latest.runner import (
-    TestResult,
-    _best_effort_configure_console_streams,
+from debug_assistant_latest.cli import (
     _apply_repeat_overrides,
     _build_repeat_payload,
     _run_repeat_queue,
+)
+from debug_assistant_latest.executor import (
+    TestResult,
+    _best_effort_configure_console_streams,
     _safe_flush_stream,
     _safe_write_to_stream,
     cmd_run_single,
@@ -49,13 +55,7 @@ import debug_assistant_latest.prompt_helpers as prompt_helpers
 from debug_assistant_latest import rag_api
 from debug_assistant_latest import rag_server_config
 from debug_assistant_latest.better_shell import BetterShellTools
-from runtime_progress import (
-    BlockedCommandThresholdError,
-    ProgressWriter,
-    get_wrong_port_debug_commands,
-    get_wrong_port_verification_commands,
-    is_wrong_port_windows_case,
-)
+from runtime_progress import BlockedCommandThresholdError, ProgressWriter
 from debug_assistant_latest.verification_base import parse_verification_status, print_verification_status
 
 
@@ -77,6 +77,78 @@ class ConfigMergeTests(unittest.TestCase):
 
             self.assertEqual(config["debug-agent"]["model"], "gpt-4o")
             self.assertTrue(config["test-directory"].startswith(tmpdir))
+
+    def test_apply_runner_llm_env_defaults_use_ollama_fills_unset_fields(self):
+        import argparse
+
+        args = argparse.Namespace(
+            api_model=None,
+            debug_model=None,
+            verification_model=None,
+            embedder=None,
+            embedder_provider=None,
+        )
+        with patch.dict(
+            os.environ,
+            {
+                "KUBELLM_USE_OLLAMA": "1",
+                "KUBELLM_OLLAMA_CHAT_MODEL": "llama3.2:3b",
+                "KUBELLM_OLLAMA_EMBEDDER": "nomic-embed-text",
+            },
+            clear=False,
+        ):
+            apply_runner_llm_env_defaults(args)
+        self.assertEqual(args.api_model, "llama3.2:3b")
+        self.assertEqual(args.debug_model, "llama3.2:3b")
+        self.assertEqual(args.verification_model, "llama3.2:3b")
+        self.assertEqual(args.embedder, "nomic-embed-text")
+        self.assertEqual(args.embedder_provider, "ollama")
+
+    def test_apply_runner_llm_env_defaults_cli_wins_over_use_ollama(self):
+        import argparse
+
+        args = argparse.Namespace(
+            api_model="custom-api",
+            debug_model=None,
+            verification_model=None,
+            embedder=None,
+            embedder_provider=None,
+        )
+        with patch.dict(
+            os.environ,
+            {
+                "KUBELLM_USE_OLLAMA": "1",
+                "KUBELLM_OLLAMA_CHAT_MODEL": "llama3.2:3b",
+                "KUBELLM_OLLAMA_EMBEDDER": "nomic-embed-text",
+            },
+            clear=False,
+        ):
+            apply_runner_llm_env_defaults(args)
+        self.assertEqual(args.api_model, "custom-api")
+        self.assertEqual(args.debug_model, "llama3.2:3b")
+
+    def test_apply_runner_llm_env_defaults_per_field_env(self):
+        import argparse
+
+        args = argparse.Namespace(
+            api_model=None,
+            debug_model=None,
+            verification_model=None,
+            embedder=None,
+            embedder_provider=None,
+        )
+        with patch.dict(
+            os.environ,
+            {
+                "KUBELLM_USE_OLLAMA": "",
+                "KUBELLM_DEBUG_MODEL": "mistral:7b",
+                "KUBELLM_EMBEDDER_PROVIDER": "ollama",
+            },
+            clear=False,
+        ):
+            apply_runner_llm_env_defaults(args)
+        self.assertEqual(args.debug_model, "mistral:7b")
+        self.assertEqual(args.embedder_provider, "ollama")
 
 
 class RagServerConfigTests(unittest.TestCase):
@@ -431,34 +503,6 @@ class ProgressWriterTests(unittest.TestCase):
         self.assertEqual(len(lines), 60)
         records = [json.loads(line) for line in lines]
         self.assertEqual(sorted(record["seq"] for record in records), list(range(1, 61)))
-
-
-class WrongPortRuntimeTests(unittest.TestCase):
-    def test_is_wrong_port_windows_case_requires_windows_and_case_name(self):
-        config = {"test-name": "wrong_port"}
-
-        with patch("runtime_progress.os.name", "nt"):
-            self.assertTrue(is_wrong_port_windows_case(config))
-            self.assertFalse(is_wrong_port_windows_case({"test-name": "other_case"}))
-
-        with patch("runtime_progress.os.name", "posix"):
-            self.assertFalse(is_wrong_port_windows_case(config))
-
-    def test_wrong_port_command_builders_include_fix_and_exec_checks(self):
-        config = {
-            "test-name": "wrong_port",
-            "test-directory": "C:\\repo\\debug_assistant_latest\\troubleshooting\\wrong_port\\",
-            "yaml-file-name": "wrong_port.yaml",
-        }
-
-        debug_commands = get_wrong_port_debug_commands(config)
-        verification_commands = get_wrong_port_verification_commands(config)
-
-        self.assertIn("containerPort: 8765", debug_commands[1])
-        self.assertTrue(any("kubectl wait --for=condition=Ready pod/kube-wrong-port" in command for command in debug_commands))
-        self.assertTrue(any("urllib.request.urlopen('http://localhost:8765/')" in command for command in debug_commands))
-        self.assertIn("Get-Content 'C:\\repo\\debug_assistant_latest\\troubleshooting\\wrong_port\\wrong_port.yaml'", verification_commands[0])
-        self.assertTrue(any("kubectl exec kube-wrong-port -- python3 -c" in command for command in verification_commands))
 
 
 class AssistantIntegrationTests(unittest.TestCase):
@@ -1014,8 +1058,8 @@ class RunnerTests(unittest.TestCase):
                     self._alive = False
 
             base_run_id = "repeat-123"
-            with patch("debug_assistant_latest.runner.Process", FakeProcess), patch(
-                "debug_assistant_latest.runner._repeat_iteration_worker", fake_worker
+            with patch("debug_assistant_latest.cli.Process", FakeProcess), patch(
+                "debug_assistant_latest.cli._repeat_iteration_worker", fake_worker
             ):
                 exit_code = _run_repeat_queue(args, "single", base_run_id, tmp_base)
 
@@ -1066,8 +1110,8 @@ class RunnerTests(unittest.TestCase):
                     pass
 
             base_run_id = "repeat-stall"
-            with patch("debug_assistant_latest.runner.Process", FakeProcess), patch(
-                "debug_assistant_latest.runner.Queue", FakeQueue
+            with patch("debug_assistant_latest.cli.Process", FakeProcess), patch(
+                "debug_assistant_latest.cli.Queue", FakeQueue
             ):
                 exit_code = _run_repeat_queue(args, "single", base_run_id, tmp_base)
 
@@ -1121,17 +1165,17 @@ class RunnerTests(unittest.TestCase):
                 finished_at="2026-01-01T00:00:01",
             )
 
-            with patch("debug_assistant_latest.runner.run_single_test", return_value=fake_result), patch(
-                "debug_assistant_latest.runner.save_run_config"
+            with patch("debug_assistant_latest.executor.run_single_test", return_value=fake_result), patch(
+                "debug_assistant_latest.executor.save_run_config"
             ) as save_run_config_mock, patch(
-                "debug_assistant_latest.runner.save_test_summary"
+                "debug_assistant_latest.executor.save_test_summary"
             ) as save_test_summary_mock, patch(
-                "debug_assistant_latest.runner.generate_aggregate_report",
+                "debug_assistant_latest.executor.generate_aggregate_report",
                 return_value=types.SimpleNamespace(passed=1, failed=0, errors=0),
             ) as generate_report_mock, patch(
-                "debug_assistant_latest.runner.save_aggregate_report"
+                "debug_assistant_latest.executor.save_aggregate_report"
             ) as save_aggregate_mock, patch(
-                "debug_assistant_latest.runner.print_console_summary"
+                "debug_assistant_latest.executor.print_console_summary"
             ) as print_console_mock:
                 exit_code = cmd_run_single(args, "wrong_port")
 
@@ -1166,12 +1210,12 @@ class RunnerTests(unittest.TestCase):
                 ],
             }
 
-            with patch("debug_assistant_latest.runner.run_preflight", return_value=preflight_result), patch(
-                "debug_assistant_latest.runner.print_preflight_result"
+            with patch("debug_assistant_latest.executor.run_preflight", return_value=preflight_result), patch(
+                "debug_assistant_latest.executor.print_preflight_result"
             ), patch(
-                "debug_assistant_latest.runner.run_single_test"
+                "debug_assistant_latest.executor.run_single_test"
             ) as run_single_mock, patch(
-                "debug_assistant_latest.runner.print_console_summary"
+                "debug_assistant_latest.executor.print_console_summary"
             ):
                 exit_code = cmd_run_single(args, "wrong_port")
 
@@ -1254,8 +1298,167 @@ class ApiServerRouteTests(unittest.TestCase):
             },
         )
 
+    def test_healthz_returns_ok_and_server_info(self):
+        client = TestClient(api_server.app)
+        response = client.get("/healthz/")
+        self.assertEqual(response.status_code, 200)
+        body = response.json()
+        self.assertEqual(body["status"], "ok")
+        self.assertEqual(body["server_info"]["api_version"], rag_server_config.RAG_API_VERSION)
+
+    def test_read_root_returns_html(self):
+        client = TestClient(api_server.app)
+        response = client.get("/")
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("text/html", response.headers.get("content-type", ""))
+        self.assertIn("Local RAG API", response.text)
+
+    def test_chat_history_returns_session_messages(self):
+        client = TestClient(api_server.app)
+        response = client.get("/chat_history/")
+        self.assertEqual(response.status_code, 200)
+        messages = response.json()["messages"]
+        self.assertTrue(messages)
+        self.assertEqual(messages[0]["role"], "assistant")
+
+    def test_new_run_resets_session(self):
+        client = TestClient(api_server.app)
+        api_server.session_state.rag_assistant = object()
+        api_server.session_state.llm_model = "gpt-4o"
+        response = client.post("/new_run/")
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json(), {"status": "New run started"})
+        self.assertIsNone(api_server.session_state.rag_assistant)
+        self.assertIsNone(api_server.session_state.llm_model)
+
+    def test_ask_requires_initialized_assistant(self):
+        client = TestClient(api_server.app)
+        response = client.post("/ask/", data={"prompt": "hello"})
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(response.json()["detail"], "Agent not initialized")
+
+    def test_upload_md_requires_initialized_assistant(self):
+        client = TestClient(api_server.app)
+        response = client.post(
+            "/upload_md/",
+            files={"file": ("x.md", b"# x", "text/markdown")},
+        )
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(response.json()["detail"], "Agent not initialized")
+
+    def test_upload_pdf_requires_initialized_assistant(self):
+        client = TestClient(api_server.app)
+        response = client.post(
+            "/upload_pdf/",
+            files={"file": ("x.pdf", b"%PDF-1.4", "application/pdf")},
+        )
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(response.json()["detail"], "Agent not initialized")
+
+    def test_add_url_requires_initialized_assistant(self):
+        client = TestClient(api_server.app)
+        response = client.post("/add_url/", data={"url": "https://example.com"})
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(response.json()["detail"], "Agent not initialized")
+
+    def test_add_url_requires_embeddings_model(self):
+        client = TestClient(api_server.app)
+        api_server.session_state.rag_assistant = object()
+        api_server.session_state.embeddings_model = None
+        response = client.post("/add_url/", data={"url": "https://example.com"})
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(response.json()["detail"], "Embeddings model not initialized")
+
+    def test_clear_knowledge_base_requires_embeddings_model(self):
+        client = TestClient(api_server.app)
+        api_server.session_state.rag_assistant = object()
+        api_server.session_state.embeddings_model = None
+        response = client.post("/clear_knowledge_base/")
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(response.json()["detail"], "Embeddings model not initialized")
+
+    def test_add_url_success_calls_load_knowledge_document(self):
+        client = TestClient(api_server.app)
+        api_server.session_state.rag_assistant = object()
+        api_server.session_state.embeddings_model = "text-embedding-3-small"
+        api_server.session_state.embeddings_provider = "openai"
+        with patch("api_server.load_knowledge_document") as load_mock:
+            response = client.post("/add_url/", data={"url": "https://example.com/doc"})
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["status"], "URL added")
+        load_mock.assert_called_once_with(
+            "https://example.com/doc",
+            "local_rag_documents_text-embedding-3-small",
+            "text-embedding-3-small",
+            api_server.DB_URL,
+            embeddings_provider="openai",
+        )
+
+    def test_upload_md_invokes_load_documents_when_reader_returns_docs(self):
+        from phi.document import Document
+
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+
+            def path_ctor(*parts):
+                if len(parts) == 1 and isinstance(parts[0], str) and parts[0].startswith("./test_knowledge/"):
+                    return tmp_path / parts[0].replace("./test_knowledge/", "")
+                return Path(*parts)
+
+            load_documents = MagicMock()
+            api_server.session_state.rag_assistant = types.SimpleNamespace(
+                knowledge=types.SimpleNamespace(load_documents=load_documents)
+            )
+            doc = Document(content="# Hello", meta_data={})
+            with patch("api_server.Path", side_effect=path_ctor), patch("api_server.TextReader") as tr_mock:
+                tr_mock.return_value.read.return_value = [doc]
+                client = TestClient(api_server.app)
+                response = client.post(
+                    "/upload_md/",
+                    files={"file": ("note.md", b"# Hello\n", "text/markdown")},
+                )
+            self.assertEqual(response.status_code, 200)
+            self.assertEqual(response.json()["status"], "Markdown file uploaded")
+            load_documents.assert_called_once()
+            tr_mock.return_value.read.assert_called_once()
+            read_path = tr_mock.return_value.read.call_args[0][0]
+            self.assertEqual(read_path, tmp_path / "note.md")
+
+    def test_upload_pdf_invokes_load_documents_when_reader_returns_docs(self):
+        from phi.document import Document
+
+        load_documents = MagicMock()
+        api_server.session_state.rag_assistant = types.SimpleNamespace(
+            knowledge=types.SimpleNamespace(load_documents=load_documents)
+        )
+        doc = Document(content="pdf text", meta_data={})
+        with patch("api_server.PDFReader") as reader_mock:
+            reader_mock.return_value.read.return_value = [doc]
+            client = TestClient(api_server.app)
+            response = client.post(
+                "/upload_pdf/",
+                files={"file": ("x.pdf", b"%PDF-1.4 fake", "application/pdf")},
+            )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["status"], "PDF uploaded")
+        load_documents.assert_called_once()
+        reader_mock.return_value.read.assert_called_once()
+
+    def test_global_exception_handler_returns_json_detail(self):
+        client = TestClient(api_server.app, raise_server_exceptions=False)
+        with patch("api_server.build_server_info", side_effect=RuntimeError("kaput")):
+            response = client.get("/healthz/")
+        self.assertEqual(response.status_code, 500)
+        self.assertIn("kaput", response.json()["detail"])
+
 
 class RagApiTests(unittest.TestCase):
+    def setUp(self):
+        rag_api.reset_compatibility_cache()
+
+    def tearDown(self):
+        rag_api.reset_compatibility_cache()
+
     def _server_info_response(self, **overrides):
         response = MagicMock()
         response.ok = True
@@ -1321,6 +1524,31 @@ class RagApiTests(unittest.TestCase):
                 rag_api.initialize_assistant("gpt-5-mini")
 
         request_mock.assert_not_called()
+
+    def test_consecutive_api_calls_fetch_server_info_once_per_base_url(self):
+        rag_api.reset_compatibility_cache()
+        fixed_base = "http://127.0.0.1:8765"
+        expected_info_url = f"{fixed_base}{rag_api.SERVER_INFO_PATH}"
+
+        info_response = self._server_info_response()
+        post_response = MagicMock()
+        post_response.raise_for_status.return_value = None
+        post_response.json.return_value = {"status": "ok"}
+
+        get_urls = []
+
+        def capture_get(url, **kwargs):
+            get_urls.append(url)
+            return info_response
+
+        with patch.object(rag_api, "get_base_url", return_value=fixed_base), patch(
+            "debug_assistant_latest.rag_api.requests.get", side_effect=capture_get
+        ), patch("debug_assistant_latest.rag_api.requests.request", return_value=post_response):
+            rag_api.initialize_assistant("gpt-5-mini")
+            rag_api.ask_question("hello")
+
+        info_gets = [u for u in get_urls if u == expected_info_url]
+        self.assertEqual(len(info_gets), 1, f"expected one GET {expected_info_url}, got {get_urls}")
 
 
 class SingleAgentTests(unittest.TestCase):

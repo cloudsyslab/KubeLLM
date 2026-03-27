@@ -7,8 +7,8 @@ import sys, os
 from metrics_db import store_metrics_entry, calculate_cost, calculate_totals
 import time
 from pathlib import Path
-from typing import Optional, Dict, Any
-from runtime_progress import PhaseHeartbeat, WrongPortSuccessProbe
+from typing import Any, Dict, Optional, Tuple
+from runtime_progress import PhaseHeartbeat
 
 # Use relative path from script location
 SCRIPT_DIR = Path(__file__).parent.absolute()
@@ -106,6 +106,61 @@ def _run_observed_phase(runtime_context: Optional[Dict[str, Any]], phase: str, a
     return result
 
 
+def _debug_agent_transcript(debug_agent) -> str:
+    for attr in ("response", "knowledgeResponse"):
+        text = getattr(debug_agent, attr, None)
+        if text:
+            return str(text)
+    return "Debug agent completed execution"
+
+
+def _run_verification_phase_after_debug(
+    config: dict,
+    runtime_context: Optional[Dict[str, Any]],
+    debug_agent,
+    debug_metrics: dict,
+) -> Optional[Tuple[dict, Any]]:
+    """
+    Run AgentVerification_v2 after the debug phase.
+    Returns (verification_metrics, verification_status) or None if debug timed out (verification skipped).
+    """
+    if getattr(debug_agent, "_last_timeout", False):
+        return None
+
+    print("\n" + "=" * 80)
+    print("STARTING VERIFICATION PHASE")
+    print("=" * 80 + "\n")
+
+    verification_agent = AgentVerification_v2("verification-agent", config)
+    verification_agent.runtime_context = runtime_context or {}
+    verification_agent.setupAgent()
+    verification_agent.debugAgentResponse = _debug_agent_transcript(debug_agent)
+
+    verification_start_time = time.perf_counter()
+    verification_metrics = _run_observed_phase(runtime_context, "verification", verification_agent.askQuestion)
+    verification_end_time = time.perf_counter()
+
+    print(f"\nFinal Task Status: {'SUCCESS' if verification_agent.verificationStatus else 'FAILURE'}")
+    print(f"Debug Agent Self-Report: {'SUCCESS' if debug_agent.debugStatus else 'FAILURE'}")
+    print(
+        f"Verification Agent Report: {'VERIFIED' if verification_agent.verificationStatus else 'FAILED' if verification_agent.verificationStatus is False else 'UNKNOWN'}\n"
+    )
+
+    v_props = getattr(verification_agent, "agentProperties", None) or config.get("verification-agent") or {}
+    verification_metrics = _normalize_metrics(
+        config,
+        verification_metrics,
+        "verification",
+        model=v_props.get("model"),
+        task_status=-1 if getattr(verification_agent, "_last_timeout", False) else None,
+    )
+    _finalize_metrics(verification_metrics, verification_end_time - verification_start_time)
+    store_metrics_entry(db_path, debug_metrics, verification_metrics.get("task_status"))
+    store_metrics_entry(db_path, verification_metrics, verification_metrics.get("task_status"))
+
+    return verification_metrics, verification_agent.verificationStatus
+
+
 def allStepsAtOnce(
     configFile=None,
     config_overrides: Optional[Dict[str, Any]] = None,
@@ -124,7 +179,7 @@ def allStepsAtOnce(
                               e.g. {"debug-agent.model": "gpt-4o"}
     """
 
-    #read config to initilize enviornment
+    # Read config to initialize environment
     config = _load_runtime_config(configFile, config_overrides)
     _write_progress(runtime_context, "setup_start", test_name=config.get("test-name"))
     try:
@@ -133,14 +188,10 @@ def allStepsAtOnce(
         _write_progress(runtime_context, "setup_end", test_name=config.get("test-name"), status="error", error=str(exc))
         raise
     _write_progress(runtime_context, "setup_end", test_name=config.get("test-name"), status="ok")
-    #initilize needed LLMs
+    # Initialize needed LLMs
     apiAgent = AgentAPI("api-agent" , config)
     debugAgent = AgentDebug("debug-agent" , config)
-    success_probe = WrongPortSuccessProbe(config, runtime_context.get("progress_writer") if runtime_context else None)
-    debugAgent.runtime_context = {
-        **(runtime_context or {}),
-        "success_probe": success_probe,
-    }
+    debugAgent.runtime_context = runtime_context or {}
     #set up the LLMs
     apiAgent.setupAgent()
     debugAgent.setupAgent()
@@ -169,52 +220,16 @@ def allStepsAtOnce(
             "debug_metrics": debug_metrics,
             "verification_metrics": None,
         }
-    
-    # call the verification agent to determine SUCCESS or FAILURE
-    #-----------------------------------#
-    print("\n" + "="*80)
-    print("STARTING VERIFICATION PHASE")
-    print("="*80 + "\n")
-    
-    verificationAgent = AgentVerification_v2("verification-agent", config)
-    verificationAgent.runtime_context = runtime_context or {}
-    verificationAgent.setupAgent()
-    
-    # Pass the debug agent's response to the verification agent
-    verificationAgent.debugAgentResponse = debugAgent.response if debugAgent.response else "Debug agent completed execution"
-    
-    # Run verification
-    verification_start_time = time.perf_counter()
-    verification_metrics = _run_observed_phase(runtime_context, "verification", verificationAgent.askQuestion)
-    verification_end_time = time.perf_counter()
-    
-    # If verification returns None (error or unknown), fall back to debug agent's self-reported status
-    #if verificationAgent.verificationStatus is None:
-    #    print("⚠ Warning: Verification agent could not determine status. We consider the task FAILED.")
-    #    task_status = False
-    
-    print(f"\nFinal Task Status: {'SUCCESS' if verificationAgent.verificationStatus else 'FAILURE'}")
-    print(f"Debug Agent Self-Report: {'SUCCESS' if debugAgent.debugStatus else 'FAILURE'}")
-    print(f"Verification Agent Report: {'VERIFIED' if verificationAgent.verificationStatus else 'FAILED' if verificationAgent.verificationStatus is False else 'UNKNOWN'}\n")
 
-    #-----------------------------------#
-    
-    verification_metrics = _normalize_metrics(
-        config,
-        verification_metrics,
-        "verification",
-        model=verificationAgent.agentProperties.get("model") if verificationAgent.agentProperties else None,
-        task_status=-1 if getattr(verificationAgent, "_last_timeout", False) else None,
+    verification_out = _run_verification_phase_after_debug(
+        config, runtime_context, debugAgent, debug_metrics
     )
-    _finalize_metrics(verification_metrics, verification_end_time - verification_start_time)
-
-    # Store metrics entry into the database
-    store_metrics_entry(db_path, debug_metrics, verification_metrics.get("task_status"))
-    store_metrics_entry(db_path, verification_metrics, verification_metrics.get("task_status"))
+    assert verification_out is not None
+    verification_metrics, verification_status = verification_out
     printFinishMessage()
 
     return {
-        "status": verificationAgent.verificationStatus,
+        "status": verification_status,
         "debug_metrics": debug_metrics,
         "verification_metrics": verification_metrics,
     }
@@ -237,7 +252,7 @@ def stepByStep(
             configFile: Path to config_step.json file
             config_overrides: Optional dict of dotted-path overrides
     """
-    #read config to initilize enviornment
+    # Read config to initialize environment
     config = _load_runtime_config(configFile, config_overrides)
     _write_progress(runtime_context, "setup_start", test_name=config.get("test-name"))
     try:
@@ -246,9 +261,9 @@ def stepByStep(
         _write_progress(runtime_context, "setup_end", test_name=config.get("test-name"), status="error", error=str(exc))
         raise
     _write_progress(runtime_context, "setup_end", test_name=config.get("test-name"), status="ok")
-    #initilize needed LLMs
+    # Initialize needed LLMs
     apiAgent = AgentAPI("api-agent" , config)
-    debugAgent = AgentDebugStepByStep("debug-agent" , config)
+    debugAgent = AgentDebugStepByStep("debug-agent", config)
     debugAgent.runtime_context = runtime_context or {}
     #set up the LLMs
     apiAgent.setupAgent()
@@ -269,13 +284,27 @@ def stepByStep(
         task_status=-1 if getattr(debugAgent, "_last_timeout", False) else _status_to_task_status(debugAgent.debugStatus),
     )
     _finalize_metrics(debug_metrics, debug_end_time - debug_start_time)
-    store_metrics_entry(db_path, debug_metrics, debug_metrics.get("task_status"))
+
+    if getattr(debugAgent, "_last_timeout", False):
+        store_metrics_entry(db_path, debug_metrics, debug_metrics.get("task_status"))
+        printFinishMessage()
+        return {
+            "status": False,
+            "debug_metrics": debug_metrics,
+            "verification_metrics": None,
+        }
+
+    verification_out = _run_verification_phase_after_debug(
+        config, runtime_context, debugAgent, debug_metrics
+    )
+    assert verification_out is not None
+    verification_metrics, verification_status = verification_out
     printFinishMessage()
 
     return {
-        "status": debugAgent.debugStatus is True,
+        "status": verification_status,
         "debug_metrics": debug_metrics,
-        "verification_metrics": None,
+        "verification_metrics": verification_metrics,
     }
 
 
@@ -292,7 +321,7 @@ def singleAgentApproach(
             configFile: Path to config_step.json file
             config_overrides: Optional dict of dotted-path overrides
     """
-    #read config to initilize enviornment
+    # Read config to initialize environment
     config = _load_runtime_config(configFile, config_overrides)
     _write_progress(runtime_context, "setup_start", test_name=config.get("test-name"))
     try:
@@ -301,15 +330,9 @@ def singleAgentApproach(
         _write_progress(runtime_context, "setup_end", test_name=config.get("test-name"), status="error", error=str(exc))
         raise
     _write_progress(runtime_context, "setup_end", test_name=config.get("test-name"), status="ok")
-    #initilize needed LLMs
+    # Initialize needed LLMs
     agent = SingleAgent("single-agent", config)
-    agent.runtime_context = {
-        **(runtime_context or {}),
-        "success_probe": WrongPortSuccessProbe(
-            config,
-            runtime_context.get("progress_writer") if runtime_context else None,
-        ),
-    }
+    agent.runtime_context = runtime_context or {}
     #set up the LLMs
     agent.setupAgent()
 
@@ -317,22 +340,36 @@ def singleAgentApproach(
     debug_start_time = time.perf_counter()
     debug_metrics = _run_observed_phase(runtime_context, "debug", agent.askQuestion)
     debug_end_time = time.perf_counter()
+    debug_model = getattr(agent, "_resolved_debug_model_name", None) or (
+        agent.agentProperties.get("model") if agent.agentProperties else None
+    )
     debug_metrics = _normalize_metrics(
         config,
         debug_metrics,
         "debug",
-        model=agent.agentProperties.get("model") if agent.agentProperties else None,
+        model=debug_model,
         task_status=-1 if getattr(agent, "_last_timeout", False) else _status_to_task_status(agent.debugStatus),
     )
     _finalize_metrics(debug_metrics, debug_end_time - debug_start_time)
-    store_metrics_entry(db_path, debug_metrics, debug_metrics.get("task_status"))
-    #agent.knowledgeResponse
-    #agent.takeAction()
+
+    if getattr(agent, "_last_timeout", False):
+        store_metrics_entry(db_path, debug_metrics, debug_metrics.get("task_status"))
+        printFinishMessage()
+        return {
+            "status": False,
+            "debug_metrics": debug_metrics,
+            "verification_metrics": None,
+        }
+
+    verification_out = _run_verification_phase_after_debug(config, runtime_context, agent, debug_metrics)
+    assert verification_out is not None
+    verification_metrics, verification_status = verification_out
+    printFinishMessage()
 
     return {
-        "status": agent.debugStatus is True,
+        "status": verification_status,
         "debug_metrics": debug_metrics,
-        "verification_metrics": None,
+        "verification_metrics": verification_metrics,
     }
 
 

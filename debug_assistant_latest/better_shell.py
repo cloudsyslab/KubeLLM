@@ -4,7 +4,7 @@ from collections import OrderedDict
 from pathlib import Path
 from typing import Any, Optional, Union
 
-from runtime_progress import BlockedCommandThresholdError, DebugSolvedShortCircuit
+from runtime_progress import BlockedCommandThresholdError
 
 try:
     from phi.tools import Toolkit
@@ -75,7 +75,6 @@ class BetterShellTools(Toolkit):
         *,
         progress_writer=None,
         phase: Optional[str] = None,
-        success_probe=None,
         blocked_threshold: Optional[int] = None,
     ):
         super().__init__(name="shell_tools")
@@ -86,7 +85,6 @@ class BetterShellTools(Toolkit):
 
         self.progress_writer = progress_writer
         self.phase = phase
-        self.success_probe = success_probe
         self.blocked_threshold = blocked_threshold
         self._consecutive_blocked = 0
 
@@ -287,15 +285,5 @@ class BetterShellTools(Toolkit):
             exit_code=result.returncode,
             stdout_preview=output[:400],
         )
-
-        if self.success_probe is not None:
-            solved_reason = self.success_probe.maybe_check(normalized_command)
-            if solved_reason:
-                self._write_progress(
-                    "debug_short_circuit",
-                    command=normalized_command,
-                    reason=solved_reason,
-                )
-                raise DebugSolvedShortCircuit(solved_reason)
 
         return output

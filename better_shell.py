@@ -1,4 +1,5 @@
 """Compatibility shim for the updated shell toolkit implementation."""
+# Canonical module: debug_assistant_latest.better_shell
 
 import sys
 from pathlib import Path

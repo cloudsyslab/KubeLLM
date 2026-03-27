@@ -7,8 +7,12 @@ without modifying the original JSON files.
 
 import copy
 import json
+import os
 from pathlib import Path
-from typing import Dict, Any, Optional
+from typing import Any, Dict, Optional
+
+DEFAULT_OLLAMA_CHAT_MODEL = "llama3.2:3b"
+DEFAULT_OLLAMA_EMBEDDER = "nomic-embed-text"
 
 
 # Mapping from CLI argument names to config dotted paths
@@ -47,6 +51,74 @@ def merge_config_overrides(base_config: dict, overrides: dict) -> dict:
         target[keys[-1]] = value
 
     return merged
+
+
+def _env_flag(name: str) -> bool:
+    value = os.environ.get(name)
+    if value is None:
+        return False
+    return value.strip().lower() in {"1", "true", "yes", "on"}
+
+
+def apply_runner_llm_env_defaults(args) -> list[str]:
+    """
+    Fill unset model / embedder CLI fields from environment variables.
+
+    Precedence: explicit CLI args (non-None) always win.
+
+    Per-field env (optional): KUBELLM_API_MODEL, KUBELLM_DEBUG_MODEL,
+    KUBELLM_VERIFICATION_MODEL, KUBELLM_EMBEDDER, KUBELLM_EMBEDDER_PROVIDER.
+
+    Bulk local mode: KUBELLM_USE_OLLAMA=1 sets any still-unset chat/embedder
+    fields to local Ollama defaults (avoids OpenAI when quota is exhausted).
+
+    Returns:
+        Human-readable list of applied defaults (for logging).
+    """
+    applied: list[str] = []
+
+    def _set_from_env(attr: str, env_name: str) -> None:
+        raw = os.environ.get(env_name)
+        if raw is None or not str(raw).strip():
+            return
+        if getattr(args, attr, None) is not None:
+            return
+        setattr(args, attr, str(raw).strip())
+        applied.append(f"{attr}={getattr(args, attr)!r} ({env_name})")
+
+    _set_from_env("api_model", "KUBELLM_API_MODEL")
+    _set_from_env("debug_model", "KUBELLM_DEBUG_MODEL")
+    _set_from_env("verification_model", "KUBELLM_VERIFICATION_MODEL")
+    _set_from_env("embedder", "KUBELLM_EMBEDDER")
+    if getattr(args, "embedder_provider", None) is None:
+        prov = os.environ.get("KUBELLM_EMBEDDER_PROVIDER")
+        if prov and str(prov).strip():
+            p = str(prov).strip().lower()
+            if p in {"openai", "ollama"}:
+                args.embedder_provider = p
+                applied.append(f"embedder_provider={p!r} (KUBELLM_EMBEDDER_PROVIDER)")
+
+    if not _env_flag("KUBELLM_USE_OLLAMA"):
+        return applied
+
+    chat = os.environ.get("KUBELLM_OLLAMA_CHAT_MODEL", DEFAULT_OLLAMA_CHAT_MODEL).strip()
+    emb = os.environ.get("KUBELLM_OLLAMA_EMBEDDER", DEFAULT_OLLAMA_EMBEDDER).strip()
+
+    for attr, val in (
+        ("api_model", chat),
+        ("debug_model", chat),
+        ("verification_model", chat),
+        ("embedder", emb),
+    ):
+        if getattr(args, attr, None) is None:
+            setattr(args, attr, val)
+            applied.append(f"{attr}={val!r} (KUBELLM_USE_OLLAMA)")
+
+    if getattr(args, "embedder_provider", None) is None:
+        args.embedder_provider = "ollama"
+        applied.append("embedder_provider='ollama' (KUBELLM_USE_OLLAMA)")
+
+    return applied
 
 
 def build_overrides_from_args(args) -> dict:

@@ -40,7 +40,7 @@ from timeout_helpers import withTimeout
 
 SCRIPT_DIR = Path(__file__).resolve().parent
 REPO_ROOT = SCRIPT_DIR.parent
-load_dotenv(REPO_ROOT / ".env")
+load_dotenv(REPO_ROOT / ".env", override=True)
 
 from rag_api import (
     BASE_URL,
@@ -121,7 +121,7 @@ def update_debug_agent_model(json_file_path: str, new_model: str) -> None:
 
 
 def setUpEnvironment(config):
-    """ Setup the enviornment using the set up commands specified in the config"""
+    """Set up the environment using the setup commands specified in the config."""
     # Run setup commands from repo root so repo-root-relative paths work regardless of CWD.
     env = os.environ.copy()
     minikube_profile = config.get("minikube-profile")
