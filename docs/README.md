@@ -4,9 +4,10 @@ Progressive disclosure: start here, then open linked docs for depth. **Agents:**
 
 ## Reading order
 
-1. **[agent-loop.md](agent-loop.md)** — Autonomous iteration loop (preflight → run → read `summary.json` → diagnose → fix → pytest → re-run), runner flags, failure patterns, output layout. **Primary agent runbook.**
-2. **[ARCHITECTURE.md](ARCHITECTURE.md)** — System purpose, stack, component map, execution flow, file responsibilities.
-3. **[operations.md](operations.md)** — Preflight, runner usage, results, teardown, orchestrator scripts. Complements the root [README.md](../README.md).
+1. **[benchmark-philosophy.md](benchmark-philosophy.md)** — Why KubeLLM exists, what it measures, what you must not do when modifying agents or test cases. **Read before changing anything.**
+2. **[agent-loop.md](agent-loop.md)** — Autonomous iteration loop (preflight → run → read `summary.json` → diagnose → fix → pytest → re-run), runner flags, failure patterns, output layout. **Primary agent runbook.**
+3. **[ARCHITECTURE.md](ARCHITECTURE.md)** — System purpose, stack, component map, execution flow, file responsibilities.
+4. **[operations.md](operations.md)** — Preflight, runner usage, results, teardown, orchestrator scripts. Complements the root [README.md](../README.md).
 
 ## Reference and history
 

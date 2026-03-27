@@ -10,6 +10,7 @@ KubeLLM is an LLM-based multi-agent framework for automated Kubernetes troublesh
 
 | Doc | Use when |
 |-----|----------|
+| **[docs/benchmark-philosophy.md](docs/benchmark-philosophy.md)** | **Read first** before modifying agents, prompts, test cases, or verification logic |
 | **[docs/README.md](docs/README.md)** | Index of all documentation; human vs agent reading order |
 | **[docs/agent-loop.md](docs/agent-loop.md)** | **Canonical** preflight → run → read results → diagnose → fix → pytest → re-run loop, runner commands, failure patterns |
 | **[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)** | Components, data flow, key file responsibilities |

@@ -30,8 +30,6 @@ def build_tool_kwargs(runtime_context=None, phase=None):
     }
     if phase in {"debug", "verification"}:
         kwargs["blocked_threshold"] = runtime_context.get("blocked_threshold", 3)
-    if phase == "debug" and runtime_context.get("success_probe") is not None:
-        kwargs["success_probe"] = runtime_context["success_probe"]
     return {key: value for key, value in kwargs.items() if value is not None}
 
 

@@ -8,13 +8,7 @@ from phi.vectordb.pgvector import PgVector, SearchType
 from agent_base import Agent
 from agent_helpers import agent_debug_logging_enabled, build_llm_agent, build_model, build_tool_kwargs
 from better_shell import BetterShellTools
-from ground_truth import run_all_checks
-from runtime_progress import (
-    BlockedCommandThresholdError,
-    DebugSolvedShortCircuit,
-    get_wrong_port_debug_commands,
-    is_wrong_port_windows_case,
-)
+from runtime_progress import BlockedCommandThresholdError
 from runtime_config import DB_URL, build_embedder, resolve_embedder_config
 from prompt_helpers import (
     TOOL_USAGE_RULES,
@@ -24,30 +18,6 @@ from prompt_helpers import (
     get_case_specific_guidance,
 )
 from timeout_helpers import timeout, withTimeout
-
-
-def _run_wrong_port_windows_debug_fallback(config, runtime_context):
-    tool = BetterShellTools(**build_tool_kwargs(runtime_context, phase="debug"))
-    transcript = []
-
-    for command in get_wrong_port_debug_commands(config):
-        try:
-            output = tool.run_shell_command(command=command)
-        except DebugSolvedShortCircuit as exc:
-            transcript.append(f"$ {command}\n{exc}".strip())
-            return True, "\n\n".join(transcript + ["<|SOLVED|>"])
-        except BlockedCommandThresholdError as exc:
-            transcript.append(f"$ {command}\nError: {exc}".strip())
-            return False, "\n\n".join(transcript + ["<|FAILED|>"])
-
-        transcript.append(f"$ {command}\n{output}".strip())
-        if isinstance(output, str) and output.startswith("Error:"):
-            return False, "\n\n".join(transcript + ["<|FAILED|>"])
-
-    gt_result = run_all_checks(config)
-    if gt_result and gt_result.passed:
-        return True, "\n\n".join(transcript + ["wrong_port deterministic ground truth passed", "<|SOLVED|>"])
-    return False, "\n\n".join(transcript + ["wrong_port deterministic ground truth failed", "<|FAILED|>"])
 
 
 class AgentDebug(Agent):
@@ -88,20 +58,6 @@ class AgentDebug(Agent):
     def askQuestion(self):
         """Ask the formatted prepared question to the debug agent."""
         try:
-            if is_wrong_port_windows_case(self.config):
-                solved, report = _run_wrong_port_windows_debug_fallback(self.config, self.runtime_context)
-                self.response = report
-                self.debugStatus = solved
-                return {
-                    "test_case": self.config["test-name"],
-                    "model": self.agentProperties.get("model"),
-                    "agent_type": "debug",
-                    "input_tokens": 0,
-                    "output_tokens": 0,
-                    "total_tokens": 0,
-                    "task_status": int(solved),
-                }
-
             prompt = f"Perform the actions suggested here: \n{self.agentAPIResponse}\n"
             prompt += (
                 "\nThe relevant configuration file is located in this path: "
@@ -122,18 +78,6 @@ class AgentDebug(Agent):
                 agent_type="debug",
                 task_status=int(self.debugStatus),
             )
-        except DebugSolvedShortCircuit as exc:
-            self.response = f"{exc}\n<|SOLVED|>"
-            self.debugStatus = True
-            return {
-                "test_case": self.config["test-name"],
-                "model": self.agentProperties.get("model"),
-                "agent_type": "debug",
-                "input_tokens": 0,
-                "output_tokens": 0,
-                "total_tokens": 0,
-                "task_status": 1,
-            }
         except BlockedCommandThresholdError as exc:
             self.response = f"{exc}\n<|FAILED|>"
             self.debugStatus = False
@@ -250,17 +194,6 @@ class AgentDebugStepByStep(Agent):
                 aggregate["total_tokens"] += metrics.get("total_tokens", 0)
                 aggregate["task_status"] = metrics.get("task_status", aggregate["task_status"])
             return aggregate
-        except DebugSolvedShortCircuit:
-            self.debugStatus = True
-            return {
-                "test_case": self.config["test-name"],
-                "model": self.agentProperties.get("model"),
-                "agent_type": "debug",
-                "input_tokens": 0,
-                "output_tokens": 0,
-                "total_tokens": 0,
-                "task_status": 1,
-            }
         except BlockedCommandThresholdError:
             self.debugStatus = False
             return {
@@ -281,6 +214,7 @@ class SingleAgent(Agent):
         super().__init__(agentType, config)
         self.knowledgeResponse = None
         self.debugStatus = None
+        self._resolved_debug_model_name = None
 
     def prepareAgent(self):
         """Prepare the single-agent workflow based on the config file."""
@@ -301,6 +235,7 @@ class SingleAgent(Agent):
                 )
 
             model = build_model(model_name)
+            self._resolved_debug_model_name = model_name
             embedder_config = resolve_embedder_config(
                 embeddings_model=single_agent_config.get("embedder") or api_agent_config.get("embedder"),
                 provider=single_agent_config.get("embedder-provider") or api_agent_config.get("embedder-provider"),
@@ -382,30 +317,25 @@ class SingleAgent(Agent):
             response_content = response.content
             self.knowledgeResponse = response_content
             self.debugStatus = classify_status_from_response(response_content)
+            model_name = self._resolved_debug_model_name or (self.agentProperties or {}).get("model")
+            if not model_name:
+                model_name = self.config.get("debug-agent", {}).get("model")
             return extract_metrics(
                 response,
                 test_case=self.config["test-name"],
                 agent_type="debug",
                 task_status=int(self.debugStatus),
+                model_override=model_name,
             )
-        except DebugSolvedShortCircuit as exc:
-            self.knowledgeResponse = f"{exc}\n<|SOLVED|>"
-            self.debugStatus = True
-            return {
-                "test_case": self.config["test-name"],
-                "model": self.agentProperties.get("model"),
-                "agent_type": "debug",
-                "input_tokens": 0,
-                "output_tokens": 0,
-                "total_tokens": 0,
-                "task_status": 1,
-            }
         except BlockedCommandThresholdError as exc:
             self.knowledgeResponse = f"{exc}\n<|FAILED|>"
             self.debugStatus = False
+            model_name = self._resolved_debug_model_name or (self.agentProperties or {}).get("model")
+            if not model_name:
+                model_name = self.config.get("debug-agent", {}).get("model")
             return {
                 "test_case": self.config["test-name"],
-                "model": self.agentProperties.get("model"),
+                "model": model_name,
                 "agent_type": "debug",
                 "input_tokens": 0,
                 "output_tokens": 0,

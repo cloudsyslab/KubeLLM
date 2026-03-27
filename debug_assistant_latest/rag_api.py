@@ -7,6 +7,9 @@ from rag_server_config import RAG_API_VERSION, compute_repo_signature, resolve_c
 SERVER_INFO_PATH = "/server_info/"
 EXPECTED_REPO_SIGNATURE = compute_repo_signature()
 
+# Process-level cache: base_url (as returned by get_base_url()) -> verified compatible.
+_compatibility_verified: dict[str, bool] = {}
+
 # Backwards-compatible export for older helper scripts. Use get_base_url()
 # inside runtime code so env/CLI overrides are always re-read.
 BASE_URL = resolve_client_base_url()
@@ -14,6 +17,11 @@ BASE_URL = resolve_client_base_url()
 
 def get_base_url(explicit_url: Optional[str] = None) -> str:
     return resolve_client_base_url(explicit_url)
+
+
+def reset_compatibility_cache() -> None:
+    """Clear the RAG API compatibility cache (tests or after switching servers)."""
+    _compatibility_verified.clear()
 
 
 def _extract_error_detail(response: requests.Response) -> str:
@@ -66,6 +74,8 @@ def _load_server_info(base_url: str) -> dict:
 
 
 def _ensure_server_compatible(base_url: str) -> None:
+    if _compatibility_verified.get(base_url):
+        return
     info = _load_server_info(base_url)
     server_version = info.get("api_version")
     server_signature = info.get("repo_signature")
@@ -80,6 +90,7 @@ def _ensure_server_compatible(base_url: str) -> None:
             f"(pid={server_pid}, started_at={server_started_at}, module_path={server_module_path}). "
             "Stop the stale server and restart it with `python start_apiserver.py`."
         )
+    _compatibility_verified[base_url] = True
 
 
 def get_server_info(base_url: Optional[str] = None) -> dict:

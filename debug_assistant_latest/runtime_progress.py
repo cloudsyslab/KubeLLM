@@ -1,18 +1,11 @@
 import json
 import os
-import re
 import threading
 import time
 from contextlib import AbstractContextManager
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Optional
-
-from ground_truth import CheckStatus, run_all_checks
-
-
-class DebugSolvedShortCircuit(RuntimeError):
-    """Raised when deterministic success is reached and the debug loop can stop."""
 
 
 class BlockedCommandThresholdError(RuntimeError):
@@ -116,108 +109,3 @@ class PhaseHeartbeat(AbstractContextManager):
                 seconds_since_last_tool_event=snapshot["last_tool_seconds_ago"],
                 last_command=snapshot["last_command"],
             )
-
-
-def is_wrong_port_windows_case(config: dict) -> bool:
-    return os.name == "nt" and config.get("test-name") == "wrong_port"
-
-
-def _single_quote_for_powershell(value: str) -> str:
-    return value.replace("'", "''")
-
-
-def wrong_port_manifest_path(config: dict) -> Path:
-    return Path(config.get("test-directory") or ".") / config.get("yaml-file-name", "wrong_port.yaml")
-
-
-def get_wrong_port_debug_commands(config: dict) -> list[str]:
-    manifest = _single_quote_for_powershell(str(wrong_port_manifest_path(config)))
-    return [
-        f"Get-Content '{manifest}'",
-        f"(Get-Content '{manifest}') -replace 'containerPort: 8000','containerPort: 8765' | Set-Content '{manifest}'",
-        f"kubectl delete -f '{manifest}' --ignore-not-found",
-        f"kubectl apply -f '{manifest}'",
-        "kubectl wait --for=condition=Ready pod/kube-wrong-port --timeout=90s",
-        "kubectl exec kube-wrong-port -- python3 -c \"import urllib.request; print(urllib.request.urlopen('http://localhost:8765/').getcode())\"",
-    ]
-
-
-def get_wrong_port_verification_commands(config: dict) -> list[str]:
-    manifest = _single_quote_for_powershell(str(wrong_port_manifest_path(config)))
-    return [
-        f"Get-Content '{manifest}'",
-        "kubectl get pod kube-wrong-port -o wide",
-        "kubectl exec kube-wrong-port -- python3 -c \"import urllib.request; print(urllib.request.urlopen('http://localhost:8765/').getcode())\"",
-    ]
-
-
-class WrongPortSuccessProbe:
-    """Deterministic success probe for the Windows wrong_port scenario."""
-
-    _WAIT_PATTERN = re.compile(
-        r"\bkubectl\s+wait\b.*condition=ready.*pod/kube-wrong-port",
-        re.IGNORECASE,
-    )
-    _KUBECTL_MUTATE_PATTERN = re.compile(
-        r"\bkubectl\s+(apply|replace|patch|delete)\b",
-        re.IGNORECASE,
-    )
-
-    def __init__(self, config: dict, progress_writer: Optional[ProgressWriter] = None):
-        self.config = config
-        self.progress_writer = progress_writer
-        self.enabled = (
-            config.get("test-name") == "wrong_port"
-            and bool(config.get("ground-truth"))
-        )
-
-    def maybe_check(self, command: str) -> Optional[str]:
-        if not self.enabled or not self._should_probe(command):
-            return None
-
-        try:
-            result = run_all_checks(self.config)
-        except Exception as exc:
-            if self.progress_writer is not None:
-                self.progress_writer.write_event(
-                    "debug_success_probe_error",
-                    phase="debug",
-                    command=command,
-                    probe="wrong_port_ground_truth",
-                    error=str(exc),
-                )
-            return None
-        if result is None:
-            return None
-
-        failed = [check.name for check in result.checks if check.status != CheckStatus.PASS]
-        if self.progress_writer is not None:
-            self.progress_writer.write_event(
-                "debug_success_probe",
-                phase="debug",
-                command=command,
-                probe="wrong_port_ground_truth",
-                passed=result.passed,
-                failed_checks=failed,
-                total_duration_ms=result.total_duration_ms,
-            )
-
-        if result.passed:
-            return "wrong_port deterministic ground truth passed"
-        return None
-
-    def _should_probe(self, command: str) -> bool:
-        lowered = command.lower()
-
-        if "wrong_port.yaml" in lowered and ("set-content" in lowered or "containerport" in lowered):
-            return True
-
-        if self._KUBECTL_MUTATE_PATTERN.search(command) and (
-            "kube-wrong-port" in lowered or "wrong_port.yaml" in lowered
-        ):
-            return True
-
-        if self._WAIT_PATTERN.search(command):
-            return True
-
-        return False

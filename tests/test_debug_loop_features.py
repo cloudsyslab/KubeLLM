@@ -347,6 +347,7 @@ class LegacyMainReturnShapeTests(unittest.TestCase):
                 self.debugStatus = True
                 self._last_timeout = False
                 self.agentAPIResponse = None
+                self.response = "debug trace"
 
             def setupAgent(self):
                 return None
@@ -365,19 +366,44 @@ class LegacyMainReturnShapeTests(unittest.TestCase):
                     "task_status": 1,
                 }
 
+        class FakeVerification:
+            instances = []
+            verificationStatus = True
+
+            def __init__(self, agent_type, config):
+                FakeVerification.instances.append(self)
+
+            def setupAgent(self):
+                return None
+
+            def askQuestion(self):
+                return {
+                    "test_case": "wrong_port",
+                    "model": "gpt-4o",
+                    "agent_type": "verification",
+                    "input_tokens": 1,
+                    "output_tokens": 1,
+                    "total_tokens": 2,
+                    "task_status": 1,
+                }
+
+        FakeVerification.instances.clear()
+
         with patch.object(legacy_main, "_load_runtime_config", return_value=self.config), patch.object(
             legacy_main, "setUpEnvironment"
         ), patch.object(legacy_main, "printFinishMessage"), patch.object(
             legacy_main, "store_metrics_entry"
         ), patch.object(legacy_main, "AgentAPI", FakeAPI), patch.object(
             legacy_main, "AgentDebugStepByStep", FakeDebug
-        ):
+        ), patch.object(legacy_main, "AgentVerification_v2", FakeVerification):
             result = legacy_main.stepByStep("ignored.json")
 
         self.assertEqual(set(result.keys()), {"status", "debug_metrics", "verification_metrics"})
         self.assertTrue(result["status"])
-        self.assertIsNone(result["verification_metrics"])
+        self.assertIsNotNone(result["verification_metrics"])
         self.assertEqual(result["debug_metrics"]["total_tokens"], 5)
+        self.assertEqual(result["verification_metrics"]["total_tokens"], 2)
+        self.assertEqual(len(FakeVerification.instances), 1)
 
     def test_single_agent_returns_dict_shape(self):
         class FakeSingleAgent:
@@ -385,6 +411,7 @@ class LegacyMainReturnShapeTests(unittest.TestCase):
                 self.agentProperties = {"model": "gpt-4o"}
                 self.debugStatus = True
                 self._last_timeout = False
+                self.response = "single-agent trace"
 
             def setupAgent(self):
                 return None
@@ -400,17 +427,44 @@ class LegacyMainReturnShapeTests(unittest.TestCase):
                     "task_status": 1,
                 }
 
+        class FakeVerification:
+            instances = []
+            verificationStatus = True
+
+            def __init__(self, agent_type, config):
+                FakeVerification.instances.append(self)
+
+            def setupAgent(self):
+                return None
+
+            def askQuestion(self):
+                return {
+                    "test_case": "wrong_port",
+                    "model": "gpt-4o",
+                    "agent_type": "verification",
+                    "input_tokens": 2,
+                    "output_tokens": 1,
+                    "total_tokens": 3,
+                    "task_status": 1,
+                }
+
+        FakeVerification.instances.clear()
+
         with patch.object(legacy_main, "_load_runtime_config", return_value=self.config), patch.object(
             legacy_main, "setUpEnvironment"
-        ), patch.object(legacy_main, "store_metrics_entry"), patch.object(
-            legacy_main, "SingleAgent", FakeSingleAgent
+        ), patch.object(legacy_main, "printFinishMessage"), patch.object(
+            legacy_main, "store_metrics_entry"
+        ), patch.object(legacy_main, "SingleAgent", FakeSingleAgent), patch.object(
+            legacy_main, "AgentVerification_v2", FakeVerification
         ):
             result = legacy_main.singleAgentApproach("ignored.json")
 
         self.assertEqual(set(result.keys()), {"status", "debug_metrics", "verification_metrics"})
         self.assertTrue(result["status"])
-        self.assertIsNone(result["verification_metrics"])
+        self.assertIsNotNone(result["verification_metrics"])
         self.assertEqual(result["debug_metrics"]["total_tokens"], 11)
+        self.assertEqual(result["verification_metrics"]["total_tokens"], 3)
+        self.assertEqual(len(FakeVerification.instances), 1)
 
 
 class PreflightTests(unittest.TestCase):

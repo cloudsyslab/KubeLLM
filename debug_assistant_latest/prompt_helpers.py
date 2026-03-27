@@ -62,11 +62,19 @@ def classify_status_from_response(response_content):
     return False
 
 
-def extract_metrics(response, test_case, agent_type, task_status, include_duration_cost=False):
+def extract_metrics(
+    response,
+    test_case,
+    agent_type,
+    task_status,
+    include_duration_cost=False,
+    *,
+    model_override=None,
+):
     metrics = response.metrics or {}
     entry = {
         "test_case": test_case,
-        "model": response.model,
+        "model": model_override if model_override is not None else response.model,
         "agent_type": agent_type,
         "input_tokens": sum(metrics.get("input_tokens", [])),
         "output_tokens": sum(metrics.get("output_tokens", [])),

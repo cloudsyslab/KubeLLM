@@ -7,7 +7,7 @@ from dotenv import load_dotenv
 
 SCRIPT_DIR = Path(__file__).resolve().parent
 REPO_ROOT = SCRIPT_DIR.parent
-load_dotenv(REPO_ROOT / ".env")
+load_dotenv(REPO_ROOT / ".env", override=True)
 
 RAG_API_VERSION = "2026-03-24"
 RAG_API_URL_ENV = "RAG_API_URL"
