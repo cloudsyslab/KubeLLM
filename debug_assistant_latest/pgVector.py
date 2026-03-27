@@ -4,8 +4,15 @@ from phi.knowledge.website import WebsiteKnowledgeBase
 from phi.vectordb.pgvector import PgVector
 import sys
 
-# SQLAlchemy connection string (with psycopg2 driver)
-DB_URL = "postgresql+psycopg2://ai:ai@localhost:5532/ai"
+try:
+    from runtime_config import DB_URL_PSYCOPG2 as DB_URL
+except ImportError:
+    from pathlib import Path
+
+    _repo_root = Path(__file__).resolve().parents[1]
+    if str(_repo_root) not in sys.path:
+        sys.path.insert(0, str(_repo_root))
+    from runtime_config import DB_URL_PSYCOPG2 as DB_URL
 
 # Create SQLAlchemy engine
 engine = create_engine(DB_URL)

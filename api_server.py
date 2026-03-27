@@ -1,3 +1,10 @@
+"""Local RAG API — load repo .env first so OPENAI_API_KEY matches the file, not a stale shell/user env."""
+from pathlib import Path
+
+from dotenv import load_dotenv
+
+load_dotenv(Path(__file__).resolve().parent / ".env", override=True)
+
 from datetime import datetime, timezone
 from typing import Annotated, List, Optional
 
@@ -10,7 +17,6 @@ from phi.document.reader.text import TextReader
 from phi.utils.log import logger
 from assistant import get_rag_assistant, get_rag_agent  # type: ignore
 import shutil
-from pathlib import Path
 from statement import Model
 from sqlalchemy import create_engine, inspect, text
 from api_server_support import SessionState, knowledge_table_name, load_knowledge_document
@@ -224,19 +230,6 @@ async def clear_knowledge_base():
     except Exception as exc:
         raise HTTPException(status_code=500, detail=f"Could not clear knowledge base: {exc}") from exc
 
-'''
-@app.post("/clear_knowledge_base/")
-async def clear_knowledge_base():
-    """Clear the knowledge base."""
-    if session_state.rag_assistant is None:
-        raise HTTPException(status_code=400, detail="Agent not initialized")
-    
-    if session_state.rag_assistant.knowledge and session_state.rag_assistant.knowledge.vector_db:
-        session_state.rag_assistant.knowledge.vector_db.delete()
-        return {"status": "Knowledge base cleared"}
-    else:
-        raise HTTPException(status_code=400, detail="No knowledge base to clear")
-'''
 
 @app.get("/chat_history/")
 async def get_chat_history():

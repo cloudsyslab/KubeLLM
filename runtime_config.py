@@ -41,7 +41,9 @@ OLLAMA_EMBEDDER_DIMENSIONS = {
 }
 SUPPORTED_EMBEDDER_PROVIDERS = {OPENAI_PROVIDER, OLLAMA_PROVIDER}
 
-load_dotenv(ENV_PATH)
+# Prefer repo .env over a pre-existing OPENAI_API_KEY from the OS/shell (Windows user env
+# often shadows .env when override=False, causing confusing quota errors after key rotation).
+load_dotenv(ENV_PATH, override=True)
 
 
 @dataclass(frozen=True)
