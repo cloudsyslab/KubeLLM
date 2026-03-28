@@ -1,0 +1,1223 @@
+<!DOCTYPE html>
+<html class="dark" lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta content="width=device-width, initial-scale=1.0" name="viewport" />
+  <title>Minh Le // Interactive Dossier</title>
+  <link href="data:," rel="icon" />
+  <script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+  <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@300;400;500;600;700&family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet" />
+  <link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&display=swap" rel="stylesheet" />
+  <script>
+    tailwind.config = {
+      darkMode: "class",
+      theme: {
+        extend: {
+          colors: {
+            primary: "#ffffff",
+            background: "#131313",
+            surface: "#131313",
+            "surface-container-lowest": "#0e0e0e",
+            "surface-container-low": "#1b1b1b",
+            "surface-container": "#1f1f1f",
+            "surface-container-high": "#2a2a2a",
+            "surface-container-highest": "#353535",
+            tertiary: "#9cf0ff",
+            outline: "#919191",
+            "outline-variant": "#474747"
+          },
+          fontFamily: {
+            headline: ["Space Grotesk", "sans-serif"],
+            body: ["Inter", "sans-serif"],
+            label: ["Space Grotesk", "sans-serif"]
+          },
+          boxShadow: {
+            dossier: "0 28px 80px rgba(0, 0, 0, 0.8)"
+          },
+          borderRadius: {
+            none: "0px"
+          }
+        }
+      }
+    };
+  </script>
+  <style>
+    :root { color-scheme: dark; }
+    html { scroll-behavior: smooth; }
+    body { background: #131313; color: #ffffff; overflow-x: hidden; cursor: crosshair; }
+    body[data-scroll-lock="true"] { overflow: hidden; }
+    .material-symbols-outlined { font-variation-settings: "FILL" 0, "wght" 300, "GRAD" 0, "opsz" 24; }
+    .grain {
+      position: fixed;
+      inset: 0;
+      background-image: url("https://lh3.googleusercontent.com/aida-public/AB6AXuB-Ge4NPqq9nOUdkywMjEx8EUbra9S3Y0mXg4Wgqmt1W3_BFcMEFlK-jqMHTvcg7hN6jAIYhf7X7Zhg75LLGLkVjvsSzjMr0568e2usOTtsAnqB3NSLE_o6soss_ygBUNT-B8c10UyK-E7ELMc2v7bVv0nicHtNjWwGbA5htBqzjNn4bYP7AzHHcPH__elgJSceyqccDNGFwKLZDto1M0Nz2sNWISKnLtfoTDMcOrBFCgJ1h7_vh1q1LsBlqHnCCtLtgFVhxu3YC-Q");
+      opacity: 0.02;
+      pointer-events: none;
+      z-index: 1;
+    }
+    .scanline {
+      position: fixed;
+      inset: 0;
+      background:
+        linear-gradient(to bottom, transparent 50%, rgba(0, 0, 0, 0.18) 50%),
+        linear-gradient(90deg, rgba(255, 0, 0, 0.015), rgba(0, 255, 0, 0.008), rgba(0, 0, 255, 0.015));
+      background-size: 100% 3px, 4px 100%;
+      opacity: 0.12;
+      pointer-events: none;
+      z-index: 2;
+    }
+    .matrix-grid {
+      background-image: radial-gradient(circle, rgba(255, 255, 255, 0.075) 1px, transparent 1px);
+      background-size: 36px 36px;
+    }
+    .matrix-card {
+      position: relative;
+      overflow: hidden;
+      background: #131313;
+      transition: background-color 160ms linear, border-color 160ms linear, transform 160ms linear;
+    }
+    .matrix-card::before {
+      content: "";
+      position: absolute;
+      inset: 0 auto 0 0;
+      width: 2px;
+      transform: scaleY(0);
+      transform-origin: top;
+      background: #9cf0ff;
+      transition: transform 180ms linear;
+    }
+    .matrix-card:hover::before, .matrix-card:focus-visible::before { transform: scaleY(1); }
+    .matrix-card:hover, .matrix-card:focus-visible { background: #1b1b1b; outline: none; }
+    .matrix-card:focus-visible { box-shadow: inset 0 0 0 1px rgba(156, 240, 255, 0.55); }
+    .card-arrow { transition: transform 160ms linear, opacity 160ms linear; }
+    .matrix-card:hover .card-arrow, .matrix-card:focus-visible .card-arrow { opacity: 1; transform: translate(2px, -2px); }
+    .status-bar { box-shadow: 0 0 20px rgba(156, 240, 255, 0.18); }
+    .detail-entry { border-top: 1px solid rgba(255, 255, 255, 0.06); padding-top: 1.5rem; }
+    .modal-overlay {
+      display: none;
+      position: fixed;
+      inset: 0;
+      z-index: 80;
+      align-items: center;
+      justify-content: center;
+      padding: 1rem;
+      background: rgba(0, 0, 0, 0.84);
+      backdrop-filter: blur(18px);
+    }
+    .modal-overlay[data-open="true"] { display: flex; }
+    .modal-shell {
+      --modal-accent: #9cf0ff;
+      --modal-accent-rgb: 156, 240, 255;
+      width: min(1120px, 100%);
+      max-height: 95vh;
+      overflow-y: auto;
+      border: 1px solid rgba(255, 255, 255, 0.1);
+      background: #000000;
+      box-shadow: 0 28px 80px rgba(0, 0, 0, 0.88);
+      position: relative;
+    }
+    .modal-shell::before {
+      content: "";
+      position: absolute;
+      inset: 0;
+      background:
+        linear-gradient(to bottom, transparent 50%, rgba(255, 255, 255, 0.01) 50%),
+        linear-gradient(180deg, transparent 0%, rgba(0, 0, 0, 0.14) 100%);
+      background-size: 100% 4px, 100% 100%;
+      pointer-events: none;
+      opacity: 0.45;
+    }
+    .modal-shell > * { position: relative; z-index: 1; }
+    .modal-accent { color: var(--modal-accent); }
+    .modal-accent-bg { background: rgba(var(--modal-accent-rgb), 0.12); }
+    .modal-accent-border { border-color: rgba(var(--modal-accent-rgb), 0.38); }
+    .modal-mark {
+      width: 3.5rem;
+      height: 3.5rem;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      border: 1px solid rgba(var(--modal-accent-rgb), 0.35);
+      background: rgba(var(--modal-accent-rgb), 0.09);
+      font-family: "Space Grotesk", sans-serif;
+      font-weight: 700;
+      letter-spacing: 0.16em;
+      text-transform: uppercase;
+      color: var(--modal-accent);
+    }
+    .modal-visual {
+      position: relative;
+      overflow: hidden;
+      border: 1px solid rgba(255, 255, 255, 0.1);
+      aspect-ratio: 16 / 9;
+      background: #050505;
+    }
+    .modal-visual::after {
+      content: "";
+      position: absolute;
+      inset: 0;
+      pointer-events: none;
+      background: linear-gradient(transparent 0%, rgba(0, 0, 0, 0.15) 45%, rgba(0, 0, 0, 0.82) 100%);
+    }
+    .modal-visual img { width: 100%; height: 100%; object-fit: cover; opacity: 0.84; }
+    .modal-feed {
+      position: absolute;
+      inset: 0;
+      background: linear-gradient(transparent 0%, rgba(var(--modal-accent-rgb), 0.06) 50%, transparent 100%);
+      background-size: 100% 4px;
+      pointer-events: none;
+    }
+    .pipeline-visual {
+      display: flex;
+      flex-direction: column;
+      justify-content: space-between;
+      padding: 1.25rem;
+      background: radial-gradient(circle at top left, rgba(156, 240, 255, 0.18), transparent 48%), linear-gradient(180deg, #141414 0%, #050505 100%);
+      height: 100%;
+      color: #ffffff;
+    }
+    .pipeline-row {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 0.75rem;
+      padding: 0.55rem 0.75rem;
+      border: 1px solid rgba(255, 255, 255, 0.08);
+      background: rgba(255, 255, 255, 0.02);
+      font-family: "Space Grotesk", sans-serif;
+      font-size: 0.68rem;
+      letter-spacing: 0.16em;
+      text-transform: uppercase;
+    }
+    .pipeline-dot {
+      width: 0.5rem;
+      height: 0.5rem;
+      border-radius: 999px;
+      background: var(--modal-accent);
+      box-shadow: 0 0 12px rgba(var(--modal-accent-rgb), 0.55);
+    }
+    .evidence-chip {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.75rem;
+      padding: 0.9rem 1.1rem;
+      border: 1px solid rgba(255, 255, 255, 0.1);
+      background: rgba(255, 255, 255, 0.02);
+      font-family: "Space Grotesk", sans-serif;
+      font-size: 0.7rem;
+      letter-spacing: 0.18em;
+      text-transform: uppercase;
+      color: rgba(255, 255, 255, 0.84);
+      transition: border-color 160ms linear, background-color 160ms linear;
+    }
+    .evidence-chip:hover {
+      border-color: rgba(var(--modal-accent-rgb), 0.45);
+      background: rgba(var(--modal-accent-rgb), 0.08);
+    }
+    .archive-dot { width: 0.7rem; height: 0.7rem; background: var(--modal-accent); opacity: 0.85; }
+    @media (max-width: 767px) { body { cursor: default; } }
+    @media (prefers-reduced-motion: reduce) {
+      html { scroll-behavior: auto; }
+      .matrix-card, .matrix-card::before, .card-arrow, .evidence-chip { transition: none !important; }
+    }
+  </style>
+</head>
+<body class="bg-background text-primary font-body selection:bg-tertiary selection:text-black">
+  <div class="grain"></div>
+  <div class="scanline"></div>
+
+  <header class="fixed top-0 z-50 flex h-14 w-full items-center justify-between border-b border-white/10 bg-[#131313]/90 px-5 backdrop-blur-md sm:px-8">
+    <div class="flex items-center gap-4">
+      <span class="font-headline text-sm font-bold tracking-tight text-white sm:text-base">TACTICAL_INTEL_v1.0</span>
+      <span class="hidden font-mono text-[10px] uppercase tracking-[0.3em] text-white/30 md:inline">Minh Le // Interactive Dossier</span>
+    </div>
+    <nav class="hidden items-center gap-7 md:flex">
+      <a class="font-label text-[10px] uppercase tracking-[0.2em] text-white/60 transition-colors hover:text-tertiary" href="#experience">Experience</a>
+      <a class="font-label text-[10px] uppercase tracking-[0.2em] text-white/60 transition-colors hover:text-tertiary" href="#operations">Ops Log</a>
+      <a class="font-label text-[10px] uppercase tracking-[0.2em] text-white/60 transition-colors hover:text-tertiary" href="#adjacent">Adjacent Systems</a>
+      <a class="font-label text-[10px] uppercase tracking-[0.2em] text-white/60 transition-colors hover:text-tertiary" href="#contact">Contact</a>
+    </nav>
+    <div class="flex items-center gap-3 text-white/70">
+      <span class="material-symbols-outlined text-lg">terminal</span>
+      <span class="material-symbols-outlined text-lg">sensors</span>
+    </div>
+  </header>
+
+  <main class="relative z-10 pt-14">
+    <section class="px-6 py-16 md:px-12 md:py-24 lg:px-24">
+      <div class="mx-auto max-w-7xl">
+        <div class="mb-5 flex items-center gap-3 font-label text-xs uppercase tracking-[0.22em] text-tertiary/80">
+          <span class="h-2 w-2 animate-pulse rounded-full bg-tertiary"></span>
+          <span>Secure boot sequence // v2.4.0-stable</span>
+        </div>
+        <div class="grid gap-12 lg:grid-cols-[minmax(0,1fr)_360px] lg:items-end">
+          <div>
+            <p class="mb-5 font-mono text-[11px] uppercase tracking-[0.3em] text-white/35">Operator // Minh Le</p>
+            <h1 class="font-headline text-5xl font-bold uppercase leading-none tracking-[-0.05em] text-white sm:text-7xl xl:text-8xl">
+              The Sovereign<br />
+              Observer.
+            </h1>
+            <p class="mt-8 max-w-3xl text-base leading-relaxed text-white/70 md:text-lg">
+              Systems engineer working across AI data infrastructure, cyber operations, and secure research environments. The through-line is evidence:
+              air-gapped analyst context, frontier-model evaluation pipelines, and defense-grade operational hardening.
+            </p>
+            <div class="mt-8 flex flex-wrap gap-3">
+              <span class="border border-white/10 bg-white/5 px-3 py-2 font-label text-[10px] uppercase tracking-[0.22em] text-white/75">San Antonio, TX</span>
+              <span class="border border-white/10 bg-white/5 px-3 py-2 font-label text-[10px] uppercase tracking-[0.22em] text-white/75">CMU // IST</span>
+              <span class="border border-white/10 bg-white/5 px-3 py-2 font-label text-[10px] uppercase tracking-[0.22em] text-white/75">Army ROTC Scholar</span>
+              <span class="border border-white/10 bg-white/5 px-3 py-2 font-label text-[10px] uppercase tracking-[0.22em] text-white/75">AI + Cyber + Infra</span>
+            </div>
+            <div class="mt-10 flex flex-wrap gap-4">
+              <a class="inline-flex items-center gap-3 bg-white px-5 py-3 font-headline text-xs font-bold uppercase tracking-[0.2em] text-black transition-colors hover:bg-tertiary" href="#experience">
+                <span class="material-symbols-outlined text-base">south</span>
+                Jump to matrix
+              </a>
+              <a class="inline-flex items-center gap-3 border border-white/15 bg-white/5 px-5 py-3 font-headline text-xs font-bold uppercase tracking-[0.2em] text-white transition-colors hover:border-tertiary/60 hover:text-tertiary" href="mailto:minh.mhl.le@gmail.com">
+                <span class="material-symbols-outlined text-base">alternate_email</span>
+                Send email
+              </a>
+              <a class="inline-flex items-center gap-3 border border-white/15 bg-white/5 px-5 py-3 font-headline text-xs font-bold uppercase tracking-[0.2em] text-white transition-colors hover:border-tertiary/60 hover:text-tertiary" href="resume%20paste.txt">
+                <span class="material-symbols-outlined text-base">description</span>
+                Resume notes
+              </a>
+            </div>
+          </div>
+          <div class="border border-white/10 bg-surface-container-low p-6">
+            <div class="mb-4 flex items-center justify-between">
+              <span class="font-label text-[10px] uppercase tracking-[0.25em] text-tertiary">Initial loading logs</span>
+              <span class="font-mono text-[10px] uppercase tracking-[0.2em] text-white/30">Node 01</span>
+            </div>
+            <div class="space-y-2 border-l border-tertiary/20 pl-4 font-mono text-xs text-tertiary/70">
+              <p>&gt; Identity verified: systems engineer / researcher</p>
+              <p>&gt; Active modules: AI systems, cyber ops, infra</p>
+              <p>&gt; Research contexts: air-gapped, defense, lab environments</p>
+              <p>&gt; Evidence surface online.</p>
+            </div>
+            <div class="mt-8 grid grid-cols-2 gap-4">
+              <div class="border border-white/5 bg-black/20 p-4">
+                <div class="font-headline text-2xl font-bold text-white">4.0</div>
+                <div class="mt-1 font-label text-[10px] uppercase tracking-[0.2em] text-white/45">Major GPA</div>
+              </div>
+              <div class="border border-white/5 bg-black/20 p-4">
+                <div class="font-headline text-2xl font-bold text-white">400+</div>
+                <div class="mt-1 font-label text-[10px] uppercase tracking-[0.2em] text-white/45">Hackathon field</div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section class="border-y border-white/10" id="experience">
+      <div class="mx-auto grid max-w-[1480px] lg:grid-cols-[240px_minmax(0,1fr)]">
+        <aside class="hidden border-r border-white/10 bg-[#0e0e0e] lg:flex lg:min-h-[720px] lg:flex-col lg:justify-between">
+          <div class="space-y-6 p-6">
+            <div>
+              <div class="flex items-center gap-3">
+                <div class="flex h-9 w-9 items-center justify-center border border-white/10 bg-surface-container-highest">
+                  <span class="material-symbols-outlined text-lg text-tertiary">shield_person</span>
+                </div>
+                <div>
+                  <div class="font-label text-[11px] uppercase tracking-[0.2em] text-white">Operator_01</div>
+                  <div class="font-label text-[9px] uppercase tracking-[0.18em] text-tertiary">Mission ready</div>
+                </div>
+              </div>
+            </div>
+            <div class="space-y-2">
+              <div class="flex items-center gap-3 bg-white/5 px-3 py-3 font-label text-[10px] uppercase tracking-[0.18em] text-tertiary">
+                <span class="material-symbols-outlined text-base">location_on</span>
+                San Antonio, TX
+              </div>
+              <div class="flex items-center gap-3 px-3 py-3 font-label text-[10px] uppercase tracking-[0.18em] text-white/45">
+                <span class="material-symbols-outlined text-base">dns</span>
+                Status: active
+              </div>
+              <div class="flex items-center gap-3 px-3 py-3 font-label text-[10px] uppercase tracking-[0.18em] text-white/45">
+                <span class="material-symbols-outlined text-base">network_node</span>
+                Focus: secure systems
+              </div>
+              <div class="flex items-center gap-3 px-3 py-3 font-label text-[10px] uppercase tracking-[0.18em] text-white/45">
+                <span class="material-symbols-outlined text-base">science</span>
+                Mode: research + ops
+              </div>
+            </div>
+          </div>
+          <div class="space-y-4 border-t border-white/5 p-6">
+            <div class="font-label text-[9px] uppercase tracking-[0.2em] text-white/35">System telemetry</div>
+            <div class="space-y-2">
+              <div class="h-1.5 w-full overflow-hidden bg-white/5">
+                <div class="status-bar h-full w-2/3 bg-tertiary"></div>
+              </div>
+              <div class="flex justify-between font-mono text-[10px] text-white/30">
+                <span>CPU_LOAD</span>
+                <span>42%</span>
+              </div>
+            </div>
+          </div>
+        </aside>
+
+        <div class="matrix-grid px-6 py-14 md:px-10 lg:px-14">
+          <div class="mb-14 flex flex-col gap-6 xl:flex-row xl:items-end xl:justify-between">
+            <div>
+              <span class="mb-3 block font-label text-[10px] uppercase tracking-[0.4em] text-tertiary">[ Portfolio_ID: Minh_Le_2026 ]</span>
+              <h2 class="font-headline text-5xl font-bold uppercase tracking-[-0.05em] text-white sm:text-6xl">
+                Experience <span class="text-tertiary">Matrix</span>
+              </h2>
+              <p class="mt-5 max-w-2xl text-sm leading-relaxed text-white/60 sm:text-base">
+                A tactical audit of deployments, research work, and mission-facing systems. Each card opens into a dossier with operating context,
+                technical scope, and the evidence model behind the work.
+              </p>
+            </div>
+            <div class="grid gap-3 sm:grid-cols-2 xl:w-[320px]">
+              <div class="border border-white/10 bg-black/30 px-4 py-3">
+                <div class="font-label text-[9px] uppercase tracking-[0.2em] text-white/35">Current lane</div>
+                <div class="mt-2 font-headline text-sm uppercase tracking-[0.08em] text-white">AI systems + cyber</div>
+              </div>
+              <div class="border border-white/10 bg-black/30 px-4 py-3">
+                <div class="font-label text-[9px] uppercase tracking-[0.2em] text-white/35">Evidence model</div>
+                <div class="mt-2 font-headline text-sm uppercase tracking-[0.08em] text-white">Metrics before claims</div>
+              </div>
+            </div>
+          </div>
+
+          <div class="grid grid-cols-1 gap-px border border-white/10 bg-white/10 md:grid-cols-2">
+            <button class="matrix-card p-8 text-left" data-modal-open="mitll" type="button">
+              <div class="mb-12 flex items-start justify-between gap-6">
+                <div>
+                  <span class="block font-label text-[10px] uppercase tracking-[0.18em] text-white/35">01 // OFFLINE_AI_SYSTEMS</span>
+                  <h3 class="mt-2 font-headline text-2xl font-bold uppercase tracking-tight text-white">MIT Lincoln Lab</h3>
+                </div>
+                <div class="border border-tertiary/20 px-2 py-1 font-mono text-[10px] uppercase tracking-[0.18em] text-tertiary">Active</div>
+              </div>
+              <div class="space-y-4">
+                <div class="font-headline text-sm uppercase tracking-[0.12em] text-white/85">Research Fellow // SOCOM Context</div>
+                <p class="max-w-md text-xs uppercase leading-relaxed tracking-[0.12em] text-white/40">
+                  Air-gapped multi-agent pipeline for evidence-backed analyst retrieval across large unstructured corpora.
+                </p>
+                <div class="flex gap-4 pt-6">
+                  <span class="font-mono text-[10px] uppercase tracking-[0.16em] text-white/25">09.2025 - Present</span>
+                  <span class="font-mono text-[10px] uppercase tracking-[0.16em] text-white/25">[ 1,200+ docs ]</span>
+                </div>
+              </div>
+              <div class="card-arrow absolute bottom-6 right-6 opacity-40">
+                <span class="material-symbols-outlined text-base text-white/70">north_east</span>
+              </div>
+            </button>
+
+            <button class="matrix-card p-8 text-left" data-modal-open="afterquery" type="button">
+              <div class="mb-12 flex items-start justify-between gap-6">
+                <div>
+                  <span class="block font-label text-[10px] uppercase tracking-[0.18em] text-white/35">02 // FRONTIER_DATA_INFRA</span>
+                  <h3 class="mt-2 font-headline text-2xl font-bold uppercase tracking-tight text-white">AfterQuery</h3>
+                </div>
+                <div class="border border-tertiary/20 px-2 py-1 font-mono text-[10px] uppercase tracking-[0.18em] text-tertiary">Live</div>
+              </div>
+              <div class="space-y-4">
+                <div class="font-headline text-sm uppercase tracking-[0.12em] text-white/85">Strategic Projects Lead</div>
+                <p class="max-w-md text-xs uppercase leading-relaxed tracking-[0.12em] text-white/40">
+                  RL environments, cyber evaluation datasets, and expert-network operations for frontier model development.
+                </p>
+                <div class="flex gap-4 pt-6">
+                  <span class="font-mono text-[10px] uppercase tracking-[0.16em] text-white/25">12.2025 - Present</span>
+                  <span class="font-mono text-[10px] uppercase tracking-[0.16em] text-white/25">[ 5 labs ]</span>
+                </div>
+              </div>
+              <div class="card-arrow absolute bottom-6 right-6 opacity-40">
+                <span class="material-symbols-outlined text-base text-white/70">north_east</span>
+              </div>
+            </button>
+
+            <button class="matrix-card p-8 text-left" data-modal-open="mda" type="button">
+              <div class="mb-12 flex items-start justify-between gap-6">
+                <div>
+                  <span class="block font-label text-[10px] uppercase tracking-[0.18em] text-white/35">03 // DEFENSE_SECURITY_SYSTEMS</span>
+                  <h3 class="mt-2 font-headline text-2xl font-bold uppercase tracking-tight text-white">MDA</h3>
+                </div>
+                <div class="border border-white/10 px-2 py-1 font-mono text-[10px] uppercase tracking-[0.18em] text-white/45">06.2025 - 08.2025</div>
+              </div>
+              <div class="space-y-4">
+                <div class="font-headline text-sm uppercase tracking-[0.12em] text-white/85">Cybersecurity Engineering Intern</div>
+                <p class="max-w-md text-xs uppercase leading-relaxed tracking-[0.12em] text-white/40">
+                  THAAD accreditation, Splunk detection engineering, and defense systems risk reduction across contractor workflows.
+                </p>
+                <div class="flex gap-4 pt-6">
+                  <span class="font-mono text-[10px] uppercase tracking-[0.16em] text-white/25">[ 616 controls ]</span>
+                  <span class="font-mono text-[10px] uppercase tracking-[0.16em] text-white/25">[ 30+ consultations ]</span>
+                </div>
+              </div>
+              <div class="card-arrow absolute bottom-6 right-6 opacity-40">
+                <span class="material-symbols-outlined text-base text-white/70">north_east</span>
+              </div>
+            </button>
+
+            <button class="matrix-card p-8 text-left" data-modal-open="lackland" type="button">
+              <div class="mb-12 flex items-start justify-between gap-6">
+                <div>
+                  <span class="block font-label text-[10px] uppercase tracking-[0.18em] text-white/35">04 // CYBER_OPERATIONS</span>
+                  <h3 class="mt-2 font-headline text-2xl font-bold uppercase tracking-tight text-white">Lackland AFB</h3>
+                </div>
+                <div class="border border-white/10 px-2 py-1 font-mono text-[10px] uppercase tracking-[0.18em] text-white/45">Archive</div>
+              </div>
+              <div class="space-y-4">
+                <div class="font-headline text-sm uppercase tracking-[0.12em] text-white/85">Cybersecurity Specialist</div>
+                <p class="max-w-md text-xs uppercase leading-relaxed tracking-[0.12em] text-white/40">
+                  Network hardening, incident response standardization, and defensive monitoring for operational Air Force infrastructure.
+                </p>
+                <div class="flex gap-4 pt-6">
+                  <span class="font-mono text-[10px] uppercase tracking-[0.16em] text-white/25">[ 452 endpoints ]</span>
+                  <span class="font-mono text-[10px] uppercase tracking-[0.16em] text-white/25">[ 14 incidents ]</span>
+                </div>
+              </div>
+              <div class="card-arrow absolute bottom-6 right-6 opacity-40">
+                <span class="material-symbols-outlined text-base text-white/70">north_east</span>
+              </div>
+            </button>
+          </div>
+        </div>
+      </div>
+    </section>
+    <section class="px-6 py-20 md:px-12 lg:px-24" id="operations">
+      <div class="mx-auto grid max-w-7xl gap-12 lg:grid-cols-[220px_minmax(0,1fr)]">
+        <div class="lg:pt-2">
+          <div class="lg:sticky lg:top-24">
+            <span class="font-label text-[10px] uppercase tracking-[0.4em] text-white/35">Operation_Logs_02</span>
+          </div>
+        </div>
+        <div class="space-y-16">
+          <article class="detail-entry">
+            <div class="mb-4 flex items-center gap-4">
+              <span class="font-mono text-xs text-tertiary">01.</span>
+              <h3 class="font-headline text-xl font-bold uppercase tracking-tight text-white">MIT Lincoln Lab // Offline AI for Secure Environments</h3>
+            </div>
+            <p class="max-w-3xl text-sm leading-relaxed text-white/75">
+              Shipped an offline, air-gapped multi-agent pipeline that converts unstructured corpora into searchable, evidence-backed analyst context.
+              The system ingested more than 1,200 documents and processed roughly 420 GB across PDFs, slides, emails, and scanned material.
+            </p>
+            <div class="mt-5 flex flex-wrap gap-2">
+              <span class="bg-surface-container-high px-3 py-1 font-mono text-[10px] uppercase tracking-[0.16em] text-tertiary">[ AIR-GAPPED ]</span>
+              <span class="bg-surface-container-high px-3 py-1 font-mono text-[10px] uppercase tracking-[0.16em] text-tertiary">[ RETRIEVAL QA ]</span>
+              <span class="bg-surface-container-high px-3 py-1 font-mono text-[10px] uppercase tracking-[0.16em] text-tertiary">[ CITATION ACCURACY ]</span>
+            </div>
+          </article>
+
+          <article class="detail-entry">
+            <div class="mb-4 flex items-center gap-4">
+              <span class="font-mono text-xs text-tertiary">02.</span>
+              <h3 class="font-headline text-xl font-bold uppercase tracking-tight text-white">AfterQuery // Frontier data operations</h3>
+            </div>
+            <p class="max-w-3xl text-sm leading-relaxed text-white/75">
+              Delivered RL environments plus SFT, RLHF, and RLVR datasets to five frontier AI labs. The work also included authoring a cyber-readiness benchmark
+              across ten realistic SOC scenarios and scaling partner channels that sourced more than 2,000 qualified experts.
+            </p>
+            <div class="mt-5 flex flex-wrap gap-2">
+              <span class="bg-surface-container-high px-3 py-1 font-mono text-[10px] uppercase tracking-[0.16em] text-tertiary">[ RL ENVIRONMENTS ]</span>
+              <span class="bg-surface-container-high px-3 py-1 font-mono text-[10px] uppercase tracking-[0.16em] text-tertiary">[ CYBER EVALS ]</span>
+              <span class="bg-surface-container-high px-3 py-1 font-mono text-[10px] uppercase tracking-[0.16em] text-tertiary">[ EXPERT NETWORKS ]</span>
+            </div>
+          </article>
+
+          <article class="detail-entry">
+            <div class="mb-4 flex items-center gap-4">
+              <span class="font-mono text-xs text-tertiary">03.</span>
+              <h3 class="font-headline text-xl font-bold uppercase tracking-tight text-white">MDA // THAAD security engineering</h3>
+            </div>
+            <p class="max-w-3xl text-sm leading-relaxed text-white/75">
+              Prototyped host-based detection in Splunk at MITRE Labs, mapped 616 security controls for THAAD eMASS accreditation, and led more than 30 consultation
+              cycles with internal stakeholders and major prime contractors. The result was an estimated 90% cut in ATO readiness time.
+            </p>
+            <div class="mt-5 flex flex-wrap gap-2">
+              <span class="bg-surface-container-high px-3 py-1 font-mono text-[10px] uppercase tracking-[0.16em] text-tertiary">[ SPLUNK ]</span>
+              <span class="bg-surface-container-high px-3 py-1 font-mono text-[10px] uppercase tracking-[0.16em] text-tertiary">[ EMASS ]</span>
+              <span class="bg-surface-container-high px-3 py-1 font-mono text-[10px] uppercase tracking-[0.16em] text-tertiary">[ MITRE ATT&CK ]</span>
+            </div>
+          </article>
+
+          <article class="detail-entry">
+            <div class="mb-4 flex items-center gap-4">
+              <span class="font-mono text-xs text-tertiary">04.</span>
+              <h3 class="font-headline text-xl font-bold uppercase tracking-tight text-white">Lackland AFB // Defensive cyber operations</h3>
+            </div>
+            <p class="max-w-3xl text-sm leading-relaxed text-white/75">
+              Built and operated defensive monitoring infrastructure across networked systems, standardized incident response around a NIST-aligned doctrine, and
+              hardened tactical communications against recurring hostile traffic. This remains one of the clearest examples of operating under real constraints.
+            </p>
+            <div class="mt-5 flex flex-wrap gap-2">
+              <span class="bg-surface-container-high px-3 py-1 font-mono text-[10px] uppercase tracking-[0.16em] text-tertiary">[ EDR ]</span>
+              <span class="bg-surface-container-high px-3 py-1 font-mono text-[10px] uppercase tracking-[0.16em] text-tertiary">[ FIREWALL HARDENING ]</span>
+              <span class="bg-surface-container-high px-3 py-1 font-mono text-[10px] uppercase tracking-[0.16em] text-tertiary">[ INCIDENT RESPONSE ]</span>
+            </div>
+          </article>
+        </div>
+      </div>
+    </section>
+
+    <section class="matrix-grid border-y border-white/5 bg-surface-container-lowest px-6 py-20 md:px-12 lg:px-24" id="adjacent">
+      <div class="mx-auto max-w-7xl">
+        <div class="mb-12 flex items-center gap-4">
+          <span class="material-symbols-outlined text-tertiary">science</span>
+          <h2 class="font-headline text-3xl font-bold uppercase tracking-tight text-white">Adjacent Systems</h2>
+        </div>
+        <div class="grid gap-8 lg:grid-cols-3">
+          <article class="relative overflow-hidden border border-white/10 bg-[#111111] p-8">
+            <div class="absolute -right-8 -top-8 h-24 w-24 rotate-45 bg-tertiary/5"></div>
+            <div class="mb-8 flex items-start justify-between gap-6">
+              <div>
+                <p class="font-label text-[10px] uppercase tracking-[0.2em] text-tertiary">Cloud + AI systems</p>
+                <h3 class="mt-2 font-headline text-xl font-bold uppercase text-white">UTSA Cloud Systems Lab</h3>
+              </div>
+              <span class="material-symbols-outlined text-white/20">lan</span>
+            </div>
+            <p class="text-sm leading-relaxed text-white/65">
+              Built a multi-agent framework to diagnose and remediate Kubernetes failures, then paired it with a 13-environment benchmark suite and deterministic
+              repair verifiers for evaluation.
+            </p>
+            <div class="mt-6 flex flex-wrap gap-2">
+              <span class="border border-white/10 bg-white/5 px-3 py-1 font-mono text-[10px] uppercase tracking-[0.16em] text-tertiary">[ Kubernetes ]</span>
+              <span class="border border-white/10 bg-white/5 px-3 py-1 font-mono text-[10px] uppercase tracking-[0.16em] text-tertiary">[ Docker ]</span>
+              <span class="border border-white/10 bg-white/5 px-3 py-1 font-mono text-[10px] uppercase tracking-[0.16em] text-tertiary">[ Python ]</span>
+            </div>
+          </article>
+
+          <article class="relative overflow-hidden border border-white/10 bg-[#111111] p-8">
+            <div class="absolute -right-8 -top-8 h-24 w-24 rotate-45 bg-tertiary/5"></div>
+            <div class="mb-8 flex items-start justify-between gap-6">
+              <div>
+                <p class="font-label text-[10px] uppercase tracking-[0.2em] text-tertiary">Military context</p>
+                <h3 class="mt-2 font-headline text-xl font-bold uppercase text-white">636th eMIB // Army ROTC</h3>
+              </div>
+              <span class="material-symbols-outlined text-white/20">shield</span>
+            </div>
+            <p class="text-sm leading-relaxed text-white/65">
+              ROTC and military-intelligence context sharpened the way this portfolio approaches constraints, chain-of-command environments, and mission framing.
+              Additional details and clearance context stay available on request rather than on the public surface.
+            </p>
+            <div class="mt-6 flex flex-wrap gap-2">
+              <span class="border border-white/10 bg-white/5 px-3 py-1 font-mono text-[10px] uppercase tracking-[0.16em] text-tertiary">[ OPERATIONS ]</span>
+              <span class="border border-white/10 bg-white/5 px-3 py-1 font-mono text-[10px] uppercase tracking-[0.16em] text-tertiary">[ DISCIPLINE ]</span>
+              <span class="border border-white/10 bg-white/5 px-3 py-1 font-mono text-[10px] uppercase tracking-[0.16em] text-tertiary">[ ON REQUEST ]</span>
+            </div>
+          </article>
+
+          <article class="relative overflow-hidden border border-white/10 bg-[#111111] p-8">
+            <div class="absolute -right-8 -top-8 h-24 w-24 rotate-45 bg-tertiary/5"></div>
+            <div class="mb-8 flex items-start justify-between gap-6">
+              <div>
+                <p class="font-label text-[10px] uppercase tracking-[0.2em] text-tertiary">Project system</p>
+                <h3 class="mt-2 font-headline text-xl font-bold uppercase text-white">CyberNet</h3>
+              </div>
+              <span class="material-symbols-outlined text-white/20">bolt</span>
+            </div>
+            <p class="text-sm leading-relaxed text-white/65">
+              Offensive security orchestrator that ranked vulnerabilities with EPSS, CVSS, and KEV context, then generated executable attack playbooks.
+              It placed first overall out of 400+ participants and 95+ teams at RowdyHacks XI.
+            </p>
+            <div class="mt-6 flex flex-wrap gap-2">
+              <span class="border border-white/10 bg-white/5 px-3 py-1 font-mono text-[10px] uppercase tracking-[0.16em] text-tertiary">[ AI-DRIVEN ]</span>
+              <span class="border border-white/10 bg-white/5 px-3 py-1 font-mono text-[10px] uppercase tracking-[0.16em] text-tertiary">[ VULN TRIAGE ]</span>
+              <span class="border border-white/10 bg-white/5 px-3 py-1 font-mono text-[10px] uppercase tracking-[0.16em] text-tertiary">[ 1ST PLACE ]</span>
+            </div>
+          </article>
+        </div>
+      </div>
+    </section>
+
+    <section class="px-6 py-20 md:px-12 lg:px-24" id="contact">
+      <div class="mx-auto max-w-7xl">
+        <div class="grid gap-10 xl:grid-cols-[minmax(0,1fr)_420px]">
+          <div class="border border-white/10 bg-surface-container-low p-8 md:p-10">
+            <p class="font-label text-[10px] uppercase tracking-[0.35em] text-tertiary">Operator_Profile</p>
+            <h2 class="mt-4 font-headline text-4xl font-bold uppercase tracking-[-0.04em] text-white">Built for high-integrity systems.</h2>
+            <p class="mt-6 max-w-3xl text-sm leading-relaxed text-white/70 md:text-base">
+              The strongest through-line here is not a single tool or employer. It is operating range: foundation-model data work, air-gapped retrieval,
+              defense security engineering, and military-context systems thinking. The public surface stays lean. The deeper artifact layer can be added as you
+              decide what to expose.
+            </p>
+            <div class="mt-10 grid gap-4 md:grid-cols-3">
+              <div class="border border-white/10 bg-black/20 p-5">
+                <div class="font-label text-[9px] uppercase tracking-[0.2em] text-white/35">Education</div>
+                <div class="mt-3 font-headline text-lg font-bold uppercase text-white">CMU</div>
+                <p class="mt-2 text-sm text-white/55">B.S. Cybersecurity / Global Affairs, M.S. Cybersecurity in progress.</p>
+              </div>
+              <div class="border border-white/10 bg-black/20 p-5">
+                <div class="font-label text-[9px] uppercase tracking-[0.2em] text-white/35">Operating tools</div>
+                <div class="mt-3 font-headline text-lg font-bold uppercase text-white">Python + K8s</div>
+                <p class="mt-2 text-sm text-white/55">Terraform, Splunk, Docker, OpenTelemetry, PyTorch, SQL/SPL.</p>
+              </div>
+              <div class="border border-white/10 bg-black/20 p-5">
+                <div class="font-label text-[9px] uppercase tracking-[0.2em] text-white/35">Scholarships</div>
+                <div class="mt-3 font-headline text-lg font-bold uppercase text-white">ROTC + Presidential</div>
+                <p class="mt-2 text-sm text-white/55">4-year Army ROTC scholarship and Distinguished Presidential Scholarship recipient.</p>
+              </div>
+            </div>
+          </div>
+
+          <div class="border border-white/10 bg-black/30 p-8 md:p-10">
+            <p class="font-label text-[10px] uppercase tracking-[0.35em] text-tertiary">Outbound_Channel</p>
+            <div class="mt-8 space-y-5">
+              <a class="flex items-center justify-between border border-white/10 bg-white/[0.02] px-5 py-4 transition-colors hover:border-tertiary/45 hover:bg-white/[0.05]" href="mailto:minh.mhl.le@gmail.com">
+                <div>
+                  <div class="font-label text-[9px] uppercase tracking-[0.18em] text-white/35">Email</div>
+                  <div class="mt-1 font-headline text-base uppercase tracking-[0.06em] text-white">minh.mhl.le@gmail.com</div>
+                </div>
+                <span class="material-symbols-outlined text-white/70">north_east</span>
+              </a>
+              <a class="flex items-center justify-between border border-white/10 bg-white/[0.02] px-5 py-4 transition-colors hover:border-tertiary/45 hover:bg-white/[0.05]" href="tel:+17133409978">
+                <div>
+                  <div class="font-label text-[9px] uppercase tracking-[0.18em] text-white/35">Phone</div>
+                  <div class="mt-1 font-headline text-base uppercase tracking-[0.06em] text-white">713-340-9978</div>
+                </div>
+                <span class="material-symbols-outlined text-white/70">call</span>
+              </a>
+              <div class="flex items-center justify-between border border-white/10 bg-white/[0.02] px-5 py-4">
+                <div>
+                  <div class="font-label text-[9px] uppercase tracking-[0.18em] text-white/35">Location</div>
+                  <div class="mt-1 font-headline text-base uppercase tracking-[0.06em] text-white">San Antonio, TX</div>
+                </div>
+                <span class="material-symbols-outlined text-white/40">location_on</span>
+              </div>
+            </div>
+
+            <div class="mt-8 flex flex-wrap gap-4">
+              <a class="inline-flex items-center gap-3 bg-white px-5 py-3 font-headline text-xs font-bold uppercase tracking-[0.18em] text-black transition-colors hover:bg-tertiary" href="resume%20paste.txt">
+                <span class="material-symbols-outlined text-base">download</span>
+                Resume notes
+              </a>
+              <a class="inline-flex items-center gap-3 border border-white/15 bg-white/5 px-5 py-3 font-headline text-xs font-bold uppercase tracking-[0.18em] text-white transition-colors hover:border-tertiary/50 hover:text-tertiary" href="#experience">
+                <span class="material-symbols-outlined text-base">arrow_upward</span>
+                Back to matrix
+              </a>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <footer class="border-t border-white/5 bg-[#131313] px-6 py-10 md:px-12 lg:px-24">
+    <div class="mx-auto flex max-w-7xl flex-col gap-6 md:flex-row md:items-center md:justify-between">
+      <div>
+        <div class="font-headline text-sm font-bold uppercase tracking-[0.14em] text-white">SYS_OPERATOR</div>
+        <div class="mt-2 font-label text-[9px] uppercase tracking-[0.22em] text-white/25">Interactive dossier // evidence surface online</div>
+      </div>
+      <div class="flex flex-wrap gap-6 font-label text-[9px] uppercase tracking-[0.22em] text-white/35">
+        <a class="transition-colors hover:text-tertiary" href="#experience">Matrix</a>
+        <a class="transition-colors hover:text-tertiary" href="#adjacent">Adjacent Systems</a>
+        <a class="transition-colors hover:text-tertiary" href="#contact">Contact</a>
+      </div>
+    </div>
+  </footer>
+
+  <nav class="fixed bottom-0 left-0 z-50 flex h-16 w-full items-center justify-around border-t border-white/10 bg-[#131313]/92 px-2 backdrop-blur-lg md:hidden">
+    <a class="flex flex-col items-center gap-1 text-tertiary" href="#experience">
+      <span class="material-symbols-outlined text-xl">grid_view</span>
+      <span class="font-label text-[8px] uppercase">Matrix</span>
+    </a>
+    <a class="flex flex-col items-center gap-1 text-white/45" href="#operations">
+      <span class="material-symbols-outlined text-xl">view_timeline</span>
+      <span class="font-label text-[8px] uppercase">Ops</span>
+    </a>
+    <a class="flex flex-col items-center gap-1 text-white/45" href="#adjacent">
+      <span class="material-symbols-outlined text-xl">science</span>
+      <span class="font-label text-[8px] uppercase">Labs</span>
+    </a>
+    <a class="flex flex-col items-center gap-1 text-white/45" href="#contact">
+      <span class="material-symbols-outlined text-xl">mail</span>
+      <span class="font-label text-[8px] uppercase">Contact</span>
+    </a>
+  </nav>
+
+  <div class="modal-overlay" data-modal="mitll" role="dialog" aria-modal="true" aria-labelledby="modal-title-mitll">
+    <div class="modal-shell" style="--modal-accent:#9cf0ff; --modal-accent-rgb:156,240,255;">
+      <div class="flex items-center justify-between border-b border-white/10 px-6 py-5 sm:px-10 sm:py-6">
+        <div class="flex items-center gap-5">
+          <div class="modal-mark">ML</div>
+          <div>
+            <div class="font-label text-xs uppercase tracking-[0.38em] modal-accent">Project_Manifest // 01</div>
+            <h3 class="mt-1 font-headline text-2xl font-bold uppercase tracking-tight text-white sm:text-4xl" id="modal-title-mitll">MIT_LL // Offline_AI</h3>
+          </div>
+        </div>
+        <button aria-label="Close MIT Lincoln Lab dossier" class="flex h-11 w-11 items-center justify-center border border-white/10 text-white transition-colors hover:text-tertiary" data-modal-close type="button">
+          <span class="material-symbols-outlined text-2xl">close</span>
+        </button>
+      </div>
+
+      <div class="flex flex-col divide-y divide-white/10 lg:flex-row lg:divide-x lg:divide-y-0">
+        <div class="w-full space-y-10 bg-white/[0.01] p-6 sm:p-10 lg:w-[35%]">
+          <div class="space-y-4">
+            <span class="block font-label text-[11px] uppercase tracking-[0.2em] text-white/45">Secure_Corpus // Air-Gapped</span>
+            <div class="modal-visual">
+              <div class="pipeline-visual">
+                <div class="space-y-3">
+                  <div class="pipeline-row"><span>Ingest</span><span>1,200+ docs</span></div>
+                  <div class="pipeline-row"><span>Normalize</span><span>PDF / Slides / Email / Scan</span></div>
+                  <div class="pipeline-row"><span>Index</span><span>Evidence-backed retrieval</span></div>
+                </div>
+                <div class="space-y-3">
+                  <div class="pipeline-row"><span>Score</span><span>Recall@k / MRR / citation</span></div>
+                  <div class="pipeline-row"><span>Gate</span><span class="flex items-center gap-2"><span class="pipeline-dot"></span>&gt;2% regressions blocked</span></div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div class="space-y-3">
+            <span class="block font-label text-[11px] uppercase tracking-[0.2em] text-white/45">Mission_Objective</span>
+            <p class="text-lg font-light leading-relaxed text-white">
+              Convert unstructured analyst corpora into searchable, citation-backed context without relying on live network access.
+            </p>
+          </div>
+
+          <div class="grid grid-cols-2 gap-6 border-t border-white/5 pt-8">
+            <div>
+              <div class="font-headline text-3xl font-bold text-white">1,200+</div>
+              <div class="mt-1 font-label text-[10px] uppercase tracking-[0.2em] modal-accent">Documents ingested</div>
+            </div>
+            <div>
+              <div class="font-headline text-3xl font-bold text-white">~420 GB</div>
+              <div class="mt-1 font-label text-[10px] uppercase tracking-[0.2em] modal-accent">Corpus processed</div>
+            </div>
+            <div>
+              <div class="font-headline text-3xl font-bold text-white">220</div>
+              <div class="mt-1 font-label text-[10px] uppercase tracking-[0.2em] modal-accent">Analyst queries</div>
+            </div>
+            <div>
+              <div class="font-headline text-3xl font-bold text-white">&gt;2%</div>
+              <div class="mt-1 font-label text-[10px] uppercase tracking-[0.2em] modal-accent">Regression gate</div>
+            </div>
+          </div>
+
+          <div class="space-y-5 border-t border-white/5 pt-10">
+            <span class="block font-label text-[11px] uppercase tracking-[0.2em] text-white/45">Tech_Stack</span>
+            <div class="grid grid-cols-2 gap-3 text-[10px] uppercase tracking-[0.18em] text-white/80 sm:grid-cols-3">
+              <div class="border border-white/10 bg-white/[0.02] px-3 py-2">Python</div>
+              <div class="border border-white/10 bg-white/[0.02] px-3 py-2">Air-Gapped</div>
+              <div class="border border-white/10 bg-white/[0.02] px-3 py-2">Multi-Agent</div>
+              <div class="border border-white/10 bg-white/[0.02] px-3 py-2">Evaluation</div>
+              <div class="border border-white/10 bg-white/[0.02] px-3 py-2">Citation QA</div>
+              <div class="border border-white/10 bg-white/[0.02] px-3 py-2">Retrieval</div>
+            </div>
+          </div>
+        </div>
+
+        <div class="flex w-full flex-col p-6 sm:p-10 lg:w-[65%]">
+          <div class="flex-grow space-y-5">
+            <span class="block font-label text-[11px] uppercase tracking-[0.2em] text-white/45">Systems_Contributions</span>
+            <div class="space-y-4">
+              <div class="border border-white/10 bg-white/[0.02] p-6">
+                <h4 class="flex items-center gap-3 font-headline text-base font-bold uppercase tracking-tight text-white">
+                  <span class="h-2 w-2 modal-accent-bg modal-accent-border block border"></span>
+                  Offline ingestion + search pipeline
+                </h4>
+                <p class="mt-4 text-sm leading-relaxed text-white/55">
+                  Shipped a pipeline that turns unstructured corpora into searchable analyst context while remaining compatible with offline, secure environments.
+                </p>
+              </div>
+              <div class="border border-white/10 bg-white/[0.02] p-6">
+                <h4 class="flex items-center gap-3 font-headline text-base font-bold uppercase tracking-tight text-white">
+                  <span class="h-2 w-2 modal-accent-bg modal-accent-border block border"></span>
+                  Regression-tested evaluation harness
+                </h4>
+                <p class="mt-4 text-sm leading-relaxed text-white/55">
+                  Built a 220-query analyst-style evaluation set to track Recall@k, MRR, and citation accuracy across prompt, model, and index changes.
+                </p>
+              </div>
+              <div class="border border-white/10 bg-white/[0.02] p-6">
+                <h4 class="flex items-center gap-3 font-headline text-base font-bold uppercase tracking-tight text-white">
+                  <span class="h-2 w-2 modal-accent-bg modal-accent-border block border"></span>
+                  Release gating for retrieval quality
+                </h4>
+                <p class="mt-4 text-sm leading-relaxed text-white/55">
+                  Releases were blocked whenever scorecard regressions exceeded two percent, turning quality monitoring into an operational guardrail rather than a report.
+                </p>
+              </div>
+            </div>
+          </div>
+
+          <div class="mt-10 border-t border-white/10 pt-10">
+            <span class="mb-6 block font-label text-[11px] uppercase tracking-[0.2em] text-white/45">Validation_Vector</span>
+            <div class="border-l-2 p-8 modal-accent-border bg-white/[0.02]">
+              <p class="text-lg italic leading-relaxed text-white/90">
+                Evidence quality was tracked explicitly: citation accuracy, retrieval depth, and drift resistance determined whether the system could move forward.
+              </p>
+              <div class="mt-5 font-label text-[10px] uppercase tracking-[0.22em] text-white/40">SOCOM context // analyst-grade evaluation discipline</div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="space-y-5 border-t border-white/10 bg-black/35 p-6 sm:p-10">
+        <span class="block font-label text-[11px] uppercase tracking-[0.2em] text-white/45">Evidence_Archive</span>
+        <div class="flex flex-wrap gap-4">
+          <div class="evidence-chip"><span class="archive-dot"></span><span>EVAL_SCORECARD.json</span></div>
+          <div class="evidence-chip"><span class="archive-dot"></span><span>CITATION_DRIFT_REPORT.md</span></div>
+          <div class="evidence-chip"><span class="archive-dot"></span><span>CORPUS_INGEST_MAP.csv</span></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="modal-overlay" data-modal="afterquery" role="dialog" aria-modal="true" aria-labelledby="modal-title-afterquery">
+    <div class="modal-shell" style="--modal-accent:#9cf0ff; --modal-accent-rgb:156,240,255;">
+      <div class="flex items-center justify-between border-b border-white/10 px-6 py-5 sm:px-10 sm:py-6">
+        <div class="flex items-center gap-5">
+          <img alt="AfterQuery mark" class="h-14 w-14 border border-white/10 object-cover" src="https://lh3.googleusercontent.com/aida/ADBb0ugIdOcB4e3x7KIN3SFQcc1k9x-h_yV-UoVrnvj_dMZ9PbD9l4OHHzqvMSzrOTnikaKm42Ow8mmhvrjoKjF0xjAKINu3y-qGXHnZuHIbWwA9rGp5sjJEv2GaMCpDc2Bnm5dLKaN4uip4wjHcpTe8XggjFzLWJqDQfUtSnUu_q5hnQrt3Wf1XiZJEATgnd9R74o_P8TnjGK_VOvcH3tx6X_t6KBKiduhEIRpijukLKHcGPROSDzp2Ndp-V0ddwNmdzXgT2Fk88Eqy" />
+          <div>
+            <div class="font-label text-xs uppercase tracking-[0.38em] modal-accent">Project_Manifest // 02</div>
+            <h3 class="mt-1 font-headline text-2xl font-bold uppercase tracking-tight text-white sm:text-4xl" id="modal-title-afterquery">AfterQuery // Strategic_Projects</h3>
+          </div>
+        </div>
+        <button aria-label="Close AfterQuery dossier" class="flex h-11 w-11 items-center justify-center border border-white/10 text-white transition-colors hover:text-tertiary" data-modal-close type="button">
+          <span class="material-symbols-outlined text-2xl">close</span>
+        </button>
+      </div>
+
+      <div class="flex flex-col divide-y divide-white/10 lg:flex-row lg:divide-x lg:divide-y-0">
+        <div class="w-full space-y-10 bg-white/[0.01] p-6 sm:p-10 lg:w-[35%]">
+          <div class="space-y-4">
+            <span class="block font-label text-[11px] uppercase tracking-[0.2em] text-white/45">Data_Pipeline // Live_Feed</span>
+            <div class="modal-visual">
+              <img alt="AfterQuery data pipeline visual" src="https://lh3.googleusercontent.com/aida-public/AB6AXuA7dmPhCrAdTMoAqFgfueBKo110bRFtzAsQpiawzcy2mxQY9xosRL8E88o9A_F0KL_azbawBeu5rIBwpyEyikDK0-L1m7FF993p50GBtIsx_E-As3JMHSvcm24NGiDhKmxMU7nEUWC8vREImn2d0CDBeXl6YPUD-mEVXc78DXU5H6tN9vEbIMtYVYOQBecCNKxKovBO21DgF_iTaULRqujiUwFB4M31vQSaD_ZrSEGqumUth_6KUvA-J3NLFC0XnXUJVunXlRVkEDA" />
+              <div class="modal-feed"></div>
+              <div class="absolute left-4 top-4 flex items-center gap-2">
+                <span class="h-2 w-2 animate-pulse rounded-full modal-accent-bg modal-accent-border block border"></span>
+                <span class="font-mono text-[10px] font-bold uppercase modal-accent">RL_STREAM</span>
+              </div>
+            </div>
+          </div>
+
+          <div class="space-y-3">
+            <span class="block font-label text-[11px] uppercase tracking-[0.2em] text-white/45">Mission_Objective</span>
+            <p class="text-lg font-light leading-relaxed text-white">
+              Build frontier-model data systems where evaluation quality, expert sourcing, and packaging rigor all matter at once.
+            </p>
+          </div>
+
+          <div class="grid grid-cols-2 gap-6 border-t border-white/5 pt-8">
+            <div>
+              <div class="font-headline text-3xl font-bold text-white">5</div>
+              <div class="mt-1 font-label text-[10px] uppercase tracking-[0.2em] modal-accent">Frontier labs</div>
+            </div>
+            <div>
+              <div class="font-headline text-3xl font-bold text-white">10</div>
+              <div class="mt-1 font-label text-[10px] uppercase tracking-[0.2em] modal-accent">SOC scenarios</div>
+            </div>
+            <div>
+              <div class="font-headline text-3xl font-bold text-white">2,000+</div>
+              <div class="mt-1 font-label text-[10px] uppercase tracking-[0.2em] modal-accent">Experts sourced</div>
+            </div>
+            <div>
+              <div class="font-headline text-3xl font-bold text-white">RLHF</div>
+              <div class="mt-1 font-label text-[10px] uppercase tracking-[0.2em] modal-accent">Data mode</div>
+            </div>
+          </div>
+
+          <div class="space-y-5 border-t border-white/5 pt-10">
+            <span class="block font-label text-[11px] uppercase tracking-[0.2em] text-white/45">Tech_Stack</span>
+            <div class="grid grid-cols-2 gap-3 text-[10px] uppercase tracking-[0.18em] text-white/80 sm:grid-cols-3">
+              <div class="border border-white/10 bg-white/[0.02] px-3 py-2">RLHF</div>
+              <div class="border border-white/10 bg-white/[0.02] px-3 py-2">RLVR</div>
+              <div class="border border-white/10 bg-white/[0.02] px-3 py-2">Python</div>
+              <div class="border border-white/10 bg-white/[0.02] px-3 py-2">PyTorch</div>
+              <div class="border border-white/10 bg-white/[0.02] px-3 py-2">Benchmarking</div>
+              <div class="border border-white/10 bg-white/[0.02] px-3 py-2">QA Packaging</div>
+            </div>
+          </div>
+        </div>
+
+        <div class="flex w-full flex-col p-6 sm:p-10 lg:w-[65%]">
+          <div class="flex-grow space-y-5">
+            <span class="block font-label text-[11px] uppercase tracking-[0.2em] text-white/45">Systems_Contributions</span>
+            <div class="space-y-4">
+              <div class="border border-white/10 bg-white/[0.02] p-6">
+                <h4 class="flex items-center gap-3 font-headline text-base font-bold uppercase tracking-tight text-white">
+                  <span class="h-2 w-2 modal-accent-bg modal-accent-border block border"></span>
+                  RL + SFT dataset delivery
+                </h4>
+                <p class="mt-4 text-sm leading-relaxed text-white/55">
+                  Delivered novel RL environments and SFT, RLHF, and RLVR datasets to all five leading frontier AI labs, including rubric design, QA, and release-ready packaging.
+                </p>
+              </div>
+              <div class="border border-white/10 bg-white/[0.02] p-6">
+                <h4 class="flex items-center gap-3 font-headline text-base font-bold uppercase tracking-tight text-white">
+                  <span class="h-2 w-2 modal-accent-bg modal-accent-border block border"></span>
+                  LLM cyber benchmark
+                </h4>
+                <p class="mt-4 text-sm leading-relaxed text-white/55">
+                  Authored a benchmark on LLM performance across ten realistic SOC incidents spanning endpoint compromise, identity attacks, and insider-threat style workflows.
+                </p>
+              </div>
+              <div class="border border-white/10 bg-white/[0.02] p-6">
+                <h4 class="flex items-center gap-3 font-headline text-base font-bold uppercase tracking-tight text-white">
+                  <span class="h-2 w-2 modal-accent-bg modal-accent-border block border"></span>
+                  Partner-channel scale
+                </h4>
+                <p class="mt-4 text-sm leading-relaxed text-white/55">
+                  Brokered and scaled partner channels across communities, agencies, and SMEs to source more than 2,000 qualified experts for data operations.
+                </p>
+              </div>
+            </div>
+          </div>
+
+          <div class="mt-10 border-t border-white/10 pt-10">
+            <span class="mb-6 block font-label text-[11px] uppercase tracking-[0.2em] text-white/45">Validation_Vector</span>
+            <div class="border-l-2 p-8 modal-accent-border bg-white/[0.02]">
+              <p class="text-lg italic leading-relaxed text-white/90">
+                Validation here is operational: labs used the outputs, benchmarks were grounded in enterprise-style artifacts, and expert sourcing scaled beyond a boutique throughput ceiling.
+              </p>
+              <div class="mt-5 font-label text-[10px] uppercase tracking-[0.22em] text-white/40">Frontier model development // cyber evaluation ops</div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="space-y-5 border-t border-white/10 bg-black/35 p-6 sm:p-10">
+        <span class="block font-label text-[11px] uppercase tracking-[0.2em] text-white/45">Evidence_Archive</span>
+        <div class="flex flex-wrap gap-4">
+          <div class="evidence-chip"><span class="archive-dot"></span><span>SOC_BENCHMARK_SPEC.pdf</span></div>
+          <div class="evidence-chip"><span class="archive-dot"></span><span>RL_DATASET_RELEASE_v1</span></div>
+          <div class="evidence-chip"><span class="archive-dot"></span><span>EXPERT_NETWORK_PIPELINE</span></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="modal-overlay" data-modal="mda" role="dialog" aria-modal="true" aria-labelledby="modal-title-mda">
+    <div class="modal-shell" style="--modal-accent:#00ff41; --modal-accent-rgb:0,255,65;">
+      <div class="flex items-center justify-between border-b border-white/10 px-6 py-5 sm:px-10 sm:py-6">
+        <div class="flex items-center gap-5">
+          <img alt="MDA mark" class="h-14 w-14" src="https://lh3.googleusercontent.com/aida/ADBb0uirKVjhRXTiey0mm9iYuQgiT5meTHWN3KT8YKeUcSpQjwcWh0wvpPaHc6IkUOiBZjq0xCbvgjjtEMBt2hbBrd18KCDfUj6PQfJ7w8VIblzyLVW1zdz_gMcjbBUKK7uil84Ck03AyNM7_52_jJnd8OPmFfdqUnv5d57Ne34iC_RplgvnFtY_9TimgnHvMsaRSB0XRdbFCXPYWV7UFIL-XDO8h2YGtEZVM9oJxs_5x9JyY_MAWxZovfF7UvW3ltqthaaOu9Y-9u5JTQ" />
+          <div>
+            <div class="font-label text-xs uppercase tracking-[0.38em] modal-accent">Project_Manifest // 03</div>
+            <h3 class="mt-1 font-headline text-2xl font-bold uppercase tracking-tight text-white sm:text-4xl" id="modal-title-mda">MDA // THAAD_Cyber</h3>
+          </div>
+        </div>
+        <button aria-label="Close MDA dossier" class="flex h-11 w-11 items-center justify-center border border-white/10 text-white transition-colors hover:text-[#00ff41]" data-modal-close type="button">
+          <span class="material-symbols-outlined text-2xl">close</span>
+        </button>
+      </div>
+
+      <div class="flex flex-col divide-y divide-white/10 lg:flex-row lg:divide-x lg:divide-y-0">
+        <div class="w-full space-y-10 bg-white/[0.01] p-6 sm:p-10 lg:w-[35%]">
+          <div class="space-y-4">
+            <span class="block font-label text-[11px] uppercase tracking-[0.2em] text-white/45">Sovereign_Observer // Live_Feed</span>
+            <div class="modal-visual">
+              <img alt="THAAD system visual" src="https://lh3.googleusercontent.com/aida/ADBb0uhSuHvVAO79k0MumJ3_lyS9_c-7TuBV8Cr6kWbhqUGkq_Vm0SuV7dV_80sGQ_pcsqhV_Kh8K_zPhcUNnnCzGixh0sPiqEByHJnRLgbkykhMYBWpLqCD4L2GYBdW-RrlkP3ru7N5OCo9i6yXHgaujoeegnEtJlVC0LBIqTbAakHCEShPI68B1YtRr9SU5QGax-oCj2tHsP6-CvcuV9nzIsVDu4z2FJMZLxmu7ACk_ZdQMgkdCMsMLYwkXs0HENjFckLoB9RBC11uCQ" />
+              <div class="modal-feed"></div>
+              <div class="absolute left-4 top-4 flex items-center gap-2">
+                <span class="h-2 w-2 animate-pulse rounded-full modal-accent-bg modal-accent-border block border"></span>
+                <span class="font-mono text-[10px] font-bold uppercase modal-accent">REC</span>
+              </div>
+              <div class="absolute bottom-4 right-4 bg-black/40 px-2 py-1 font-mono text-[9px] uppercase tracking-[0.1em] text-white/60">13.4443° N // 144.7937° E</div>
+            </div>
+          </div>
+
+          <div class="space-y-3">
+            <span class="block font-label text-[11px] uppercase tracking-[0.2em] text-white/45">Mission_Objective</span>
+            <p class="text-lg font-light leading-relaxed text-white">
+              Secure the Terminal High Altitude Area Defense stack through detection engineering, risk mapping, and accreditation acceleration.
+            </p>
+          </div>
+
+          <div class="grid grid-cols-2 gap-6 border-t border-white/5 pt-8">
+            <div><div class="font-headline text-3xl font-bold text-white">99.8%</div><div class="mt-1 font-label text-[10px] uppercase tracking-[0.2em] modal-accent">Uptime</div></div>
+            <div><div class="font-headline text-3xl font-bold text-white">~90%</div><div class="mt-1 font-label text-[10px] uppercase tracking-[0.2em] modal-accent">ATO efficiency</div></div>
+            <div><div class="font-headline text-3xl font-bold text-white">150+</div><div class="mt-1 font-label text-[10px] uppercase tracking-[0.2em] modal-accent">Techniques</div></div>
+            <div><div class="font-headline text-3xl font-bold text-white">30+</div><div class="mt-1 font-label text-[10px] uppercase tracking-[0.2em] modal-accent">Consultations</div></div>
+          </div>
+
+          <div class="space-y-5 border-t border-white/5 pt-10">
+            <span class="block font-label text-[11px] uppercase tracking-[0.2em] text-white/45">Tech_Stack</span>
+            <div class="grid grid-cols-2 gap-3 text-[10px] uppercase tracking-[0.18em] text-white/80 sm:grid-cols-3">
+              <div class="border border-white/10 bg-white/[0.02] px-3 py-2">K8s</div>
+              <div class="border border-white/10 bg-white/[0.02] px-3 py-2">Go</div>
+              <div class="border border-white/10 bg-white/[0.02] px-3 py-2">React</div>
+              <div class="border border-white/10 bg-white/[0.02] px-3 py-2">Splunk</div>
+              <div class="border border-white/10 bg-white/[0.02] px-3 py-2">Caldera</div>
+              <div class="border border-white/10 bg-white/[0.02] px-3 py-2">Terraform</div>
+            </div>
+          </div>
+        </div>
+
+        <div class="flex w-full flex-col p-6 sm:p-10 lg:w-[65%]">
+          <div class="flex-grow space-y-5">
+            <span class="block font-label text-[11px] uppercase tracking-[0.2em] text-white/45">Systems_Contributions</span>
+            <div class="space-y-4">
+              <div class="border border-white/10 bg-white/[0.02] p-6">
+                <h4 class="flex items-center gap-3 font-headline text-base font-bold uppercase tracking-tight text-white"><span class="h-2 w-2 modal-accent-bg modal-accent-border block border"></span>Threat detection dashboard</h4>
+                <p class="mt-4 text-sm leading-relaxed text-white/55">Prototyped host-based threat detection in Splunk at MITRE Labs, integrating telemetry for 150+ MITRE ATT&amp;CK techniques via Caldera and refining logic after a full penetration test.</p>
+              </div>
+              <div class="border border-white/10 bg-white/[0.02] p-6">
+                <h4 class="flex items-center gap-3 font-headline text-base font-bold uppercase tracking-tight text-white"><span class="h-2 w-2 modal-accent-bg modal-accent-border block border"></span>Risk mitigation framework</h4>
+                <p class="mt-4 text-sm leading-relaxed text-white/55">Engineered a THAAD eMASS risk-mitigation framework aligning 616 security controls to NIST and DCSA requirements and cutting ATO readiness time by roughly ninety percent.</p>
+              </div>
+              <div class="border border-white/10 bg-white/[0.02] p-6">
+                <h4 class="flex items-center gap-3 font-headline text-base font-bold uppercase tracking-tight text-white"><span class="h-2 w-2 modal-accent-bg modal-accent-border block border"></span>Contractor consultation cycles</h4>
+                <p class="mt-4 text-sm leading-relaxed text-white/55">Led more than 30 cybersecurity consultations with Lockheed Martin, Raytheon, Boeing, and internal stakeholders, influencing two major system-design revisions.</p>
+              </div>
+            </div>
+          </div>
+
+          <div class="mt-10 border-t border-white/10 pt-10">
+            <span class="mb-6 block font-label text-[11px] uppercase tracking-[0.2em] text-white/45">Validation_Vector</span>
+            <div class="border-l-2 p-8 modal-accent-border bg-white/[0.02]">
+              <p class="text-lg italic leading-relaxed text-white/90">The strongest validation here is cross-context: MITRE lab testing, accreditation workflow impact, and defense-contractor consultation loops all converge on the same system.</p>
+              <div class="mt-5 font-label text-[10px] uppercase tracking-[0.22em] text-white/40">THAAD program // accreditation + detection engineering</div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="space-y-5 border-t border-white/10 bg-black/35 p-6 sm:p-10">
+        <span class="block font-label text-[11px] uppercase tracking-[0.2em] text-white/45">Evidence_Archive</span>
+        <div class="flex flex-wrap gap-4">
+          <div class="evidence-chip"><span class="archive-dot"></span><span>THAAD_RMF_MAP.xlsx</span></div>
+          <div class="evidence-chip"><span class="archive-dot"></span><span>SPLUNK_ATTCK_DASHBOARD</span></div>
+          <div class="evidence-chip"><span class="archive-dot"></span><span>CONSULTATION_NOTES.bundle</span></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="modal-overlay" data-modal="lackland" role="dialog" aria-modal="true" aria-labelledby="modal-title-lackland">
+    <div class="modal-shell" style="--modal-accent:#00ff41; --modal-accent-rgb:0,255,65;">
+      <div class="flex items-center justify-between border-b border-white/10 px-6 py-5 sm:px-10 sm:py-6">
+        <div class="flex items-center gap-5">
+          <div class="modal-mark">LA</div>
+          <div>
+            <div class="font-label text-xs uppercase tracking-[0.38em] modal-accent">Project_Manifest // 04</div>
+            <h3 class="mt-1 font-headline text-2xl font-bold uppercase tracking-tight text-white sm:text-4xl" id="modal-title-lackland">Lackland_AFB // Cyber_Operations</h3>
+          </div>
+        </div>
+        <button aria-label="Close Lackland dossier" class="flex h-11 w-11 items-center justify-center border border-white/10 text-white transition-colors hover:text-[#00ff41]" data-modal-close type="button">
+          <span class="material-symbols-outlined text-2xl">close</span>
+        </button>
+      </div>
+
+      <div class="flex flex-col divide-y divide-white/10 lg:flex-row lg:divide-x lg:divide-y-0">
+        <div class="w-full space-y-10 bg-white/[0.01] p-6 sm:p-10 lg:w-[35%]">
+          <div class="space-y-4">
+            <span class="block font-label text-[11px] uppercase tracking-[0.2em] text-white/45">Sovereign_Observer // Live_Feed</span>
+            <div class="modal-visual">
+              <img alt="Cyber operations center visual" src="https://lh3.googleusercontent.com/aida-public/AB6AXuAXdMayqTOlaaLIQFNYTHOs6NhXFCrIgjol7Gxr8bM8wIQkWfnKcTjPzyrQMt0nuJPjf2X1InRqFm3rnSUzVW0vrqrSkau5Tj7p_pgX90GZex1CA0FvYdUDlHRzr10TtcmU6cVGO3guNz_OHWOFexyt6mNmZuZzCS1vd_gVZMAgaKxX2KcM1s4rEEQq8ttVE6updwEmk3EDR7WM36X8PJzZwccq8J2bS2r98NY1OLGMi24cqQx7hWQ8wCcyDbCnA5trR5LyE8ArK6w" />
+              <div class="modal-feed"></div>
+              <div class="absolute left-4 top-4 flex items-center gap-2">
+                <span class="h-2 w-2 animate-pulse rounded-full modal-accent-bg modal-accent-border block border"></span>
+                <span class="font-mono text-[10px] font-bold uppercase modal-accent">REC</span>
+              </div>
+              <div class="absolute bottom-4 right-4 bg-black/40 px-2 py-1 font-mono text-[9px] uppercase tracking-[0.1em] text-white/60">29.3848° N // 98.6180° W</div>
+            </div>
+          </div>
+
+          <div class="space-y-3">
+            <span class="block font-label text-[11px] uppercase tracking-[0.2em] text-white/45">Mission_Objective</span>
+            <p class="text-lg font-light leading-relaxed text-white">Defend and operate Air Force network infrastructure through integrated cyber defense, monitoring, and incident-response discipline.</p>
+          </div>
+
+          <div class="grid grid-cols-2 gap-6 border-t border-white/5 pt-8">
+            <div><div class="font-headline text-3xl font-bold text-white">452</div><div class="mt-1 font-label text-[10px] uppercase tracking-[0.2em] modal-accent">Endpoints secured</div></div>
+            <div><div class="font-headline text-3xl font-bold text-white">30</div><div class="mt-1 font-label text-[10px] uppercase tracking-[0.2em] modal-accent">Servers integrated</div></div>
+            <div><div class="font-headline text-3xl font-bold text-white">100%</div><div class="mt-1 font-label text-[10px] uppercase tracking-[0.2em] modal-accent">Block rate</div></div>
+            <div><div class="font-headline text-3xl font-bold text-white">14</div><div class="mt-1 font-label text-[10px] uppercase tracking-[0.2em] modal-accent">Incidents mitigated</div></div>
+          </div>
+
+          <div class="space-y-5 border-t border-white/5 pt-10">
+            <span class="block font-label text-[11px] uppercase tracking-[0.2em] text-white/45">Tech_Stack</span>
+            <div class="grid grid-cols-2 gap-3 text-[10px] uppercase tracking-[0.18em] text-white/80 sm:grid-cols-3">
+              <div class="border border-white/10 bg-white/[0.02] px-3 py-2">Linux</div>
+              <div class="border border-white/10 bg-white/[0.02] px-3 py-2">Wireshark</div>
+              <div class="border border-white/10 bg-white/[0.02] px-3 py-2">Splunk</div>
+              <div class="border border-white/10 bg-white/[0.02] px-3 py-2">Kali</div>
+              <div class="border border-white/10 bg-white/[0.02] px-3 py-2">Metasploit</div>
+              <div class="border border-white/10 bg-white/[0.02] px-3 py-2">MITRE</div>
+            </div>
+          </div>
+        </div>
+
+        <div class="flex w-full flex-col p-6 sm:p-10 lg:w-[65%]">
+          <div class="flex-grow space-y-5">
+            <span class="block font-label text-[11px] uppercase tracking-[0.2em] text-white/45">Systems_Contributions</span>
+            <div class="space-y-4">
+              <div class="border border-white/10 bg-white/[0.02] p-6">
+                <h4 class="flex items-center gap-3 font-headline text-base font-bold uppercase tracking-tight text-white"><span class="h-2 w-2 modal-accent-bg modal-accent-border block border"></span>Endpoint detection infrastructure</h4>
+                <p class="mt-4 text-sm leading-relaxed text-white/55">Deployed centralized endpoint visibility across 452 endpoints and 30 servers, giving the environment a coherent EDR surface instead of fragmented host-level blind spots.</p>
+              </div>
+              <div class="border border-white/10 bg-white/[0.02] p-6">
+                <h4 class="flex items-center gap-3 font-headline text-base font-bold uppercase tracking-tight text-white"><span class="h-2 w-2 modal-accent-bg modal-accent-border block border"></span>Firewall hardening + incident response</h4>
+                <p class="mt-4 text-sm leading-relaxed text-white/55">Configured firewall policies and standing response procedures after 14 observed malicious-traffic events, achieving complete rejection of anomalous traffic in the observed window.</p>
+              </div>
+              <div class="border border-white/10 bg-white/[0.02] p-6">
+                <h4 class="flex items-center gap-3 font-headline text-base font-bold uppercase tracking-tight text-white"><span class="h-2 w-2 modal-accent-bg modal-accent-border block border"></span>NIST-aligned defensive doctrine</h4>
+                <p class="mt-4 text-sm leading-relaxed text-white/55">Standardized incident response around a NIST-aligned framework so detection, containment, and recovery could be executed with less interpretation drift across the team.</p>
+              </div>
+              <div class="border border-white/10 bg-white/[0.02] p-6">
+                <h4 class="flex items-center gap-3 font-headline text-base font-bold uppercase tracking-tight text-white"><span class="h-2 w-2 modal-accent-bg modal-accent-border block border"></span>Defensive cyber operations context</h4>
+                <p class="mt-4 text-sm leading-relaxed text-white/55">Work was executed in a real cyber-mission context where infrastructure choices had to serve reliability, clarity, and time-to-response simultaneously.</p>
+              </div>
+            </div>
+          </div>
+
+          <div class="mt-10 border-t border-white/10 pt-10">
+            <span class="mb-6 block font-label text-[11px] uppercase tracking-[0.2em] text-white/45">Validation_Vector</span>
+            <div class="border-l-2 p-8 modal-accent-border bg-white/[0.02]">
+              <p class="text-lg italic leading-relaxed text-white/90">The validation here is operational posture: centralized visibility, repeatable response doctrine, and measurable reduction in exposure after hardening changes were applied.</p>
+              <div class="mt-5 font-label text-[10px] uppercase tracking-[0.22em] text-white/40">Air Force cyber context // defensive monitoring archive</div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="space-y-5 border-t border-white/10 bg-black/35 p-6 sm:p-10">
+        <span class="block font-label text-[11px] uppercase tracking-[0.2em] text-white/45">Evidence_Archive</span>
+        <div class="flex flex-wrap gap-4">
+          <div class="evidence-chip"><span class="archive-dot"></span><span>OPS_REPORT_04.pdf</span></div>
+          <div class="evidence-chip"><span class="archive-dot"></span><span>FIREWALL_POLICY_DIFF.txt</span></div>
+          <div class="evidence-chip"><span class="archive-dot"></span><span>IR_DOCTRINE_v1.1</span></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    const overlays = Array.from(document.querySelectorAll(".modal-overlay"));
+    const openers = Array.from(document.querySelectorAll("[data-modal-open]"));
+    const body = document.body;
+    let activeOverlay = null;
+
+    function openModal(id) {
+      const target = document.querySelector(`.modal-overlay[data-modal="${id}"]`);
+      if (!target) return;
+      if (activeOverlay) closeModal(activeOverlay);
+      target.dataset.open = "true";
+      body.dataset.scrollLock = "true";
+      activeOverlay = target;
+      const closeButton = target.querySelector("[data-modal-close]");
+      if (closeButton) closeButton.focus();
+    }
+
+    function closeModal(overlay) {
+      const target = overlay || activeOverlay;
+      if (!target) return;
+      target.dataset.open = "false";
+      body.dataset.scrollLock = "false";
+      activeOverlay = null;
+    }
+
+    openers.forEach((button) => {
+      button.addEventListener("click", () => openModal(button.dataset.modalOpen));
+    });
+
+    overlays.forEach((overlay) => {
+      overlay.addEventListener("click", (event) => {
+        if (event.target === overlay) closeModal(overlay);
+      });
+      overlay.querySelectorAll("[data-modal-close]").forEach((button) => {
+        button.addEventListener("click", () => closeModal(overlay));
+      });
+    });
+
+    document.addEventListener("keydown", (event) => {
+      if (event.key === "Escape" && activeOverlay) closeModal(activeOverlay);
+    });
+  </script>
+</body>
+</html>

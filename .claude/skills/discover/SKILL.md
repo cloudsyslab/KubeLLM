@@ -13,6 +13,20 @@ metadata:
 Research the topic against current best practices, then turn the research into
 clear recommendations and a disregard list.
 
+## Epistemic Authority
+
+Discovery output is the highest-authority input in any workflow that invokes it.
+Pre-planning, scaffolding, and existing assumptions exist to give discovery
+context and direction -- not to constrain it. If research and best practices
+point in a fundamentally different direction from the caller's plan, the
+research wins and the plan gets scrapped.
+
+Treat discovery as consulting an extremely knowledgeable specialist. The
+caller's original intentions define the problem space; discovery defines the
+best approach within that space. Maintain epistemic humility about pre-existing
+assumptions -- they are hypotheses to be tested by research, not commitments to
+be defended.
+
 ## Stage 1: Frame the Question
 
 Extract and state:
@@ -35,9 +49,9 @@ Use primary sources first:
 - vendor-authored implementation guidance
 - research papers when relevant
 
-Use community sources only to fill gaps or capture actual practitioner norms.
+Use community sources second, to capture actual practitioner norms and fill gaps.
 
-For time-sensitive topics, verify current information rather than relying on
+Always verify current information rather than relying on
 memory.
 
 ### Web scraping tools
@@ -102,8 +116,7 @@ If the user wants a persistent artifact, or the repo already uses a
 
 ## Delegation Rule
 
-Only split the work into sub-agents when the user explicitly asks for
-delegation or parallel research. Otherwise, keep the research local.
+Split the work into sub-agents for delegation and parallel research.
 
 ## Quality Bar
 
