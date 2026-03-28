@@ -14,19 +14,26 @@ Use `python3` on Unix/macOS; on Windows, `python` is fine if that is your launch
    Capture the printed `RUN_DIR:` line. If lost, run `python3 debug_assistant_latest/runner.py --latest-run`.
 
 3. **READ RESULTS** — Open `<RUN_DIR>/<test_name>/summary.json`  
-   Check `status` (`PASS`, `FAIL`, `ERROR`, `TIMEOUT`), `verified`, `ground_truth_passed`, `error_message`, `error_context`.  
-   If `status` is `PASS`, stop.
+   Check `status` (`PASS`, `FAIL`, `ERROR`, `TIMEOUT`), `verified`, `ground_truth_passed`, `error_message`, `error_context`.
 
-4. **DIAGNOSE** — `python3 debug_assistant_latest/runner.py --diagnose-last`  
+4. **TEARDOWN** — Full cluster cleanup after **every** benchmark run (success or failure), the same way an operator would before the next run or before walking away.  
+   - Default (runner did not tear down): `python3 debug_assistant_latest/teardownenv.py <test_name>`  
+   - If you started the run with `--backup-before-run --teardown-after-run`, the runner already ran teardown for that scenario; skip only if you are sure teardown completed (check console for `[TEARDOWN]` / errors).  
+   - `python3 debug_assistant_latest/teardownenv.py all` clears every configured scenario; use only when you intend that breadth.  
+   Artifacts under `<RUN_DIR>/` stay on disk for diagnosis; teardown targets the cluster, images, and fixture restore rules in `TEARDOWN_CONFIG` (see [Operations](../handbook/operations.md)).  
+   If you still need live `kubectl` output for a failure, capture it **before** this step.
+
+5. **DIAGNOSE** — `python3 debug_assistant_latest/runner.py --diagnose-last`  
    Read JSON fields: `category`, `summary`, `evidence`, `suggested_actions`.  
    Add `stderr.log` / `stdout.log` in the same test directory when needed.  
    Use `python3 debug_assistant_latest/runner.py --dashboard` for historical trends across runs, not as a substitute for per-run diagnosis.
 
-5. **FIX** — Edit the files indicated by the diagnosis and logs. See [Common failure patterns](#common-failure-patterns) below.
+6. **FIX** — Edit the files indicated by the diagnosis and logs. See [Common failure patterns](#common-failure-patterns) below.
 
-6. **VALIDATE** — `python3 -m pytest tests/ -v` (minimum regression gate after code changes).
+7. **VALIDATE** — `python3 -m pytest tests/ -v` (minimum regression gate after code changes).
 
-7. **RE-RUN** — Run the same test again. Stop after about three fix attempts if the failure category does not change or confidence is low.
+8. **RE-RUN** — Run the same test again (from step 1 or 2 as appropriate). Stop after about three fix attempts if the failure category does not change or confidence is low.  
+   If `status` was `PASS` after step 3, you are done once step 4 (teardown) has run.
 
 ## Machine-readable runner output
 
@@ -57,6 +64,13 @@ python3 debug_assistant_latest/runner.py <test_name>
 python3 debug_assistant_latest/runner.py --diagnose-last
 python3 debug_assistant_latest/runner.py --latest-run
 python3 debug_assistant_latest/runner.py --dashboard
+```
+
+Teardown (after each benchmark run if the runner did not already tear down):
+
+```bash
+python3 debug_assistant_latest/teardownenv.py <test_name>
+python3 debug_assistant_latest/teardownenv.py all
 ```
 
 Notes:

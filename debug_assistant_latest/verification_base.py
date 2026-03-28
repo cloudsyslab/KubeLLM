@@ -50,7 +50,7 @@ class VerificationAgentBase(Agent):
         try:
             props = self.agentProperties or {}
             model_name = props.get("model", "gpt-4o")
-            temperature = props.get("temperature", 0.3)
+            temperature = props.get("temperature", 1)
             instructions = props.get("instructions", self.default_instructions)
             guidelines = props.get("guidelines", self.default_guidelines)
 
