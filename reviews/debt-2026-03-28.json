@@ -1,0 +1,181 @@
+{
+  "review_id": "review-2026-03-28-debt",
+  "timestamp": "2026-03-28T12:00:00Z",
+  "repository": "c:/Users/minhl/OneDrive/Desktop/KubeLLM-main",
+  "scope": {
+    "section": "debt",
+    "path": "debug_assistant_latest",
+    "depth": "medium"
+  },
+  "summary": {
+    "total_findings": 8,
+    "critical": 0,
+    "warning": 6,
+    "suggestion": 2,
+    "files_examined": 7,
+    "pre_verification_count": 8,
+    "filter_rate": "0%"
+  },
+  "findings": [
+    {
+      "id": "DEBT-001",
+      "severity": "warning",
+      "category": "debt",
+      "file": "debug_assistant_latest/main.py",
+      "line": 158,
+      "title": "Debug metrics DB row couples verification outcome into task_status_verified",
+      "problem": "After verification, the code inserts a row for the debug agent but passes verification_metrics.get(\"task_status\") as the third argument to store_metrics_entry, which maps to task_status_verified in SQLite—mixing evaluator layers without documenting that join semantics for analysts.",
+      "evidence": "    _finalize_metrics(verification_metrics, verification_end_time - verification_start_time)\n    store_metrics_entry(db_path, debug_metrics, verification_metrics.get(\"task_status\"))\n    store_metrics_entry(db_path, verification_metrics, verification_metrics.get(\"task_status\"))",
+      "suggestion": "Rename column or split into verification_passed_int; document in metrics_db.py; or store debug row only with debug self-report status and use a separate column for verification outcome.",
+      "impact": "Downstream SQL that assumes task_status_verified reflects debug agent verification will misread benchmark data.",
+      "confidence": 0.88,
+      "verification": {
+        "evidence_verified": true,
+        "structure_confirmed": "skipped",
+        "line_corrected": null,
+        "confidence_adjusted": 0.88
+      },
+      "context": {"callers": [], "dependencies": ["debug_assistant_latest/metrics_db.py"]}
+    },
+    {
+      "id": "DEBT-002",
+      "severity": "warning",
+      "category": "debt",
+      "file": "debug_assistant_latest/executor.py",
+      "line": 137,
+      "title": "Verification UNKNOWN collapses to verified=False in summaries",
+      "problem": "When main returns status None (verification token missing), success becomes False and verified is False because verified is derived from success when verification_metrics exists—conflating explicit FAILED with UNKNOWN.",
+      "evidence": "        success = result.get(\"status\") is True\n        ...\n        verified = success if isinstance(verification_metrics, dict) else None",
+      "suggestion": "Map result.get(\"status\") explicitly: True -> verified True, False -> verified False, None -> verified None; keep success separate for overall PASS/FAIL if needed.",
+      "impact": "summary.json and aggregates mislabel inconclusive verification as negative, corrupting verification-rate metrics.",
+      "confidence": 0.9,
+      "verification": {
+        "evidence_verified": true,
+        "structure_confirmed": "skipped",
+        "line_corrected": null,
+        "confidence_adjusted": 0.9
+      },
+      "context": {"callers": [], "dependencies": ["debug_assistant_latest/main.py"]}
+    },
+    {
+      "id": "DEBT-003",
+      "severity": "suggestion",
+      "category": "debt",
+      "file": "debug_assistant_latest/preflight.py",
+      "line": 87,
+      "title": "Preflight kubectl client check is not copied into run artifacts",
+      "problem": "Preflight runs kubectl version --client --output=json for availability, but cmd_run_single/cmd_run_many never persist that JSON (or server version) into run_config, so successful runs lack cluster/client identity in the audit bundle.",
+      "evidence": "def _check_kubectl() -> PreflightCheck:\n    try:\n        result = subprocess.run(\n            [\"kubectl\", \"version\", \"--client\", \"--output=json\"],",
+      "suggestion": "Return structured kubectl/docker/minikube facts from run_preflight and merge into run_config or provenance.json when tests execute.",
+      "impact": "Reproducibility gap for any issue filed against a specific kubectl minor version.",
+      "confidence": 0.85,
+      "verification": {
+        "evidence_verified": true,
+        "structure_confirmed": "skipped",
+        "line_corrected": null,
+        "confidence_adjusted": 0.85
+      },
+      "context": {"callers": ["debug_assistant_latest/executor.py"], "dependencies": []}
+    },
+    {
+      "id": "DEBT-004",
+      "severity": "suggestion",
+      "category": "debt",
+      "file": "docs/benchmark-philosophy.md",
+      "line": 93,
+      "title": "No documented stochastic reporting standard for multi-run studies",
+      "problem": "Philosophy stresses reproducible fixtures and honest failure but does not define how to report variance across --repeat or multiple seeds (median, CI, pass@k), unlike industry eval hygiene referenced in the gaps doc.",
+      "evidence": "### Test cases must be reproducible\n\nEvery test starts from the same broken state. This means:\n\n- Setup commands in `config_step.json` must fully recreate the broken scenario from scratch",
+      "suggestion": "Add a short subsection on publishing results: minimum N, aggregation method, and forbidding single-hero run headlines; link to queue_summary.json fields once extended.",
+      "impact": "External readers may treat one noisy LLM draw as definitive.",
+      "confidence": 0.82,
+      "verification": {
+        "evidence_verified": true,
+        "structure_confirmed": "skipped",
+        "line_corrected": null,
+        "confidence_adjusted": 0.82
+      },
+      "context": {"callers": [], "dependencies": []}
+    },
+    {
+      "id": "DEBT-005",
+      "severity": "warning",
+      "category": "debt",
+      "file": "debug_assistant_latest/main.py",
+      "line": 376,
+      "title": "main.run() discards technique return payloads",
+      "problem": "The library-style run() helper invokes allStepsAtOnce/stepByStep/singleAgentApproach but throws away their dict results, making programmatic embedding of the harness harder and encouraging only CLI/subprocess use.",
+      "evidence": "def run( debugType, configFile ):\n    if debugType == \"allStepsAtOnce\":\n        allStepsAtOnce(configFile)\n    elif debugType == \"stepByStep\":\n        stepByStep(configFile)\n    elif debugType == \"singleAgent\":\n        singleAgentApproach(configFile)\n    return",
+      "suggestion": "Return the same dict the techniques return (status, debug_metrics, verification_metrics) for tests and tooling.",
+      "impact": "Higher friction for golden-run or harness regression tests that call main.py directly.",
+      "confidence": 0.9,
+      "verification": {
+        "evidence_verified": true,
+        "structure_confirmed": "skipped",
+        "line_corrected": null,
+        "confidence_adjusted": 0.9
+      },
+      "context": {"callers": [], "dependencies": []}
+    },
+    {
+      "id": "DEBT-006",
+      "severity": "warning",
+      "category": "debt",
+      "file": "debug_assistant_latest/cli.py",
+      "line": 96,
+      "title": "--validate-ground-truth ignores verification-agent settings",
+      "problem": "Validation loops call validate_ground_truth_config only; evaluator alignment (e.g. verification temperature per philosophy) is never checked, so misconfigured LLM evaluators ship undetected.",
+      "evidence": "            config = load_config_with_overrides(config_path, {})\n            gt_errors = validate_ground_truth_config(config)",
+      "suggestion": "Add validate_evaluator_config or extend CLI to warn when verification-agent.temperature > 0.3 unless explicitly exempted.",
+      "impact": "Benchmark integrity drifts silently when configs contradict documented evaluator rules.",
+      "confidence": 0.9,
+      "verification": {
+        "evidence_verified": true,
+        "structure_confirmed": "skipped",
+        "line_corrected": null,
+        "confidence_adjusted": 0.9
+      },
+      "context": {"callers": [], "dependencies": ["docs/benchmark-philosophy.md"]}
+    },
+    {
+      "id": "DEBT-007",
+      "severity": "warning",
+      "category": "debt",
+      "file": "debug_assistant_latest/config_merge.py",
+      "line": 18,
+      "title": "No harness lock between chat models and embedder for fair sweeps",
+      "problem": "CLI_TO_CONFIG_MAP allows independent override of api-agent.model and api-agent.embedder; nothing warns when comparing chat models that one run changed retrieval and another did not, undermining multi-model study comparability.",
+      "evidence": "CLI_TO_CONFIG_MAP = {\n    \"debug_model\": \"debug-agent.model\",\n    \"api_model\": \"api-agent.model\",\n    \"verification_model\": \"verification-agent.model\",\n    \"embedder\": \"api-agent.embedder\",\n    \"embedder_provider\": \"api-agent.embedder-provider\",\n    \"minikube_profile\": \"minikube-profile\",\n}",
+      "suggestion": "Emit a warning or require an explicit flag when embedder differs from a recorded baseline; persist embedder + corpus id in provenance.",
+      "impact": "Model A vs B comparisons may attribute capability differences to retrieval changes.",
+      "confidence": 0.85,
+      "verification": {
+        "evidence_verified": true,
+        "structure_confirmed": "skipped",
+        "line_corrected": null,
+        "confidence_adjusted": 0.85
+      },
+      "context": {"callers": ["debug_assistant_latest/executor.py"], "dependencies": []}
+    },
+    {
+      "id": "DEBT-008",
+      "severity": "warning",
+      "category": "debt",
+      "file": "docs/agent-loop.md",
+      "line": 16,
+      "title": "No benchmark flaky-test register or policy in operator docs",
+      "problem": "The agent loop documents how to read summary.json statuses but never defines a machine-readable flaky scenario registry (rate, last seen, owner) distinct from product CI quarantine—matching the taxonomy gap on benchmark flakiness hygiene.",
+      "evidence": "3. **READ RESULTS** — Open `<RUN_DIR>/<test_name>/summary.json`  \n   Check `status` (`PASS`, `FAIL`, `ERROR`, `TIMEOUT`), `verified`, `ground_truth_passed`, `error_message`, `error_context`.  \n   If `status` is `PASS`, stop.",
+      "suggestion": "Add FLAKY.md or data/flaky.json plus guidance: benchmarks label flakiness and fix root cause rather than hiding failures; link to issues.",
+      "impact": "Intermittent K8s timing issues are indistinguishable from model regression in historical dashboards.",
+      "confidence": 0.84,
+      "verification": {
+        "evidence_verified": true,
+        "structure_confirmed": "skipped",
+        "line_corrected": null,
+        "confidence_adjusted": 0.84
+      },
+      "context": {"callers": [], "dependencies": []}
+    }
+  ]
+}

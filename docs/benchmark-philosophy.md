@@ -111,6 +111,14 @@ A new test case needs:
 
 The test should be designed so that a model with genuine K8s troubleshooting ability can solve it, and a model without that ability cannot. If every model solves it trivially, it is not measuring anything. If no model can solve it, it may still be valuable as a ceiling marker -- but document that intent.
 
+## Multi-run reporting
+
+When you publish or compare numbers from this harness, treat stochastic agents honestly:
+
+- Report **N** (iteration count or distinct run directories), not a single lucky pass.
+- Prefer an explicit aggregation (median, pass@k, failure rate with CI) and state it in the write-up.
+- Use `queue_summary.json` from `--repeat` queues for iteration-level pointers (`output_dir`, `run_config_path`, `cli_overrides`); avoid headline metrics from one “hero” run unless you label them as anecdotal.
+
 ## Summary
 
 This benchmark exists to produce honest data about model capabilities. Every design decision -- from the agent architecture to the prompt wording to the verification layers -- serves that goal. When in doubt about a change, ask: *Does this make the measurement more accurate, or does it make the number look better?* Only the first kind of change belongs here.
