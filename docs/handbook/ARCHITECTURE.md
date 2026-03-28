@@ -1,6 +1,6 @@
 # KubeLLM Architecture
 
-**Documentation index:** start with [docs/README.md](README.md) for progressive disclosure and links to the agent runbook, operations, and history.
+**Documentation index:** start with [docs/README.md](../README.md) for progressive disclosure and links to the agent runbook, operations, and history.
 
 ## Purpose
 

@@ -121,7 +121,7 @@ bash orchestrator/collect_diagnostics.sh
 
 ## See also
 
-- [Documentation index](README.md) — map of all docs
-- [Architecture](ARCHITECTURE.md) — components and data flow
-- [Operations](operations.md) — full runner and orchestrator workflow
-- [Sprint retrospective](history/2026-03-26-agentic-loop-development-update.md)
+- [Documentation index](../README.md) — map of all docs
+- [Architecture](../handbook/ARCHITECTURE.md) — components and data flow
+- [Operations](../handbook/operations.md) — full runner and orchestrator workflow
+- [Sprint retrospective](../history/2026-03-26-agentic-loop-development-update.md)

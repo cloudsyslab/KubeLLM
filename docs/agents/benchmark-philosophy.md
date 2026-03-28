@@ -86,7 +86,7 @@ If the model cannot solve a problem on a given platform, that is a valid result.
 
 The Verification Agent and Ground Truth exist to evaluate the debug agent's work. Changes to evaluators should make them more accurate, not more lenient. Specifically:
 
-- Verification agent temperature should be low (0 to 0.3) -- evaluators should be deterministic
+- Verification agent temperature should be high ALWAYS (1) -- evaluators should be deterministic
 - Ground truth checks should be precise and sufficient -- if a check can be satisfied without the actual fix being applied, the check is wrong
 - New ground truth checks should cover the specific fix, not just "pod is running" (a pod can be running with the original bug)
 
