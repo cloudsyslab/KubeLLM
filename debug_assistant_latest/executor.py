@@ -1,9 +1,11 @@
 #!/usr/bin/env python3
 """Single-test execution, TestResult, ground-truth hooks, and run orchestration."""
 
+import shutil
 import sys
 import time
 import traceback
+import uuid
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
@@ -25,12 +27,14 @@ from config_merge import (
     load_config_with_overrides,
     save_effective_config,
 )
+from provenance import build_environment_context, collect_run_provenance
 from report import (
     TestSummary,
     generate_aggregate_report,
     normalize_metrics_map,
     print_console_summary,
     save_aggregate_report,
+    save_provenance,
     save_run_config,
     save_test_summary,
 )
@@ -60,6 +64,7 @@ class TestResult:
     finished_at: str
     ground_truth_passed: Optional[bool] = None  # None if GT did not run
     ground_truth_configured: bool = False
+    environment_context: Optional[Dict[str, Any]] = None
 
 
 def get_timestamp_id() -> str:
@@ -72,6 +77,31 @@ def get_output_dir(run_id: str, base_dir: Optional[Path] = None) -> Path:
     if base_dir:
         return base_dir
     return REPO_ROOT / ".local" / "test_runs" / run_id
+
+
+def prune_old_test_runs(retain_n: int, current_run_dir: Optional[Path] = None) -> None:
+    """Remove oldest directories under ``.local/test_runs``, keeping *retain_n* newest by mtime.
+
+    Never deletes *current_run_dir* if it would fall in the removal set (fail-safe).
+    """
+    if retain_n <= 0:
+        return
+    base = REPO_ROOT / ".local" / "test_runs"
+    if not base.is_dir():
+        return
+    children = [p for p in base.iterdir() if p.is_dir()]
+    children.sort(key=lambda p: p.stat().st_mtime, reverse=True)
+    if len(children) <= retain_n:
+        return
+    victims = children[retain_n:]
+    cur = current_run_dir.resolve() if current_run_dir else None
+    for path in victims:
+        if cur is not None and path.resolve() == cur:
+            continue
+        try:
+            shutil.rmtree(path, ignore_errors=True)
+        except OSError:
+            pass
 
 
 def resolve_rag_api_url_for_args(args) -> str:
@@ -149,9 +179,17 @@ def _extract_execution_result(
             elif task_status == 0:
                 debug_self_report = False
 
-        verified = success if isinstance(verification_metrics, dict) else None
         if isinstance(verification_metrics, dict):
             metrics["verification"] = verification_metrics
+            vstatus = result.get("status")
+            if vstatus is True:
+                verified = True
+            elif vstatus is False:
+                verified = False
+            else:
+                verified = None
+        else:
+            verified = None
 
         derived_error = None
         if not success and isinstance(debug_metrics, dict) and debug_metrics.get("task_status") == -1:
@@ -234,7 +272,11 @@ def _write_text_log(path: Path, text: str) -> None:
 
 
 def _build_failed_result(
-    test_name: str, log_dir: Path, error_message: str, overrides: Optional[dict] = None
+    test_name: str,
+    log_dir: Path,
+    error_message: str,
+    overrides: Optional[dict] = None,
+    environment_context: Optional[Dict[str, Any]] = None,
 ) -> TestResult:
     now = datetime.now().isoformat()
     return TestResult(
@@ -250,6 +292,7 @@ def _build_failed_result(
         finished_at=now,
         ground_truth_passed=None,
         ground_truth_configured=_has_ground_truth_config(test_name, overrides or {}),
+        environment_context=environment_context,
     )
 
 
@@ -267,6 +310,9 @@ def run_single_test_in_process(
     backup_before_run: bool = False,
     teardown_after_run: bool = False,
     forced_backup_warning: bool = False,
+    run_uuid: str = "",
+    run_id: str = "",
+    environment_context: Optional[Dict[str, Any]] = None,
 ) -> TestResult:
     """
     Run a single test case - worker function for parallel execution.
@@ -322,6 +368,20 @@ def run_single_test_in_process(
         # Mark test as started (backup succeeded, about to run test)
         test_started = True
 
+        from provenance import build_environment_context
+
+        worker_runtime = {
+            "log_dir": str(log_dir),
+            "blocked_threshold": 3,
+            "environment_context": environment_context
+            if environment_context is not None
+            else build_environment_context(),
+        }
+        if run_uuid:
+            worker_runtime["run_uuid"] = run_uuid
+        if run_id:
+            worker_runtime["run_id"] = run_id
+
         # Capture stdout/stderr
         with open(stdout_log, "w", encoding="utf-8") as stdout_f, open(stderr_log, "w", encoding="utf-8") as stderr_f:
             # Redirect stdout/stderr
@@ -331,17 +391,29 @@ def run_single_test_in_process(
 
             try:
                 if technique == "allStepsAtOnce":
-                    result = allStepsAtOnce(configFile=str(config_path), config_overrides=overrides)
+                    result = allStepsAtOnce(
+                        configFile=str(config_path),
+                        config_overrides=overrides,
+                        runtime_context=worker_runtime,
+                    )
                     success, verified, debug_self_report, metrics, derived_error = _extract_execution_result(result)
                     if error is None and derived_error:
                         error = derived_error
                 elif technique == "stepByStep":
-                    result = stepByStep(configFile=str(config_path), config_overrides=overrides)
+                    result = stepByStep(
+                        configFile=str(config_path),
+                        config_overrides=overrides,
+                        runtime_context=worker_runtime,
+                    )
                     success, verified, debug_self_report, metrics, derived_error = _extract_execution_result(result)
                     if error is None and derived_error:
                         error = derived_error
                 elif technique == "singleAgent":
-                    result = singleAgentApproach(configFile=str(config_path), config_overrides=overrides)
+                    result = singleAgentApproach(
+                        configFile=str(config_path),
+                        config_overrides=overrides,
+                        runtime_context=worker_runtime,
+                    )
                     success, verified, debug_self_report, metrics, derived_error = _extract_execution_result(result)
                     if error is None and derived_error:
                         error = derived_error
@@ -396,6 +468,7 @@ def run_single_test_in_process(
         finished_at=finished_at,
         ground_truth_passed=ground_truth_passed,
         ground_truth_configured=ground_truth_configured,
+        environment_context=environment_context,
     )
 
 
@@ -439,6 +512,7 @@ def run_single_test(
     ground_truth_configured = False
     runtime_context = dict(runtime_context or {})
     runtime_context.setdefault("blocked_threshold", 3)
+    runtime_context["log_dir"] = str(log_dir)
     progress_writer = runtime_context.get("progress_writer")
 
     _best_effort_configure_console_streams()
@@ -623,6 +697,7 @@ def run_single_test(
             error=error,
         )
 
+    env_ctx = runtime_context.get("environment_context") if runtime_context else None
     return TestResult(
         test_name=test_name,
         success=success,
@@ -636,6 +711,7 @@ def run_single_test(
         finished_at=finished_at,
         ground_truth_passed=ground_truth_passed,
         ground_truth_configured=ground_truth_configured,
+        environment_context=env_ctx,
     )
 
 
@@ -658,12 +734,14 @@ def result_to_summary(result: TestResult, technique: str, overrides: dict) -> Te
         config_overrides_applied=overrides,
         ground_truth_passed=result.ground_truth_passed,
         ground_truth_configured=result.ground_truth_configured,
+        environment_context=result.environment_context,
     )
 
 
 def cmd_run_single(args, test_name: str):
     """Handle single test run."""
     run_id = get_timestamp_id()
+    run_uuid = str(uuid.uuid4())
     output_dir = get_output_dir(run_id, args.output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
     rag_api_url = resolve_rag_api_url_for_args(args)
@@ -689,11 +767,17 @@ def cmd_run_single(args, test_name: str):
         "overrides": overrides,
         "jobs": 1,
         "run_id": run_id,
+        "run_uuid": run_uuid,
         "backup_before_run": backup_before_run,
         "teardown_after_run": teardown_after_run,
         "rag_api_url": rag_api_url,
     }
     save_run_config(run_config, output_dir)
+    prov_payload = collect_run_provenance(REPO_ROOT, rag_api_url)
+    prov_payload["run_uuid"] = run_uuid
+    prov_payload["run_id"] = run_id
+    save_provenance(prov_payload, output_dir)
+    env_ctx = build_environment_context()
     progress_writer = ProgressWriter(log_dir / "progress.log")
     progress_writer.write_event(
         "run_start",
@@ -732,7 +816,9 @@ def cmd_run_single(args, test_name: str):
                 print("[ERROR] Preflight failed. Re-run with --skip-preflight only if you understand the risk.")
                 _write_text_log(log_dir / "stdout.log", "")
                 _write_text_log(log_dir / "stderr.log", error_message + "\n")
-                result = _build_failed_result(test_name, log_dir, error_message, overrides=overrides)
+                result = _build_failed_result(
+                    test_name, log_dir, error_message, overrides=overrides, environment_context=env_ctx
+                )
         if result is None:
             result = run_single_test(
                 test_name,
@@ -743,7 +829,13 @@ def cmd_run_single(args, test_name: str):
                 backup_before_run=backup_before_run,
                 teardown_after_run=teardown_after_run,
                 forced_backup_warning=forced_backup_warning,
-                runtime_context={"progress_writer": progress_writer, "blocked_threshold": 3},
+                runtime_context={
+                    "progress_writer": progress_writer,
+                    "blocked_threshold": 3,
+                    "run_uuid": run_uuid,
+                    "run_id": run_id,
+                    "environment_context": env_ctx,
+                },
             )
         wall_end = time.perf_counter()
 
@@ -757,7 +849,7 @@ def cmd_run_single(args, test_name: str):
         )
 
         aggregate = generate_aggregate_report(
-            [summary], run_config, run_id, wall_clock_s=wall_end - wall_start
+            [summary], run_config, run_id, wall_clock_s=wall_end - wall_start, run_uuid=run_uuid
         )
         save_aggregate_report(aggregate, output_dir)
         progress_writer.write_event(
@@ -779,6 +871,8 @@ def cmd_run_single(args, test_name: str):
             exit_code=exit_code,
             duration_s=round(wall_end - wall_start, 3),
         )
+        if exit_code == 0:
+            prune_old_test_runs(getattr(args, "max_retained_runs", 0), output_dir)
         return exit_code
     except Exception as exc:
         progress_writer.write_event(
@@ -795,7 +889,7 @@ def cmd_run_single(args, test_name: str):
 
 def cmd_run_many(args):
     """Handle --run-many command."""
-    from debug_assistant_latest.parallel import run_tests_parallel
+    from debug_assistant_latest.parallel import PARALLEL_TEST_TIMEOUT, run_tests_parallel
 
     pattern = args.run_many
     matched = match_pattern(pattern)
@@ -815,6 +909,7 @@ def cmd_run_many(args):
         return preflight_exit
 
     run_id = get_timestamp_id()
+    run_uuid = str(uuid.uuid4())
     output_dir = get_output_dir(run_id, args.output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
     rag_api_url = resolve_rag_api_url_for_args(args)
@@ -840,11 +935,17 @@ def cmd_run_many(args):
         "overrides": overrides,
         "jobs": jobs,
         "run_id": run_id,
+        "run_uuid": run_uuid,
         "backup_before_run": backup_before_run,
         "teardown_after_run": teardown_after_run,
         "rag_api_url": rag_api_url,
     }
     save_run_config(run_config, output_dir)
+    prov_payload = collect_run_provenance(REPO_ROOT, rag_api_url)
+    prov_payload["run_uuid"] = run_uuid
+    prov_payload["run_id"] = run_id
+    save_provenance(prov_payload, output_dir)
+    env_ctx = build_environment_context()
 
     print(f"Running {len(matched)} tests with {jobs} workers")
     print(f"Output directory: {output_dir}")
@@ -852,6 +953,9 @@ def cmd_run_many(args):
     print()
 
     wall_start = time.perf_counter()
+    parallel_timeout = getattr(args, "parallel_timeout", None)
+    if parallel_timeout is None:
+        parallel_timeout = PARALLEL_TEST_TIMEOUT
     results = run_tests_parallel(
         matched,
         technique,
@@ -861,6 +965,10 @@ def cmd_run_many(args):
         backup_before_run=backup_before_run,
         teardown_after_run=teardown_after_run,
         forced_backup_warning=forced_backup_warning,
+        run_uuid=run_uuid,
+        run_id=run_id,
+        environment_context=env_ctx,
+        parallel_timeout_s=parallel_timeout,
     )
     wall_end = time.perf_counter()
 
@@ -873,7 +981,7 @@ def cmd_run_many(args):
 
     # Generate aggregate report
     aggregate = generate_aggregate_report(
-        summaries, run_config, run_id, wall_clock_s=wall_end - wall_start
+        summaries, run_config, run_id, wall_clock_s=wall_end - wall_start, run_uuid=run_uuid
     )
     save_aggregate_report(aggregate, output_dir)
     print_console_summary(aggregate, output_dir)
@@ -881,4 +989,6 @@ def cmd_run_many(args):
 
     # Return non-zero if any test failed
     failed = sum(1 for r in results if not r.success)
+    if failed == 0:
+        prune_old_test_runs(getattr(args, "max_retained_runs", 0), output_dir)
     return 1 if failed > 0 else 0

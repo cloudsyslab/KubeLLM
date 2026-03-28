@@ -28,16 +28,26 @@ from debug_assistant_latest.config_merge import (
     load_config_with_overrides,
     merge_config_overrides,
 )
-from debug_assistant_latest.ground_truth import CheckStatus, execute_command, run_all_checks, run_check, validate_ground_truth_config
+from debug_assistant_latest.ground_truth import (
+    CheckStatus,
+    GroundTruthResult,
+    execute_command,
+    run_all_checks,
+    run_check,
+    save_ground_truth_result,
+    validate_ground_truth_config,
+)
 from debug_assistant_latest.report import AgentMetrics, TestSummary, generate_aggregate_report, load_test_summary
 from debug_assistant_latest.cli import (
     _apply_repeat_overrides,
     _build_repeat_payload,
     _run_repeat_queue,
+    _verification_temperature_issues,
 )
 from debug_assistant_latest.executor import (
     TestResult,
     _best_effort_configure_console_streams,
+    _extract_execution_result,
     _safe_flush_stream,
     _safe_write_to_stream,
     cmd_run_single,
@@ -754,6 +764,133 @@ class GroundTruthTests(unittest.TestCase):
         self.assertIn("Global timeout exceeded", result.checks[0].error)
         self.assertEqual(result.checks[1].status, CheckStatus.ERROR)
         self.assertEqual(result.checks[1].actual, "(not executed)")
+
+    def test_run_check_fails_when_output_does_not_match_expect(self):
+        cmd = f'"{sys.executable}" -c "print(1)"'
+        result = run_check(
+            {"name": "neg_expect", "cmd": cmd, "expect": "expected"},
+            passed_checks=set(),
+        )
+        self.assertEqual(result.status, CheckStatus.FAIL)
+
+    def test_run_all_checks_fails_when_a_check_fails(self):
+        cmd = f'"{sys.executable}" -c "print(1)"'
+        result = run_all_checks(
+            {
+                "test-name": "neg_suite",
+                "ground-truth": {
+                    "checks": [{"name": "c1", "cmd": cmd, "expect": "yes"}],
+                },
+            }
+        )
+        self.assertIsNotNone(result)
+        self.assertFalse(result.passed)
+        self.assertEqual(result.checks[0].status, CheckStatus.FAIL)
+
+    def test_save_ground_truth_includes_schema_provenance(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            res = GroundTruthResult(test_name="t", passed=True, checks=[], total_duration_ms=0)
+            out = save_ground_truth_result(res, Path(tmpdir))
+            data = json.loads(out.read_text(encoding="utf-8"))
+            self.assertIn("ground_truth_schema_sha256", data)
+            self.assertIn("ground_truth_schema_version", data)
+            self.assertEqual(len(data["ground_truth_schema_sha256"]), 64)
+
+
+class MainMetricsLineageTests(unittest.TestCase):
+    def test_debug_timeout_metrics_include_run_lineage(self):
+        from debug_assistant_latest import main as main_mod
+
+        captured = []
+
+        def capture(db, metrics, tsv):
+            captured.append((dict(metrics), tsv))
+
+        rc = {"run_uuid": "uu-1", "run_id": "rid-1", "log_dir": "/tmp/x"}
+        config = {"test-name": "t1"}
+
+        def run_obs(_rt, phase, action):
+            if phase == "api":
+                action()
+                return {}
+            if phase == "debug":
+                return {"input_tokens": 0, "output_tokens": 0, "total_tokens": 0}
+            raise AssertionError(phase)
+
+        mock_api = MagicMock()
+        with patch.object(main_mod, "store_metrics_entry", side_effect=capture), patch.object(
+            main_mod, "_load_runtime_config", return_value=config
+        ), patch.object(main_mod, "setUpEnvironment"), patch.object(
+            main_mod, "AgentAPI", return_value=mock_api
+        ), patch.object(main_mod, "AgentDebug") as dbg_cls, patch.object(
+            main_mod, "_run_observed_phase", side_effect=run_obs
+        ), patch.object(main_mod, "printFinishMessage"):
+            dbg = MagicMock()
+            dbg.agentProperties = {"model": "m1"}
+            dbg._last_timeout = True
+            dbg_cls.return_value = dbg
+            main_mod.allStepsAtOnce(configFile="dummy.json", runtime_context=rc)
+
+        self.assertEqual(len(captured), 1)
+        m0 = captured[0][0]
+        self.assertEqual(m0.get("run_uuid"), "uu-1")
+        self.assertEqual(m0.get("run_id"), "rid-1")
+
+
+class VerificationTemperatureLintTests(unittest.TestCase):
+    def test_verification_temperature_issues_high_value(self):
+        cfg = {"verification-agent": {"temperature": 1.0}}
+        issues = _verification_temperature_issues(cfg, allow_high=False)
+        self.assertEqual(len(issues), 1)
+        self.assertIn("0.3", issues[0])
+
+    def test_verification_temperature_issues_allowed_when_flag_set(self):
+        cfg = {"verification-agent": {"temperature": 2.0}}
+        self.assertEqual(_verification_temperature_issues(cfg, allow_high=True), [])
+
+
+class ExecutionResultExtractionTests(unittest.TestCase):
+    def test_extract_execution_verification_unknown_yields_verified_none(self):
+        payload = {
+            "status": None,
+            "debug_metrics": {"task_status": 1},
+            "verification_metrics": {"task_status": 0, "total_tokens": 10},
+        }
+        success, verified, debug_self_report, metrics, derived = _extract_execution_result(payload)
+        self.assertFalse(success)
+        self.assertIsNone(verified)
+        self.assertTrue(debug_self_report)
+        self.assertIn("verification", metrics)
+
+    def test_extract_execution_verification_true_false_preserved(self):
+        ok = {
+            "status": True,
+            "debug_metrics": {"task_status": 1},
+            "verification_metrics": {"total_tokens": 1},
+        }
+        self.assertTrue(_extract_execution_result(ok)[1])
+        bad = {
+            "status": False,
+            "debug_metrics": {"task_status": 1},
+            "verification_metrics": {"total_tokens": 1},
+        }
+        self.assertFalse(_extract_execution_result(bad)[1])
+
+    def test_result_to_summary_preserves_verified_none(self):
+        result = TestResult(
+            test_name="t1",
+            success=False,
+            verified=None,
+            debug_self_report=True,
+            duration_s=1.0,
+            error=None,
+            metrics={},
+            log_dir=Path("/tmp/t1"),
+            started_at="2026-01-01T00:00:00",
+            finished_at="2026-01-01T00:00:01",
+        )
+        summary = result_to_summary(result, "allStepsAtOnce", {})
+        self.assertIsNone(summary.verified)
 
 
 class ReportTests(unittest.TestCase):

@@ -1,0 +1,698 @@
+{
+  "review_id": "review-2026-03-28-benchmark-infra-merged",
+  "timestamp": "2026-03-28T12:00:00Z",
+  "repository": "c:/Users/minhl/OneDrive/Desktop/KubeLLM-main",
+  "scope": {
+    "section": "full",
+    "path": "debug_assistant_latest;tests;docs",
+    "depth": "medium"
+  },
+  "summary": {
+    "total_findings": 26,
+    "critical": 0,
+    "warning": 20,
+    "suggestion": 6,
+    "sections": [
+      {
+        "review_id": "review-2026-03-28-architecture",
+        "section": "architecture",
+        "count": 10
+      },
+      {
+        "review_id": "review-2026-03-28-debt",
+        "section": "debt",
+        "count": 8
+      },
+      {
+        "review_id": "review-2026-03-28-tests",
+        "section": "tests",
+        "count": 3
+      },
+      {
+        "review_id": "review-2026-03-28-performance",
+        "section": "performance",
+        "count": 3
+      },
+      {
+        "review_id": "review-2026-03-28-style",
+        "section": "style",
+        "count": 2
+      }
+    ],
+    "pre_verification_count": 26,
+    "filter_rate": "0%"
+  },
+  "findings": [
+    {
+      "id": "ARCH-001",
+      "severity": "warning",
+      "category": "architecture",
+      "file": "debug_assistant_latest/executor.py",
+      "line": 686,
+      "title": "run_config.json lacks run provenance bundle",
+      "problem": "Single-test run_config records test_names, technique, overrides, jobs, run_id, backup/teardown flags, and rag_api_url but does not capture git commit, dirty flag, kubectl context, Kubernetes server version, fixture digest, or a stable run UUID for cross-artifact joins.",
+      "evidence": "    run_config = {\n        \"test_names\": [test_name],\n        \"technique\": technique,\n        \"overrides\": overrides,\n        \"jobs\": 1,\n        \"run_id\": run_id,\n        \"backup_before_run\": backup_before_run,\n        \"teardown_after_run\": teardown_after_run,\n        \"rag_api_url\": rag_api_url,\n    }",
+      "suggestion": "Extend run_config (or add provenance.json) written in cmd_run_single/cmd_run_many: capture subprocess output of git rev-parse HEAD, optional git status --porcelain, kubectl config current-context, kubectl version -o json (server block), ground_truth.schema.json version hash, and a uuid4 run_uuid reused in summary.json and metrics.",
+      "impact": "Published benchmark numbers cannot be reproduced or fairly compared across machines, cluster versions, or harness revisions.",
+      "confidence": 0.95,
+      "verification": {
+        "evidence_verified": true,
+        "structure_confirmed": "skipped",
+        "line_corrected": null,
+        "confidence_adjusted": 0.95
+      },
+      "context": {
+        "callers": [],
+        "dependencies": [
+          "debug_assistant_latest/report.py"
+        ]
+      }
+    },
+    {
+      "id": "ARCH-002",
+      "severity": "warning",
+      "category": "architecture",
+      "file": "debug_assistant_latest/metrics_db.py",
+      "line": 120,
+      "title": "SQLite metrics rows cannot be joined to a specific RUN_DIR",
+      "problem": "The metrics table stores timestamp, test_case, model, agent_type, tokens, and costs but has no run_id/run_uuid column, so rows in token_metrics.db cannot be deterministically linked to `.local/test_runs/<run_id>/` artifacts.",
+      "evidence": "        cursor.execute('''\n            CREATE TABLE IF NOT EXISTS metrics (\n                id INTEGER PRIMARY KEY AUTOINCREMENT,\n                timestamp TEXT NOT NULL,\n                test_case TEXT NOT NULL,\n                model TEXT,\n                agent_type TEXT,\n                input_tokens INTEGER DEFAULT 0,\n                output_tokens INTEGER DEFAULT 0,\n                total_tokens INTEGER DEFAULT 0,\n                task_status INTEGER DEFAULT 0,\n                task_status_verified  INTEGER DEFAULT 0,\n                duration_s REAL DEFAULT 0.0,\n                cost REAL DEFAULT 0.0\n            )\n        ''')",
+      "suggestion": "Add nullable columns run_uuid TEXT and run_id TEXT (or a single run_uuid) populated from executor at test start; migrate existing DBs with ALTER TABLE or versioned schema.",
+      "impact": "Cost and token history cannot be audited alongside per-test logs and ground_truth.json for a given harness execution.",
+      "confidence": 0.95,
+      "verification": {
+        "evidence_verified": true,
+        "structure_confirmed": "skipped",
+        "line_corrected": null,
+        "confidence_adjusted": 0.95
+      },
+      "context": {
+        "callers": [
+          "debug_assistant_latest/main.py"
+        ],
+        "dependencies": []
+      }
+    },
+    {
+      "id": "ARCH-003",
+      "severity": "suggestion",
+      "category": "architecture",
+      "file": "debug_assistant_latest/main.py",
+      "line": 15,
+      "title": "token_metrics.db lives at repo root, not under run output tree",
+      "problem": "Metrics are written to a single shared database path beside the repo root, which splits the audit trail across `.local/test_runs/` and an unrelated file with no enforced foreign key to run directories.",
+      "evidence": "SCRIPT_DIR = Path(__file__).parent.absolute()\ndb_path = str(SCRIPT_DIR.parent / \"token_metrics.db\")",
+      "suggestion": "Either embed run_uuid in every insert and document the join contract, or optionally mirror metrics JSON per test under the run log_dir; keep DB as aggregate only with explicit schema documentation.",
+      "impact": "Operators analyzing only run folders miss token/cost data; DB-only analysis misses GT and verification artifacts.",
+      "confidence": 0.9,
+      "verification": {
+        "evidence_verified": true,
+        "structure_confirmed": "skipped",
+        "line_corrected": null,
+        "confidence_adjusted": 0.9
+      },
+      "context": {
+        "callers": [],
+        "dependencies": [
+          "debug_assistant_latest/metrics_db.py"
+        ]
+      }
+    },
+    {
+      "id": "ARCH-004",
+      "severity": "warning",
+      "category": "architecture",
+      "file": "debug_assistant_latest/verification_base.py",
+      "line": 86,
+      "title": "Verification agent full report is never persisted as a run artifact",
+      "problem": "The verification LLM response is stored on the agent object (verificationReport) and used for token metrics, but the runner does not write an equivalent of ground_truth.json for the middle layer of the verification hierarchy.",
+      "evidence": "            response = self.agent.run(prompt)\n            self.verificationReport = response.content\n            self.verificationStatus = parse_verification_status(self.verificationReport)",
+      "suggestion": "After verification, write verification_report.txt (or .json with redaction options) under the test log_dir alongside summary.json; include parsed status and raw text hash for large payloads.",
+      "impact": "Cannot mine verification vs ground-truth disagreement or audit UNKNOWN token cases without re-running the model.",
+      "confidence": 0.95,
+      "verification": {
+        "evidence_verified": true,
+        "structure_confirmed": "skipped",
+        "line_corrected": null,
+        "confidence_adjusted": 0.95
+      },
+      "context": {
+        "callers": [
+          "debug_assistant_latest/main.py"
+        ],
+        "dependencies": []
+      }
+    },
+    {
+      "id": "ARCH-005",
+      "severity": "suggestion",
+      "category": "architecture",
+      "file": "debug_assistant_latest/ground_truth.py",
+      "line": 81,
+      "title": "ground_truth.json has no schema or harness version field",
+      "problem": "GroundTruthResult.to_dict serializes test_name, passed, checks, summary, duration, and timestamp but omits ground_truth.schema.json version or repo revision, so old runs cannot be interpreted after schema evolution.",
+      "evidence": "    def to_dict(self) -> Dict[str, Any]:\n        \"\"\"Convert to JSON-serializable dict.\"\"\"\n        return {\n            \"test_name\": self.test_name,\n            \"passed\": self.passed,\n            \"checks\": [c.to_dict() for c in self.checks],\n            \"summary\": self.summary,\n            \"total_duration_ms\": self.total_duration_ms,\n            \"timestamp\": self.timestamp,\n        }",
+      "suggestion": "Add optional fields ground_truth_schema_version and schema_hash (from GROUND_TRUTH_SCHEMA_PATH content) when saving via save_ground_truth_result.",
+      "impact": "Longitudinal benchmark comparisons may mis-attribute PASS/FAIL changes to the model when the schema or check semantics changed.",
+      "confidence": 0.88,
+      "verification": {
+        "evidence_verified": true,
+        "structure_confirmed": "skipped",
+        "line_corrected": null,
+        "confidence_adjusted": 0.88
+      },
+      "context": {
+        "callers": [
+          "debug_assistant_latest/executor.py"
+        ],
+        "dependencies": []
+      }
+    },
+    {
+      "id": "ARCH-006",
+      "severity": "warning",
+      "category": "architecture",
+      "file": "debug_assistant_latest/compare_runs.py",
+      "line": 47,
+      "title": "Run comparison omits self-report vs verifier and run provenance",
+      "problem": "Per-test comparison rows include status, verified, ground_truth_passed, tokens, cost, and duration but not debug_self_report, so the three-layer hierarchy from benchmark philosophy is collapsed in compare output; aggregate comparison also ignores harness versions.",
+      "evidence": "    return {\n        \"status\": summary.status,\n        \"verified\": summary.verified,\n        \"ground_truth_passed\": summary.ground_truth_passed,\n        \"debug_tokens\": dbg_tok,\n        \"verification_tokens\": ver_tok,\n        \"total_tokens\": dbg_tok + ver_tok,\n        \"debug_cost\": round(_num(dbg, \"cost\"), 4),\n        \"verification_cost\": round(_num(ver, \"cost\"), 4),\n        \"total_cost\": round(_num(dbg, \"cost\") + _num(ver, \"cost\"), 4),\n        \"duration_s\": round(float(summary.duration_s or 0), 2),\n    }",
+      "suggestion": "Extend _summary_row with debug_self_report from TestSummary; load optional provenance.json from each run root if present and print a short harness diff section in compare_runs_markdown.",
+      "impact": "Cross-run analysis hides overclaim (SOLVED vs GT FAIL) and makes A/B model studies harder to interpret.",
+      "confidence": 0.92,
+      "verification": {
+        "evidence_verified": true,
+        "structure_confirmed": "skipped",
+        "line_corrected": null,
+        "confidence_adjusted": 0.92
+      },
+      "context": {
+        "callers": [],
+        "dependencies": [
+          "debug_assistant_latest/report.py"
+        ]
+      }
+    },
+    {
+      "id": "ARCH-007",
+      "severity": "warning",
+      "category": "architecture",
+      "file": "debug_assistant_latest/rag_api.py",
+      "line": 141,
+      "title": "RAG responses are not persisted for retrieval audit",
+      "problem": "ask_question posts to /ask/ and returns JSON from the API, but nothing in this module or AgentAPI persists chunk IDs, scores, or hashes for post-hoc shortcut or contamination analysis.",
+      "evidence": "def ask_question(prompt: str):\n    \"\"\"\n    Ask a question to the initialized assistant.\n    \"\"\"\n    return _request(\"post\", \"/ask/\", data={\"prompt\": prompt})",
+      "suggestion": "If the API returns source metadata, capture it in the runner and write rag_retrieval.json per test (query hash, doc ids, chunk hashes); if not, extend the API contract and thread optional logging through AgentAPI.askQuestion.",
+      "impact": "Cannot verify whether the knowledge phase leaked fix-adjacent content or dominated the measured task.",
+      "confidence": 0.9,
+      "verification": {
+        "evidence_verified": true,
+        "structure_confirmed": "skipped",
+        "line_corrected": null,
+        "confidence_adjusted": 0.9
+      },
+      "context": {
+        "callers": [
+          "debug_assistant_latest/api_agents.py"
+        ],
+        "dependencies": []
+      }
+    },
+    {
+      "id": "ARCH-008",
+      "severity": "warning",
+      "category": "architecture",
+      "file": "debug_assistant_latest/report.py",
+      "line": 54,
+      "title": "TestSummary omits platform and cluster context",
+      "problem": "The canonical summary.json schema has no fields for sys.platform, shell flavor, kubectl context, or Python version, so environment-driven capability differences are not recorded beside PASS/FAIL.",
+      "evidence": "@dataclass\nclass TestSummary:\n    \"\"\"Summary of a single test execution.\"\"\"\n    test_name: str\n    technique: str\n    status: str  # PASS, FAIL, ERROR, TIMEOUT\n    verified: Optional[bool]  # True/False if verification ran, None if no verification\n    debug_self_report: Optional[bool] = None",
+      "suggestion": "Add optional dict environment_context or top-level fields populated once per test in result_to_summary: platform, python version, kubectl context (best-effort subprocess), minikube profile from config.",
+      "impact": "Windows vs Unix or cluster skew cannot be stratified when publishing aggregate pass rates.",
+      "confidence": 0.9,
+      "verification": {
+        "evidence_verified": true,
+        "structure_confirmed": "skipped",
+        "line_corrected": null,
+        "confidence_adjusted": 0.9
+      },
+      "context": {
+        "callers": [
+          "debug_assistant_latest/executor.py"
+        ],
+        "dependencies": []
+      }
+    },
+    {
+      "id": "ARCH-009",
+      "severity": "warning",
+      "category": "architecture",
+      "file": "debug_assistant_latest/cli.py",
+      "line": 374,
+      "title": "queue_summary.json lacks stochastic reporting metadata",
+      "problem": "Repeat queue summary records iteration index, status, duration, and output_dir but not model IDs, seeds, temperature, or aggregation hints needed for credible multi-run statistics.",
+      "evidence": "    summary_obj = {\n        \"queue_id\": base_run_id,\n        \"total_iterations\": total,\n        \"completed_iterations\": len(results),\n        \"stall_limit_s\": stall_limit,\n        \"started_at\": queue_started_at,\n        \"finished_at\": queue_finished_at,\n        \"results\": [],\n    }",
+      "suggestion": "Embed effective CLI overrides snapshot per iteration (or pointer to each iter's run_config.json), document median/IQR reporting in docs, and add optional seed field when APIs support it.",
+      "impact": "Repeat queues produce folders but no machine-readable standard for publishing pass@k or variance.",
+      "confidence": 0.88,
+      "verification": {
+        "evidence_verified": true,
+        "structure_confirmed": "skipped",
+        "line_corrected": null,
+        "confidence_adjusted": 0.88
+      },
+      "context": {
+        "callers": [],
+        "dependencies": []
+      }
+    },
+    {
+      "id": "ARCH-010",
+      "severity": "warning",
+      "category": "architecture",
+      "file": "debug_assistant_latest/executor.py",
+      "line": 694,
+      "title": "run_config omits RAG server api_version and repo_signature",
+      "problem": "run_config stores rag_api_url only. The client validates api_version and repo_signature during requests (rag_api._ensure_server_compatible) but those values are not frozen into the run bundle, so later analysis cannot tell which server build served retrieval.",
+      "evidence": "        \"teardown_after_run\": teardown_after_run,\n        \"rag_api_url\": rag_api_url,\n    }",
+      "suggestion": "After successful preflight or first RAG call, capture server_info (api_version, repo_signature) into run_config or provenance.json.",
+      "impact": "Changing RAG server or corpus between runs breaks comparability without a recorded fingerprint.",
+      "confidence": 0.85,
+      "verification": {
+        "evidence_verified": true,
+        "structure_confirmed": "skipped",
+        "line_corrected": null,
+        "confidence_adjusted": 0.85
+      },
+      "context": {
+        "callers": [],
+        "dependencies": [
+          "debug_assistant_latest/rag_api.py",
+          "debug_assistant_latest/preflight.py"
+        ]
+      }
+    },
+    {
+      "id": "DEBT-001",
+      "severity": "warning",
+      "category": "debt",
+      "file": "debug_assistant_latest/main.py",
+      "line": 158,
+      "title": "Debug metrics DB row couples verification outcome into task_status_verified",
+      "problem": "After verification, the code inserts a row for the debug agent but passes verification_metrics.get(\"task_status\") as the third argument to store_metrics_entry, which maps to task_status_verified in SQLite\u2014mixing evaluator layers without documenting that join semantics for analysts.",
+      "evidence": "    _finalize_metrics(verification_metrics, verification_end_time - verification_start_time)\n    store_metrics_entry(db_path, debug_metrics, verification_metrics.get(\"task_status\"))\n    store_metrics_entry(db_path, verification_metrics, verification_metrics.get(\"task_status\"))",
+      "suggestion": "Rename column or split into verification_passed_int; document in metrics_db.py; or store debug row only with debug self-report status and use a separate column for verification outcome.",
+      "impact": "Downstream SQL that assumes task_status_verified reflects debug agent verification will misread benchmark data.",
+      "confidence": 0.88,
+      "verification": {
+        "evidence_verified": true,
+        "structure_confirmed": "skipped",
+        "line_corrected": null,
+        "confidence_adjusted": 0.88
+      },
+      "context": {
+        "callers": [],
+        "dependencies": [
+          "debug_assistant_latest/metrics_db.py"
+        ]
+      }
+    },
+    {
+      "id": "DEBT-002",
+      "severity": "warning",
+      "category": "debt",
+      "file": "debug_assistant_latest/executor.py",
+      "line": 137,
+      "title": "Verification UNKNOWN collapses to verified=False in summaries",
+      "problem": "When main returns status None (verification token missing), success becomes False and verified is False because verified is derived from success when verification_metrics exists\u2014conflating explicit FAILED with UNKNOWN.",
+      "evidence": "        success = result.get(\"status\") is True\n        ...\n        verified = success if isinstance(verification_metrics, dict) else None",
+      "suggestion": "Map result.get(\"status\") explicitly: True -> verified True, False -> verified False, None -> verified None; keep success separate for overall PASS/FAIL if needed.",
+      "impact": "summary.json and aggregates mislabel inconclusive verification as negative, corrupting verification-rate metrics.",
+      "confidence": 0.9,
+      "verification": {
+        "evidence_verified": true,
+        "structure_confirmed": "skipped",
+        "line_corrected": null,
+        "confidence_adjusted": 0.9
+      },
+      "context": {
+        "callers": [],
+        "dependencies": [
+          "debug_assistant_latest/main.py"
+        ]
+      }
+    },
+    {
+      "id": "DEBT-003",
+      "severity": "suggestion",
+      "category": "debt",
+      "file": "debug_assistant_latest/preflight.py",
+      "line": 87,
+      "title": "Preflight kubectl client check is not copied into run artifacts",
+      "problem": "Preflight runs kubectl version --client --output=json for availability, but cmd_run_single/cmd_run_many never persist that JSON (or server version) into run_config, so successful runs lack cluster/client identity in the audit bundle.",
+      "evidence": "def _check_kubectl() -> PreflightCheck:\n    try:\n        result = subprocess.run(\n            [\"kubectl\", \"version\", \"--client\", \"--output=json\"],",
+      "suggestion": "Return structured kubectl/docker/minikube facts from run_preflight and merge into run_config or provenance.json when tests execute.",
+      "impact": "Reproducibility gap for any issue filed against a specific kubectl minor version.",
+      "confidence": 0.85,
+      "verification": {
+        "evidence_verified": true,
+        "structure_confirmed": "skipped",
+        "line_corrected": null,
+        "confidence_adjusted": 0.85
+      },
+      "context": {
+        "callers": [
+          "debug_assistant_latest/executor.py"
+        ],
+        "dependencies": []
+      }
+    },
+    {
+      "id": "DEBT-004",
+      "severity": "suggestion",
+      "category": "debt",
+      "file": "docs/benchmark-philosophy.md",
+      "line": 93,
+      "title": "No documented stochastic reporting standard for multi-run studies",
+      "problem": "Philosophy stresses reproducible fixtures and honest failure but does not define how to report variance across --repeat or multiple seeds (median, CI, pass@k), unlike industry eval hygiene referenced in the gaps doc.",
+      "evidence": "### Test cases must be reproducible\n\nEvery test starts from the same broken state. This means:\n\n- Setup commands in `config_step.json` must fully recreate the broken scenario from scratch",
+      "suggestion": "Add a short subsection on publishing results: minimum N, aggregation method, and forbidding single-hero run headlines; link to queue_summary.json fields once extended.",
+      "impact": "External readers may treat one noisy LLM draw as definitive.",
+      "confidence": 0.82,
+      "verification": {
+        "evidence_verified": true,
+        "structure_confirmed": "skipped",
+        "line_corrected": null,
+        "confidence_adjusted": 0.82
+      },
+      "context": {
+        "callers": [],
+        "dependencies": []
+      }
+    },
+    {
+      "id": "DEBT-005",
+      "severity": "warning",
+      "category": "debt",
+      "file": "debug_assistant_latest/main.py",
+      "line": 376,
+      "title": "main.run() discards technique return payloads",
+      "problem": "The library-style run() helper invokes allStepsAtOnce/stepByStep/singleAgentApproach but throws away their dict results, making programmatic embedding of the harness harder and encouraging only CLI/subprocess use.",
+      "evidence": "def run( debugType, configFile ):\n    if debugType == \"allStepsAtOnce\":\n        allStepsAtOnce(configFile)\n    elif debugType == \"stepByStep\":\n        stepByStep(configFile)\n    elif debugType == \"singleAgent\":\n        singleAgentApproach(configFile)\n    return",
+      "suggestion": "Return the same dict the techniques return (status, debug_metrics, verification_metrics) for tests and tooling.",
+      "impact": "Higher friction for golden-run or harness regression tests that call main.py directly.",
+      "confidence": 0.9,
+      "verification": {
+        "evidence_verified": true,
+        "structure_confirmed": "skipped",
+        "line_corrected": null,
+        "confidence_adjusted": 0.9
+      },
+      "context": {
+        "callers": [],
+        "dependencies": []
+      }
+    },
+    {
+      "id": "DEBT-006",
+      "severity": "warning",
+      "category": "debt",
+      "file": "debug_assistant_latest/cli.py",
+      "line": 96,
+      "title": "--validate-ground-truth ignores verification-agent settings",
+      "problem": "Validation loops call validate_ground_truth_config only; evaluator alignment (e.g. verification temperature per philosophy) is never checked, so misconfigured LLM evaluators ship undetected.",
+      "evidence": "            config = load_config_with_overrides(config_path, {})\n            gt_errors = validate_ground_truth_config(config)",
+      "suggestion": "Add validate_evaluator_config or extend CLI to warn when verification-agent.temperature > 0.3 unless explicitly exempted.",
+      "impact": "Benchmark integrity drifts silently when configs contradict documented evaluator rules.",
+      "confidence": 0.9,
+      "verification": {
+        "evidence_verified": true,
+        "structure_confirmed": "skipped",
+        "line_corrected": null,
+        "confidence_adjusted": 0.9
+      },
+      "context": {
+        "callers": [],
+        "dependencies": [
+          "docs/benchmark-philosophy.md"
+        ]
+      }
+    },
+    {
+      "id": "DEBT-007",
+      "severity": "warning",
+      "category": "debt",
+      "file": "debug_assistant_latest/config_merge.py",
+      "line": 18,
+      "title": "No harness lock between chat models and embedder for fair sweeps",
+      "problem": "CLI_TO_CONFIG_MAP allows independent override of api-agent.model and api-agent.embedder; nothing warns when comparing chat models that one run changed retrieval and another did not, undermining multi-model study comparability.",
+      "evidence": "CLI_TO_CONFIG_MAP = {\n    \"debug_model\": \"debug-agent.model\",\n    \"api_model\": \"api-agent.model\",\n    \"verification_model\": \"verification-agent.model\",\n    \"embedder\": \"api-agent.embedder\",\n    \"embedder_provider\": \"api-agent.embedder-provider\",\n    \"minikube_profile\": \"minikube-profile\",\n}",
+      "suggestion": "Emit a warning or require an explicit flag when embedder differs from a recorded baseline; persist embedder + corpus id in provenance.",
+      "impact": "Model A vs B comparisons may attribute capability differences to retrieval changes.",
+      "confidence": 0.85,
+      "verification": {
+        "evidence_verified": true,
+        "structure_confirmed": "skipped",
+        "line_corrected": null,
+        "confidence_adjusted": 0.85
+      },
+      "context": {
+        "callers": [
+          "debug_assistant_latest/executor.py"
+        ],
+        "dependencies": []
+      }
+    },
+    {
+      "id": "DEBT-008",
+      "severity": "warning",
+      "category": "debt",
+      "file": "docs/agent-loop.md",
+      "line": 16,
+      "title": "No benchmark flaky-test register or policy in operator docs",
+      "problem": "The agent loop documents how to read summary.json statuses but never defines a machine-readable flaky scenario registry (rate, last seen, owner) distinct from product CI quarantine\u2014matching the taxonomy gap on benchmark flakiness hygiene.",
+      "evidence": "3. **READ RESULTS** \u2014 Open `<RUN_DIR>/<test_name>/summary.json`  \n   Check `status` (`PASS`, `FAIL`, `ERROR`, `TIMEOUT`), `verified`, `ground_truth_passed`, `error_message`, `error_context`.  \n   If `status` is `PASS`, stop.",
+      "suggestion": "Add FLAKY.md or data/flaky.json plus guidance: benchmarks label flakiness and fix root cause rather than hiding failures; link to issues.",
+      "impact": "Intermittent K8s timing issues are indistinguishable from model regression in historical dashboards.",
+      "confidence": 0.84,
+      "verification": {
+        "evidence_verified": true,
+        "structure_confirmed": "skipped",
+        "line_corrected": null,
+        "confidence_adjusted": 0.84
+      },
+      "context": {
+        "callers": [],
+        "dependencies": []
+      }
+    },
+    {
+      "id": "TEST-001",
+      "severity": "warning",
+      "category": "tests",
+      "file": "tests/test_refactor_helpers.py",
+      "line": 574,
+      "title": "No pytest oracle-gap (negative control) coverage for ground truth",
+      "problem": "GroundTruthTests exercise schema validation and command execution helpers but there is no automated test that applies a deliberately wrong cluster fixture and asserts GT checks fail\u2014leaving weak checks undetected until manual review.",
+      "evidence": "class GroundTruthTests(unittest.TestCase):\n    \"\"\"Tests for ground_truth module helpers.\"\"\"",
+      "suggestion": "Add integration-style tests with mocked subprocess outputs or temp configs where expect values intentionally mismatch, asserting run_all_checks reports FAIL; optionally add mutation-style variants of config_step checks in CI without calling live LLMs.",
+      "impact": "Ground truth can regress to 'pod running' style checks without CI catching loss of discriminative power.",
+      "confidence": 0.87,
+      "verification": {
+        "evidence_verified": true,
+        "structure_confirmed": "skipped",
+        "line_corrected": null,
+        "confidence_adjusted": 0.87
+      },
+      "context": {
+        "callers": [],
+        "dependencies": [
+          "debug_assistant_latest/ground_truth.py"
+        ]
+      }
+    },
+    {
+      "id": "TEST-002",
+      "severity": "warning",
+      "category": "tests",
+      "file": "tests/test_refactor_helpers.py",
+      "line": 760,
+      "title": "Report tests do not cover verification UNKNOWN path in summaries",
+      "problem": "generate_aggregate_report tests use verified True/False but do not assert behavior when verification ran but returned ambiguous status mapped into TestSummary (executor edge case).",
+      "evidence": "    def test_generate_aggregate_report_tracks_ground_truth_and_costs(self):",
+      "suggestion": "Add unit tests for _extract_execution_result or result_to_summary with result dict {\"status\": None, \"verification_metrics\": {...}} expecting verified None.",
+      "impact": "Regression in tri-state verification reporting could ship unnoticed.",
+      "confidence": 0.85,
+      "verification": {
+        "evidence_verified": true,
+        "structure_confirmed": "skipped",
+        "line_corrected": null,
+        "confidence_adjusted": 0.85
+      },
+      "context": {
+        "callers": [],
+        "dependencies": [
+          "debug_assistant_latest/executor.py",
+          "debug_assistant_latest/report.py"
+        ]
+      }
+    },
+    {
+      "id": "TEST-003",
+      "severity": "suggestion",
+      "category": "tests",
+      "file": "tests/test_metrics_db_pricing.py",
+      "line": 1,
+      "title": "No golden harness smoke that ties RUN_DIR metrics to SQLite",
+      "problem": "metrics_db tests focus on pricing math and locking; none assert that a synthetic run writes consistent identifiers into both summary.json and metrics rows (once run_uuid exists).",
+      "evidence": "\"\"\"Tests for metrics_db.calculate_cost and external model_pricing.json.\"\"\"\n\nimport importlib\nimport sys\nimport unittest",
+      "suggestion": "After implementing run_uuid, add an end-to-end test that runs a minimal mock path or patches store_metrics_entry to assert join keys align with save_test_summary output.",
+      "impact": "Lineage features can break silently after refactors.",
+      "confidence": 0.82,
+      "verification": {
+        "evidence_verified": true,
+        "structure_confirmed": "skipped",
+        "line_corrected": null,
+        "confidence_adjusted": 0.82
+      },
+      "context": {
+        "callers": [],
+        "dependencies": [
+          "debug_assistant_latest/metrics_db.py"
+        ]
+      }
+    },
+    {
+      "id": "PERF-001",
+      "severity": "warning",
+      "category": "performance",
+      "file": "debug_assistant_latest/parallel.py",
+      "line": 104,
+      "title": "Parallel scale lacks structural isolation\u2014warning only",
+      "problem": "When --jobs>1, the runner prints a warning about overlapping K8s resources but does not enforce namespace suffixes, resource name uniquification, or preflight rejection of unsafe combinations, so throughput gains trade off against collision-induced flaky failures.",
+      "evidence": "        print(\"WARNING: Parallel execution may cause K8s resource conflicts if tests\")\n        print(\"         use overlapping resource names. Use --jobs 1 for isolation.\")",
+      "suggestion": "Implement one of: automatic RUN_ID suffix injection into manifests, namespace-per-worker, preflight static analysis of fixture names across the selected test set, or hard fail when pattern matches non-disjoint resource names.",
+      "impact": "Parallel benchmark batches produce ambiguous failures that blend model error with harness contention.",
+      "confidence": 0.93,
+      "verification": {
+        "evidence_verified": true,
+        "structure_confirmed": "skipped",
+        "line_corrected": null,
+        "confidence_adjusted": 0.93
+      },
+      "context": {
+        "callers": [
+          "debug_assistant_latest/executor.py"
+        ],
+        "dependencies": []
+      }
+    },
+    {
+      "id": "PERF-002",
+      "severity": "warning",
+      "category": "performance",
+      "file": "debug_assistant_latest/executor.py",
+      "line": 70,
+      "title": "No retention or pruning for .local/test_runs",
+      "problem": "get_output_dir always nests new timestamped directories under .local/test_runs without TTL, quota, or prune hooks\u2014large sweeps can exhaust disk.",
+      "evidence": "def get_output_dir(run_id: str, base_dir: Optional[Path] = None) -> Path:\n    \"\"\"Get the output directory for a test run.\"\"\"\n    if base_dir:\n        return base_dir\n    return REPO_ROOT / \".local\" / \"test_runs\" / run_id",
+      "suggestion": "Add optional --max-retained-runs, document manual cleanup in agent-loop, or ship a small maintenance script invoked from docs.",
+      "impact": "Long repeat queues and CI artifacts can fill disks and slow filesystem operations.",
+      "confidence": 0.86,
+      "verification": {
+        "evidence_verified": true,
+        "structure_confirmed": "skipped",
+        "line_corrected": null,
+        "confidence_adjusted": 0.86
+      },
+      "context": {
+        "callers": [
+          "debug_assistant_latest/cli.py"
+        ],
+        "dependencies": []
+      }
+    },
+    {
+      "id": "PERF-003",
+      "severity": "suggestion",
+      "category": "performance",
+      "file": "debug_assistant_latest/parallel.py",
+      "line": 19,
+      "title": "Hard per-test timeout fixed at 600s",
+      "problem": "PARALLEL_TEST_TIMEOUT is a module constant with no CLI override, so heterogeneous benchmarks cannot give harder tests more wall clock without code edits.",
+      "evidence": "# Per-test timeout for parallel execution (seconds)\nPARALLEL_TEST_TIMEOUT = 600",
+      "suggestion": "Expose --parallel-timeout on cli.py and thread into run_tests_parallel for operator-tunable scale studies.",
+      "impact": "Legitimate long-running scenarios may be killed or forced into serial mode only.",
+      "confidence": 0.8,
+      "verification": {
+        "evidence_verified": true,
+        "structure_confirmed": "skipped",
+        "line_corrected": null,
+        "confidence_adjusted": 0.8
+      },
+      "context": {
+        "callers": [],
+        "dependencies": []
+      }
+    },
+    {
+      "id": "STYLE-001",
+      "severity": "warning",
+      "category": "style",
+      "file": "debug_assistant_latest/troubleshooting/wrong_port/config_step.json",
+      "line": 34,
+      "title": "verification-agent temperature 1.0 contradicts benchmark philosophy",
+      "problem": "This scenario (and the rest of the standard suite) sets verification-agent temperature to 1 while docs/benchmark-philosophy.md requires low temperature (0\u20130.3) for evaluators, harming repeatability of the middle verification layer.",
+      "evidence": "    \"verification-agent\": {\n        \"model\": \"gpt-5-nano\",\n        \"temperature\": 1\n    },",
+      "suggestion": "Lower temperature to <=0.3 across troubleshooting/**/config_step.json unless a documented exception exists; add CI lint (see DEBT-006).",
+      "impact": "Verification LLM outcomes are not comparable across runs even when cluster state is identical.",
+      "confidence": 0.95,
+      "verification": {
+        "evidence_verified": true,
+        "structure_confirmed": "skipped",
+        "line_corrected": null,
+        "confidence_adjusted": 0.95
+      },
+      "context": {
+        "callers": [],
+        "dependencies": [
+          "debug_assistant_latest/troubleshooting/environment_variable/config_step.json",
+          "debug_assistant_latest/troubleshooting/incorrect_selector/config_step.json",
+          "debug_assistant_latest/troubleshooting/liveness_probe/config_step.json",
+          "debug_assistant_latest/troubleshooting/missing_dependency/config_step.json",
+          "debug_assistant_latest/troubleshooting/port_mismatch/config_step.json",
+          "debug_assistant_latest/troubleshooting/port_mismatch_wrong_interface/config_step.json",
+          "debug_assistant_latest/troubleshooting/readiness_failure/config_step.json",
+          "debug_assistant_latest/troubleshooting/readiness_missing_dependency/config_step.json",
+          "debug_assistant_latest/troubleshooting/resource_limits_oom/config_step.json",
+          "debug_assistant_latest/troubleshooting/selector_env_variable/config_step.json",
+          "debug_assistant_latest/troubleshooting/volume_mount/config_step.json",
+          "debug_assistant_latest/troubleshooting/wrong_interface/config_step.json"
+        ]
+      }
+    },
+    {
+      "id": "STYLE-002",
+      "severity": "warning",
+      "category": "style",
+      "file": "debug_assistant_latest/verification_base.py",
+      "line": 53,
+      "title": "Default verification temperature conflicts with strict configs",
+      "problem": "VerificationAgentBase defaults missing temperature to 0.3 in code, but checked-in JSON overrides to 1.0\u2014two sources of truth without schema enforcement.",
+      "evidence": "            temperature = props.get(\"temperature\", 0.3)",
+      "suggestion": "Centralize evaluator defaults in one module + JSON schema for config_step.json, or validate at load time that temperature is within policy.",
+      "impact": "Future edits may assume code default applies while JSON silently overrides.",
+      "confidence": 0.85,
+      "verification": {
+        "evidence_verified": true,
+        "structure_confirmed": "skipped",
+        "line_corrected": null,
+        "confidence_adjusted": 0.85
+      },
+      "context": {
+        "callers": [],
+        "dependencies": []
+      }
+    }
+  ]
+}

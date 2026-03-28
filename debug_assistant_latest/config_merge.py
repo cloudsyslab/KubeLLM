@@ -7,6 +7,7 @@ without modifying the original JSON files.
 
 import copy
 import json
+import sys
 import os
 from pathlib import Path
 from typing import Any, Dict, Optional
@@ -136,6 +137,12 @@ def build_overrides_from_args(args) -> dict:
         value = getattr(args, cli_arg, None)
         if value is not None:
             overrides[config_path] = value
+    if "api-agent.embedder" in overrides or "api-agent.embedder-provider" in overrides:
+        print(
+            "[WARNING] Embedder overrides change retrieval; keep embedder fixed when comparing "
+            "chat models unless retrieval is the variable under study (DEBT-007).",
+            file=sys.stderr,
+        )
     return overrides
 
 

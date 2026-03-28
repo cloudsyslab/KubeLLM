@@ -1,0 +1,81 @@
+{
+  "review_id": "review-2026-03-28-tests",
+  "timestamp": "2026-03-28T12:00:00Z",
+  "repository": "c:/Users/minhl/OneDrive/Desktop/KubeLLM-main",
+  "scope": {
+    "section": "tests",
+    "path": "tests",
+    "depth": "medium"
+  },
+  "summary": {
+    "total_findings": 3,
+    "critical": 0,
+    "warning": 2,
+    "suggestion": 1,
+    "files_examined": 4,
+    "pre_verification_count": 3,
+    "filter_rate": "0%"
+  },
+  "findings": [
+    {
+      "id": "TEST-001",
+      "severity": "warning",
+      "category": "tests",
+      "file": "tests/test_refactor_helpers.py",
+      "line": 574,
+      "title": "No pytest oracle-gap (negative control) coverage for ground truth",
+      "problem": "GroundTruthTests exercise schema validation and command execution helpers but there is no automated test that applies a deliberately wrong cluster fixture and asserts GT checks fail—leaving weak checks undetected until manual review.",
+      "evidence": "class GroundTruthTests(unittest.TestCase):\n    \"\"\"Tests for ground_truth module helpers.\"\"\"",
+      "suggestion": "Add integration-style tests with mocked subprocess outputs or temp configs where expect values intentionally mismatch, asserting run_all_checks reports FAIL; optionally add mutation-style variants of config_step checks in CI without calling live LLMs.",
+      "impact": "Ground truth can regress to 'pod running' style checks without CI catching loss of discriminative power.",
+      "confidence": 0.87,
+      "verification": {
+        "evidence_verified": true,
+        "structure_confirmed": "skipped",
+        "line_corrected": null,
+        "confidence_adjusted": 0.87
+      },
+      "context": {"callers": [], "dependencies": ["debug_assistant_latest/ground_truth.py"]}
+    },
+    {
+      "id": "TEST-002",
+      "severity": "warning",
+      "category": "tests",
+      "file": "tests/test_refactor_helpers.py",
+      "line": 760,
+      "title": "Report tests do not cover verification UNKNOWN path in summaries",
+      "problem": "generate_aggregate_report tests use verified True/False but do not assert behavior when verification ran but returned ambiguous status mapped into TestSummary (executor edge case).",
+      "evidence": "    def test_generate_aggregate_report_tracks_ground_truth_and_costs(self):",
+      "suggestion": "Add unit tests for _extract_execution_result or result_to_summary with result dict {\"status\": None, \"verification_metrics\": {...}} expecting verified None.",
+      "impact": "Regression in tri-state verification reporting could ship unnoticed.",
+      "confidence": 0.85,
+      "verification": {
+        "evidence_verified": true,
+        "structure_confirmed": "skipped",
+        "line_corrected": null,
+        "confidence_adjusted": 0.85
+      },
+      "context": {"callers": [], "dependencies": ["debug_assistant_latest/executor.py", "debug_assistant_latest/report.py"]}
+    },
+    {
+      "id": "TEST-003",
+      "severity": "suggestion",
+      "category": "tests",
+      "file": "tests/test_metrics_db_pricing.py",
+      "line": 1,
+      "title": "No golden harness smoke that ties RUN_DIR metrics to SQLite",
+      "problem": "metrics_db tests focus on pricing math and locking; none assert that a synthetic run writes consistent identifiers into both summary.json and metrics rows (once run_uuid exists).",
+      "evidence": "\"\"\"Tests for metrics_db.calculate_cost and external model_pricing.json.\"\"\"\n\nimport importlib\nimport sys\nimport unittest",
+      "suggestion": "After implementing run_uuid, add an end-to-end test that runs a minimal mock path or patches store_metrics_entry to assert join keys align with save_test_summary output.",
+      "impact": "Lineage features can break silently after refactors.",
+      "confidence": 0.82,
+      "verification": {
+        "evidence_verified": true,
+        "structure_confirmed": "skipped",
+        "line_corrected": null,
+        "confidence_adjusted": 0.82
+      },
+      "context": {"callers": [], "dependencies": ["debug_assistant_latest/metrics_db.py"]}
+    }
+  ]
+}
