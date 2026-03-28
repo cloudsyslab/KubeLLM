@@ -7,7 +7,7 @@ import traceback
 from datetime import datetime
 from multiprocessing import Process, Queue
 from pathlib import Path
-from typing import Dict, List
+from typing import Any, Dict, List, Optional
 
 from debug_assistant_latest.executor import (
     TestResult,
@@ -15,6 +15,7 @@ from debug_assistant_latest.executor import (
     run_single_test,
     run_single_test_in_process,
 )
+from debug_assistant_latest.provenance import build_environment_context
 
 # Per-test timeout for parallel execution (seconds)
 PARALLEL_TEST_TIMEOUT = 600
@@ -29,6 +30,9 @@ def _worker_wrapper(
     backup_before_run: bool,
     teardown_after_run: bool,
     forced_backup_warning: bool,
+    run_uuid: str,
+    run_id: str,
+    environment_context: Optional[Dict[str, Any]],
 ) -> None:
     """
     Worker wrapper that runs a test and puts the result in a Queue.
@@ -45,6 +49,9 @@ def _worker_wrapper(
             backup_before_run,
             teardown_after_run,
             forced_backup_warning,
+            run_uuid=run_uuid,
+            run_id=run_id,
+            environment_context=environment_context,
         )
         result_queue.put(("success", result))
     except Exception as e:
@@ -60,6 +67,10 @@ def run_tests_parallel(
     backup_before_run: bool = False,
     teardown_after_run: bool = False,
     forced_backup_warning: bool = False,
+    run_uuid: str = "",
+    run_id: str = "",
+    environment_context: Optional[Dict[str, Any]] = None,
+    parallel_timeout_s: int = PARALLEL_TEST_TIMEOUT,
 ) -> List[TestResult]:
     """
     Run multiple tests in parallel with hard per-test timeout.
@@ -82,6 +93,13 @@ def run_tests_parallel(
         List of TestResult objects
     """
     results = []
+    seq_runtime_context = None
+    if run_uuid or run_id or environment_context is not None:
+        seq_runtime_context = {
+            "run_uuid": run_uuid,
+            "run_id": run_id,
+            "environment_context": environment_context if environment_context is not None else build_environment_context(),
+        }
 
     if max_workers == 1:
         # Sequential execution
@@ -95,12 +113,13 @@ def run_tests_parallel(
                 backup_before_run=backup_before_run,
                 teardown_after_run=teardown_after_run,
                 forced_backup_warning=forced_backup_warning,
+                runtime_context=seq_runtime_context,
             )
             results.append(result)
     else:
         # Parallel execution with hard per-test timeout
         print(f"Running {len(test_names)} tests with {max_workers} workers...")
-        print(f"Hard timeout: {PARALLEL_TEST_TIMEOUT}s per test")
+        print(f"Hard timeout: {parallel_timeout_s}s per test")
         print("WARNING: Parallel execution may cause K8s resource conflicts if tests")
         print("         use overlapping resource names. Use --jobs 1 for isolation.")
         print()
@@ -128,6 +147,9 @@ def run_tests_parallel(
                         backup_before_run,
                         teardown_after_run,
                         forced_backup_warning,
+                        run_uuid,
+                        run_id,
+                        environment_context,
                     ),
                 )
                 proc.start()
@@ -192,9 +214,9 @@ def run_tests_parallel(
                         result_queue.cancel_join_thread()
                         completed.append(test_name)
 
-                elif elapsed > PARALLEL_TEST_TIMEOUT:
+                elif elapsed > parallel_timeout_s:
                     # Hard timeout - terminate the process
-                    print(f"[TIMEOUT] {test_name}: Exceeded {PARALLEL_TEST_TIMEOUT}s, terminating...")
+                    print(f"[TIMEOUT] {test_name}: Exceeded {parallel_timeout_s}s, terminating...")
                     proc.terminate()
                     proc.join(timeout=5)
                     if proc.is_alive():
@@ -210,7 +232,7 @@ def run_tests_parallel(
                     log_dir.mkdir(parents=True, exist_ok=True)
                     stderr_log = log_dir / "stderr.log"
                     with open(stderr_log, "a", encoding="utf-8") as f:
-                        f.write(f"\n\n[TIMEOUT] Test exceeded {PARALLEL_TEST_TIMEOUT}s and was terminated.\n")
+                        f.write(f"\n\n[TIMEOUT] Test exceeded {parallel_timeout_s}s and was terminated.\n")
 
                     results.append(
                         TestResult(
@@ -219,7 +241,7 @@ def run_tests_parallel(
                             verified=None,
                             debug_self_report=None,
                             duration_s=elapsed,
-                            error=f"Timeout: exceeded {PARALLEL_TEST_TIMEOUT}s",
+                            error=f"Timeout: exceeded {parallel_timeout_s}s",
                             metrics={},
                             log_dir=log_dir,
                             started_at=datetime.now().isoformat(),
