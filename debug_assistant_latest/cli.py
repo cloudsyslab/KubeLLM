@@ -97,7 +97,7 @@ def _verification_temperature_issues(config: dict, allow_high: bool) -> List[str
         return [f"verification-agent.temperature is not numeric: {raw!r}"]
     if temp > 0.3:
         return [
-            f"verification-agent.temperature={temp} exceeds 0.3 (see docs/benchmark-philosophy.md); "
+            f"verification-agent.temperature={temp} exceeds 0.3 (see docs/agents/benchmark-philosophy.md); "
             "use --allow-high-temp-verification to allow."
         ]
     return []

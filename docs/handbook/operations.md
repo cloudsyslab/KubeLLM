@@ -2,7 +2,7 @@
 
 End-to-end workflow: cluster preflight, runner commands, results, teardown, and orchestrator helpers. All development and test execution is expected from your **local workspace** (with Docker, Kubernetes, pgvector, and the RAG API available as needed).
 
-See also [README.md](../README.md) for prerequisites and [agent-loop.md](agent-loop.md) for the autonomous fix loop.
+See also [README.md](../../README.md) for prerequisites and [agent-loop.md](../agents/agent-loop.md) for the autonomous fix loop.
 
 ## Workspace setup
 
@@ -132,4 +132,4 @@ bash orchestrator/collect_diagnostics.sh
 
 ## Agent iteration loop
 
-For fixing failures and re-running tests, follow [agent-loop.md](agent-loop.md).
+For fixing failures and re-running tests, follow [agent-loop.md](../agents/agent-loop.md).

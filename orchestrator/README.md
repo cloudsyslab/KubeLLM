@@ -1,6 +1,6 @@
 # KubeLLM Orchestrator
 
-Repo documentation index: [docs/README.md](../docs/README.md). Runner and orchestrator steps: [docs/operations.md](../docs/operations.md).
+Repo documentation index: [docs/README.md](../docs/README.md). Runner and orchestrator steps: [docs/handbook/operations.md](../docs/handbook/operations.md).
 
 This folder is the control plane for the local orchestrator workflow. It defines:
 - The system prompt the orchestrator uses each run.
@@ -46,7 +46,7 @@ Primary duties:
 |--------|---------|
 | `CLAUDE.md` | Short router to docs; conventions and quick commands. |
 | `docs/README.md` | Documentation map (architecture, agent loop, operations, history). |
-| `docs/ARCHITECTURE.md` | Component map and data flow (replaces stale `REPO_INDEX.md`). |
+| `docs/handbook/ARCHITECTURE.md` | Component map and data flow (replaces stale `REPO_INDEX.md`). |
 | `orchestrator/context_pack.py` | Only for shipping context to external systems; workers with repo access don't need this. |
 
 Workers can self-serve context from these files. Do not paste full file contents into worker prompts unless the worker lacks repo access.
@@ -199,7 +199,7 @@ Use this when delegating to a worker.
 ```
 You are a coding worker. Follow this Task Spec exactly.
 
-**Read first**: CLAUDE.md (router), docs/README.md (doc map), docs/agent-loop.md (if fixing tests)
+**Read first**: CLAUDE.md (router), docs/README.md (doc map), docs/agents/agent-loop.md (if fixing tests)
 
 Task Spec:
 <paste Task Spec>

@@ -8,7 +8,7 @@ All notable documentation and workflow changes are listed here. For file-level r
 
 ## 2026-03-26 — Agentic debug loop (Phases 1–5)
 
-Autonomous iteration support: Windows timeouts, metrics on all debug paths, relaxed verification tokens, consistent `main.py` return shapes, `preflight.py`, `result_interpreter.py` / `error_catalog.py`, runner flags (`--diagnose-last`, `--latest-run`, `--dashboard`), `error_context` on `summary.json`, dashboard, documentation split into `docs/` with [docs/agent-loop.md](docs/agent-loop.md) as the canonical runbook.
+Autonomous iteration support: Windows timeouts, metrics on all debug paths, relaxed verification tokens, consistent `main.py` return shapes, `preflight.py`, `result_interpreter.py` / `error_catalog.py`, runner flags (`--diagnose-last`, `--latest-run`, `--dashboard`), `error_context` on `summary.json`, dashboard, documentation split into `docs/` with [docs/agents/agent-loop.md](docs/agents/agent-loop.md) as the canonical runbook.
 
 Details: [docs/history/2026-03-26-agentic-loop-development-update.md](docs/history/2026-03-26-agentic-loop-development-update.md).  
 Original phased plan: [docs/history/sprint-agentic-loop-plan.md](docs/history/sprint-agentic-loop-plan.md).
