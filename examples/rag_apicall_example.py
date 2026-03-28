@@ -1,4 +1,10 @@
 # Import the functions from assistant_client.py
+import sys
+from pathlib import Path
+
+_REPO_ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(_REPO_ROOT / "debug_assistant_latest"))
+
 from rag_api import (
     BASE_URL,
     initialize_assistant,
