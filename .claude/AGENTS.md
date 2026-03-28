@@ -31,6 +31,22 @@ diverges, that is the most interesting moment -- explore it.
 When something fails, propose 2-3 resolution approaches ranked by likelihood of
 success. Do not just try the first thing that comes to mind.
 
+## Autonomy
+
+This is a sandbox. The agent has full autonomy within the project directory.
+
+- Set `SafeToAutoRun: true` on ALL commands that operate within this project
+  directory. This includes file creation, deletion, script execution, package
+  installs, and any other workspace operations. Never queue a workspace
+  operation for human approval.
+- Never write scratch files, temp files, or test outputs to paths outside this
+  project directory (e.g. `C:\tmp\`). External paths trigger IDE file access
+  permission prompts that block execution. Use a local path inside the project
+  instead.
+- If a command modifies system-level state outside this project (global
+  installs, environment variables, registry), that is the only case where
+  human approval is appropriate.
+
 ## What Not to Repeat
 
 This file is read on every turn. It should contain only principles that change

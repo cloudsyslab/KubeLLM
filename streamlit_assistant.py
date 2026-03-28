@@ -13,19 +13,21 @@ from rag_api import (
 
 
 # Streamlit App UI
-st.title("RAG Assistant with Ollama")
+st.title("RAG Assistant")
 
 # Section to Initialize the Assistant
 st.header("Initialize Assistant")
 llm_model = st.text_input("LLM Model", "llama3.1:70b")
 embeddings_model = st.text_input("Embeddings Model", "nomic-embed-text")
+embeddings_provider = st.selectbox("Embeddings Provider", ["ollama", "openai", "infer"], index=0)
 
 # Placeholder for results
 initialize_placeholder = st.empty()
 
 if st.button("Initialize Assistant"):
     with initialize_placeholder:
-        init_response = initialize_assistant(llm_model, embeddings_model)
+        selected_provider = None if embeddings_provider == "infer" else embeddings_provider
+        init_response = initialize_assistant(llm_model, embeddings_model or None, selected_provider)
         st.json(init_response)
 
 # Section to Ask a Question
@@ -97,4 +99,3 @@ if st.button("Start New Run"):
     with new_run_placeholder:
         new_run_response = start_new_run()
         st.json(new_run_response)
-

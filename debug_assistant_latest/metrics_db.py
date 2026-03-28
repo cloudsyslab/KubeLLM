@@ -2,12 +2,51 @@
 # This module handles SQLite operations for metrics logging.
 # Import this in your main script: from metrics_db import store_metrics_entry, calculate_totals
 
+import json
 import sqlite3
 import os
 import time
 import random
 from datetime import datetime
 from pathlib import Path
+
+_MODEL_PRICING_PATH = Path(__file__).resolve().parent / "model_pricing.json"
+_PRICING_CACHE: dict | None = None
+_PRICING_LOADED_OK: bool = False
+
+
+def _load_model_prices() -> dict:
+    """Load model pricing from JSON next to this module; cache result."""
+    global _PRICING_CACHE, _PRICING_LOADED_OK
+    if _PRICING_CACHE is not None:
+        return _PRICING_CACHE
+    if not _MODEL_PRICING_PATH.is_file():
+        print(
+            f"Warning: Model pricing file not found at {_MODEL_PRICING_PATH} - costs set to $0.00"
+        )
+        _PRICING_CACHE = {}
+        _PRICING_LOADED_OK = False
+        return _PRICING_CACHE
+    try:
+        with open(_MODEL_PRICING_PATH, encoding="utf-8") as f:
+            data = json.load(f)
+        if not isinstance(data, dict):
+            print(
+                f"Warning: Invalid model pricing file at {_MODEL_PRICING_PATH} - costs set to $0.00"
+            )
+            _PRICING_CACHE = {}
+            _PRICING_LOADED_OK = False
+            return _PRICING_CACHE
+        _PRICING_CACHE = data
+        _PRICING_LOADED_OK = True
+        return _PRICING_CACHE
+    except (OSError, json.JSONDecodeError) as e:
+        print(
+            f"Warning: Could not load model pricing from {_MODEL_PRICING_PATH}: {e} - costs set to $0.00"
+        )
+        _PRICING_CACHE = {}
+        _PRICING_LOADED_OK = False
+        return _PRICING_CACHE
 
 # Constants for retry logic
 MAX_RETRIES = 5
@@ -54,22 +93,21 @@ def _execute_with_retry(func, *args, **kwargs):
     raise last_error
 
 def calculate_cost(model_name: str, input_tokens: int, output_tokens: int) -> float:
-    """Calculate cost based on model pricing."""
-    # Pricing dict for LLM models (NEED TO VERIFY)
-    MODEL_PRICES = {
-        'gpt-5': {'input_per_1k': 0.00125, 'output_per_1k': 0.01},
-        'gpt-5-mini': {'input_per_1k': 0.00025, 'output_per_1k': 0.002},
-        'gpt-5-nano': {'input_per_1k': 0.00005, 'output_per_1k': 0.0004},
-        'gpt-4.1': {'input_per_1k': 0.003, 'output_per_1k': 0.012},
-        'gpt-4o': {'input_per_1k': 0.005, 'output_per_1k': 0.02},
-        'gpt-4o-mini': {'input_per_1k': 0.0006, 'output_per_1k': 0.0024},
-        # Add more as needed; fallback to 0 for unknown
-    }
-    prices = MODEL_PRICES.get(model_name, {'input_per_1k': 0, 'output_per_1k': 0})
-    if prices['input_per_1k'] == 0 and prices['output_per_1k'] == 0:
-        print(f"Warning: Unknown model '{model_name}' - cost set to $0.00")
-    input_cost = (input_tokens / 1000.0) * prices['input_per_1k']
-    output_cost = (output_tokens / 1000.0) * prices['output_per_1k']
+    """Calculate cost based on model pricing from model_pricing.json next to this module."""
+    prices_map = _load_model_prices()
+    entry = prices_map.get(model_name)
+    if entry is None:
+        if _PRICING_LOADED_OK:
+            print(f"Warning: Unknown model '{model_name}' - cost set to $0.00")
+        return 0.0
+    try:
+        input_per_1k = float(entry["input_per_1k"])
+        output_per_1k = float(entry["output_per_1k"])
+    except (KeyError, TypeError, ValueError):
+        print(f"Warning: Invalid pricing entry for model '{model_name}' - cost set to $0.00")
+        return 0.0
+    input_cost = (input_tokens / 1000.0) * input_per_1k
+    output_cost = (output_tokens / 1000.0) * output_per_1k
     return round(input_cost + output_cost, 4)
 
 def _store_metrics_entry_impl(db_path, metrics, task_status_verified):

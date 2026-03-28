@@ -227,11 +227,26 @@ This phase replaces manual user execution. YOU launch Codex workers directly.
 
 ### 2.5.1 Execution Command
 
-Use the Bash tool to launch Codex workers with JSONL streaming for observability:
+Use the Bash tool to launch Codex workers with JSONL streaming for observability.
+
+There are two execution profiles:
+
+- **Default profile** - use for normal `/codex` work
+- **`/discover` profile** - use when `/codex` is supporting delegated discovery and workers need crawl4ai
+
+Use the `/discover` profile whenever the delegated work is web research coming
+from the discover workflow. In that mode, workers own their own crawling and
+must have a writable crawl4ai runtime plus full browser launch permissions.
 
 ```bash
 # PREFERRED: With JSONL streaming for real-time observability
 codex exec --full-auto --json -c "search=true" -o "output.md" "PROMPT" > events.jsonl 2>&1 &
+
+# /discover profile: crawl4ai-capable worker
+$env:CRAWL4_AI_BASE_DIRECTORY = "<repo>\\.codex-runtime\\crawl4ai\\run-<discover-id>\\wave-<n>"
+$env:PYTHONUTF8 = "1"
+$env:PYTHONIOENCODING = "utf-8"
+codex -a never exec --ephemeral -s danger-full-access --json -c "search=true" --output-schema "codex-prompts/worker-response-schema.json" -o "worker-1-output.json" "PROMPT" > worker-1-events.jsonl 2>&1
 
 # Monitor events.jsonl for progress:
 # {"type":"item.started","item":{"type":"web_search",...}}
@@ -244,12 +259,21 @@ codex exec --full-auto -c "search=true" -o "output.md" "PROMPT"
 
 **Flag selection:**
 - `--full-auto`: No approval prompts, enables autonomous execution
+- `-a never`: Explicit non-interactive approval mode for the `/discover` profile
 - `--json`: **Stream JSONL events for observability** (item.started, item.completed, turn.completed)
 - `-c "search=true"`: Enables web research (IMPORTANT: use this, not `--search` which is interactive-only)
+- `--output-schema <file>`: Enforce structured worker output for reliable synthesis
 - `--sandbox read-only`: For research tasks (no file writes)
 - `--sandbox workspace-write`: For code generation tasks (can write files)
+- `-s danger-full-access`: Required for delegated `/discover` workers that need crawl4ai browser execution
 - `-o <file>`: Capture final output to file
 - `--ephemeral`: Don't persist session (cleaner for workers)
+
+**`/discover` profile rules:**
+- All workers in the same wave share the same `CRAWL4_AI_BASE_DIRECTORY`
+- That shared runtime is internal crawl state only, not a source of findings
+- Each worker still writes its own final output file with structured findings
+- Use `worker-<id>-output.json` style paths so ingestion stays worker-scoped
 
 **JSONL event types you will see:**
 - `thread.started` - session begins
@@ -275,10 +299,17 @@ For each OFFLOAD task, launch with JSONL streaming and monitor for activity:
 **Step 1: Launch worker in background with JSONL streaming**
 
 ```powershell
-# Launch Codex worker, stream events to file, capture PID
+# Launch /discover worker with shared crawl4ai runtime, stream events to file, capture PID
+$waveRuntime = ".\.codex-runtime\crawl4ai\run-$discoverId\wave-$waveNumber"
+$env:CRAWL4_AI_BASE_DIRECTORY = $waveRuntime
+$env:PYTHONUTF8 = "1"
+$env:PYTHONIOENCODING = "utf-8"
+
 $proc = Start-Process -FilePath "codex" -ArgumentList @(
-    "exec", "--full-auto", "--json", "-c", "search=true",
-    "-o", "worker-1-output.md", "PROMPT_TEXT"
+    "-a", "never", "exec", "--ephemeral", "-s", "danger-full-access",
+    "--json", "-c", "search=true",
+    "--output-schema", "codex-prompts/worker-response-schema.json",
+    "-o", "worker-1-output.json", "PROMPT_TEXT"
 ) -RedirectStandardOutput "worker-1-events.jsonl" -RedirectStandardError "worker-1-err.log" -PassThru -NoNewWindow
 $workerPid = $proc.Id
 $startTime = Get-Date
@@ -325,7 +356,7 @@ while ($true) {
 
 ```powershell
 # Read final output
-$output = Get-Content "worker-1-output.md" -Raw
+$output = Get-Content "worker-1-output.json" -Raw
 
 # Parse last turn.completed event for token usage
 $lastTurn = Get-Content "worker-1-events.jsonl" |
@@ -341,6 +372,8 @@ Write-Host "Worker 1 complete: $($lastTurn.usage.input_tokens) input tokens"
 When implementing this, use the Bash tool with `run_in_background: true` for parallel workers.
 Track each worker's PID and events file. Poll periodically using TaskOutput or direct file reads.
 Terminate hung workers that exceed IDLE_TIMEOUT.
+For delegated `/discover` work, create the shared wave runtime directory before launch and
+point every worker in that wave at the same `CRAWL4_AI_BASE_DIRECTORY`.
 
 ### 2.5.4 Progress Reporting
 
@@ -439,12 +472,24 @@ Before launching workers, inform the user:
 Launching now...
 ```
 
+For delegated `/discover` waves, also:
+- create `.\.codex-runtime\crawl4ai\run-<discover-id>\wave-<n>` before launch
+- delete stale crawl4ai runtime directories older than 24 hours before creating the new one
+- state clearly that the shared runtime is crawl state only and that worker outputs stay separate
+
 ### 3.2 Launch Workers
 
 Execute Phase 2.5 for all OFFLOAD tasks. Track:
 - Task IDs for background processes
 - Output file paths for result collection
 - Start times for timeout monitoring
+
+When the delegated work is `/discover`:
+- use the `/discover` profile for every worker in the wave
+- keep one shared runtime directory per wave, not per worker
+- instruct workers to use built-in search for discovery and `crwl` for page extraction by default
+- instruct workers not to edit repo files or install tools
+- enforce `codex-prompts/worker-response-schema.json` so worker outputs stay structured
 
 ### 3.3 Progress Updates
 
@@ -459,6 +504,10 @@ Collect all worker outputs:
 2. Parse JSON if schema was enforced
 3. Fall back to text extraction if parsing fails
 4. Note any workers that timed out or failed
+
+Never ingest the shared crawl4ai runtime as worker output. The crawl DB, cached
+content, logs, and browser state are implementation detail only. Synthesis reads
+only the per-worker output files and the event logs needed for monitoring.
 
 ### 3.5 Archive Prompts (Optional)
 
@@ -536,6 +585,12 @@ With validated findings in context:
 4. Apply your own judgment to rank and weight findings
 5. Connect findings to the user's specific context and goals
 6. Produce the final deliverable the user originally requested
+
+After successful synthesis for delegated `/discover` work:
+1. Confirm all worker processes in the wave have exited
+2. Delete the shared wave runtime directory under `.\.codex-runtime\crawl4ai\run-<discover-id>\wave-<n>`
+3. If deletion fails because of a lingering file handle, retry with short backoff
+4. If it still fails, leave it in place and let the next run's stale-runtime janitor remove it
 
 ### 4.6 Continue Original Workflow
 

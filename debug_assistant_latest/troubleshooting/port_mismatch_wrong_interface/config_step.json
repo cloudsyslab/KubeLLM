@@ -1,7 +1,8 @@
 {
     "api-agent": {
         "model": "gpt-5-mini",
-        "embedder": "nomic-embed-text",
+        "embedder": "text-embedding-3-small",
+        "embedder-provider": "openai",
         "clear-knowledge": true,
         "new-run": true,
         "init-agent": true,
@@ -61,5 +62,49 @@
     ],
     "test-name": "port_mismatch_wrong_interface",
     "test-directory": "",
-    "yaml-file-name": "port_mismatch_wrong_interface.yaml"
+    "yaml-file-name": "port_mismatch_wrong_interface.yaml",
+    "ground-truth": {
+        "description": "Verify port alignment and server is reachable via pod IP",
+        "timeout_seconds": 60,
+        "checks": [
+            {
+                "name": "pod_ready",
+                "cmd": "kubectl get pod port-mismatch-wrong-interface-app -o jsonpath='{.status.conditions[?(@.type==\"Ready\")].status}'",
+                "expect": "True",
+                "poll_interval_s": 2,
+                "max_attempts": 15,
+                "description": "Pod is Ready"
+            },
+            {
+                "name": "port_aligned",
+                "cmd": "kubectl get svc port-mismatch-app-service -o jsonpath='{.spec.ports[0].targetPort}'",
+                "expect": "8765",
+                "depends_on": [
+                    "pod_ready"
+                ],
+                "description": "Service targetPort is 8765"
+            },
+            {
+                "name": "endpoints_exist",
+                "cmd": "kubectl get endpoints port-mismatch-app-service -o jsonpath='{.subsets[0].addresses[0].ip}'",
+                "expect_regex": "^[0-9]+\\.[0-9]+\\.[0-9]+\\.[0-9]+$",
+                "depends_on": [
+                    "pod_ready"
+                ],
+                "description": "Service has endpoint addresses"
+            },
+            {
+                "name": "server_responding",
+                "cmd": "kubectl exec port-mismatch-wrong-interface-app -- python3 -c \"import subprocess, urllib.request; ip=subprocess.check_output(['hostname', '-i'], text=True).strip().split()[0]; print(urllib.request.urlopen(f'http://{ip}:8765/').getcode())\"",
+                "expect": "200",
+                "poll_interval_s": 2,
+                "max_attempts": 5,
+                "depends_on": [
+                    "port_aligned",
+                    "endpoints_exist"
+                ],
+                "description": "Server responds via the pod IP, proving it is not bound only to localhost"
+            }
+        ]
+    }
 }

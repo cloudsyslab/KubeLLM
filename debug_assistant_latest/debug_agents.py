@@ -1,21 +1,23 @@
 import re
 
-import timeout_decorator
 from phi.agent import Agent as llmAgent
 from phi.knowledge.website import WebsiteKnowledgeBase
 from phi.storage.agent.postgres import PgAgentStorage
 from phi.vectordb.pgvector import PgVector, SearchType
 
 from agent_base import Agent
-from agent_helpers import build_llm_agent, build_model
+from agent_helpers import agent_debug_logging_enabled, build_llm_agent, build_model, build_tool_kwargs
 from better_shell import BetterShellTools
+from runtime_progress import BlockedCommandThresholdError
+from runtime_config import DB_URL, build_embedder, resolve_embedder_config
 from prompt_helpers import (
     TOOL_USAGE_RULES,
     append_relevant_files,
     classify_status_from_response,
     extract_metrics,
+    get_case_specific_guidance,
 )
-from utils import withTimeout
+from timeout_helpers import timeout, withTimeout
 
 
 class AgentDebug(Agent):
@@ -33,6 +35,7 @@ class AgentDebug(Agent):
                 model_name,
                 instructions=[x for x in self.agentProperties["instructions"]],
                 guidelines=[x for x in self.agentProperties["guidelines"]],
+                tool_kwargs=build_tool_kwargs(self.runtime_context, phase="debug"),
             )
         except Exception as e:
             raise RuntimeError(f"Error preparing debug agent: {e}") from e
@@ -46,11 +49,12 @@ class AgentDebug(Agent):
                 + " "
                 + self.config["debug-prompt"]["additional-directions"]
             )
+            self.prompt += get_case_specific_guidance(self.config)
         except Exception as e:
             raise RuntimeError(f"Error creating debug agent prompt: {e}") from e
 
     @withTimeout(False)
-    @timeout_decorator.timeout(480)
+    @timeout(480)
     def askQuestion(self):
         """Ask the formatted prepared question to the debug agent."""
         try:
@@ -62,6 +66,7 @@ class AgentDebug(Agent):
             prompt += "You can update these files if necessary. If any files are updated, make sure to delete and reapply the configuration file.\n"
             prompt += "Do not use live feed flags when checking the logs such as 'kubectl logs -f'\n"
             prompt += TOOL_USAGE_RULES
+            prompt += get_case_specific_guidance(self.config)
 
             response = self.agent.run(prompt, return_response=True)
             response_content = response.content
@@ -73,6 +78,18 @@ class AgentDebug(Agent):
                 agent_type="debug",
                 task_status=int(self.debugStatus),
             )
+        except BlockedCommandThresholdError as exc:
+            self.response = f"{exc}\n<|FAILED|>"
+            self.debugStatus = False
+            return {
+                "test_case": self.config["test-name"],
+                "model": self.agentProperties.get("model"),
+                "agent_type": "debug",
+                "input_tokens": 0,
+                "output_tokens": 0,
+                "total_tokens": 0,
+                "task_status": 0,
+            }
         except Exception as e:
             raise RuntimeError(f"Error asking question to debug agent: {e}") from e
 
@@ -82,6 +99,8 @@ class AgentDebugStepByStep(Agent):
         super().__init__(agentType, config)
         self.agentAPIResponse = None
         self.debugStatus = None
+        self.response = None
+        self.steps = []
 
     def prepareAgent(self):
         """Prepare the debug assistant based on the config file."""
@@ -91,6 +110,7 @@ class AgentDebugStepByStep(Agent):
                 model_name,
                 instructions=[x for x in self.agentProperties["instructions"]],
                 guidelines=[x for x in self.agentProperties["guidelines"]],
+                tool_kwargs=build_tool_kwargs(self.runtime_context, phase="debug"),
             )
         except Exception as e:
             raise RuntimeError(f"Error preparing debug agent: {e}") from e
@@ -104,6 +124,7 @@ class AgentDebugStepByStep(Agent):
             )
             self.prompt = append_relevant_files(self.config, self.prompt)
             self.prompt += "Use `kubectl` commands to gather information, and provide a series of shell commands for the user to resolve the issue."
+            self.prompt += get_case_specific_guidance(self.config)
         except Exception as e:
             raise RuntimeError(f"Error creating debug agent prompt: {e}") from e
 
@@ -123,10 +144,11 @@ class AgentDebugStepByStep(Agent):
             raise RuntimeError(f"Failed to generate steps to problem: {e}") from e
 
     @withTimeout(False)
-    @timeout_decorator.timeout(480)
+    @timeout(480)
     def executeProblemSteps(self):
         """Execute each generated problem-solving step in order."""
         try:
+            step_metrics = []
             numSteps = len(self.steps)
             for i, step in enumerate(self.steps, start=1):
                 prompt = f"Perform the action suggested here: \n{step}\n"
@@ -140,10 +162,49 @@ class AgentDebugStepByStep(Agent):
                 prompt += f"\nThis is step {i} out of {numSteps}."
                 prompt += "Do not use live feed flags when checking the logs such as 'kubectl logs -f'"
                 prompt += TOOL_USAGE_RULES
+                prompt += get_case_specific_guidance(self.config)
 
-                response = self.agent.run(prompt)
-                response = response.content
-                self.debugStatus = classify_status_from_response(response)
+                response = self.agent.run(prompt, return_response=True)
+                response_content = response.content
+                self.response = response_content
+                self.debugStatus = classify_status_from_response(response_content)
+                step_metrics.append(
+                    extract_metrics(
+                        response,
+                        test_case=self.config["test-name"],
+                        agent_type="debug",
+                        task_status=int(self.debugStatus),
+                    )
+                )
+
+            aggregate = {
+                "test_case": self.config["test-name"],
+                "model": "",
+                "agent_type": "debug",
+                "input_tokens": 0,
+                "output_tokens": 0,
+                "total_tokens": 0,
+                "task_status": -1 if self.debugStatus is None else int(self.debugStatus),
+            }
+            for metrics in step_metrics:
+                if metrics.get("model"):
+                    aggregate["model"] = metrics["model"]
+                aggregate["input_tokens"] += metrics.get("input_tokens", 0)
+                aggregate["output_tokens"] += metrics.get("output_tokens", 0)
+                aggregate["total_tokens"] += metrics.get("total_tokens", 0)
+                aggregate["task_status"] = metrics.get("task_status", aggregate["task_status"])
+            return aggregate
+        except BlockedCommandThresholdError:
+            self.debugStatus = False
+            return {
+                "test_case": self.config["test-name"],
+                "model": self.agentProperties.get("model"),
+                "agent_type": "debug",
+                "input_tokens": 0,
+                "output_tokens": 0,
+                "total_tokens": 0,
+                "task_status": 0,
+            }
         except Exception as e:
             raise RuntimeError(f"Failed to execute problem steps: {e}") from e
 
@@ -153,18 +214,42 @@ class SingleAgent(Agent):
         super().__init__(agentType, config)
         self.knowledgeResponse = None
         self.debugStatus = None
+        self._resolved_debug_model_name = None
 
     def prepareAgent(self):
         """Prepare the single-agent workflow based on the config file."""
         try:
-            model = build_model("o3-mini")
+            single_agent_config = self.agentProperties or {}
+            debug_agent_config = self.config.get("debug-agent", {})
+            api_agent_config = self.config.get("api-agent", {})
+
+            model_name = (
+                single_agent_config.get("model")
+                or debug_agent_config.get("model")
+                or api_agent_config.get("model")
+            )
+            if not model_name:
+                raise RuntimeError(
+                    "SingleAgent requires a configured model in 'single-agent.model', "
+                    "'debug-agent.model', or 'api-agent.model'."
+                )
+
+            model = build_model(model_name)
+            self._resolved_debug_model_name = model_name
+            embedder_config = resolve_embedder_config(
+                embeddings_model=single_agent_config.get("embedder") or api_agent_config.get("embedder"),
+                provider=single_agent_config.get("embedder-provider") or api_agent_config.get("embedder-provider"),
+                chat_model_name=model_name,
+            )
+            embedder = build_embedder(embedder_config.model, provider=embedder_config.provider)
 
             knowledge_base = WebsiteKnowledgeBase(
-                urls=self.config["api-agent"].get("knowledge", []),
+                urls=api_agent_config.get("knowledge", []),
                 max_links=10,
                 vector_db=PgVector(
-                    table_name="ai.local_rag_documents_singleAgent",
-                    db_url="postgresql+psycopg://ai:ai@localhost:5532/ai",
+                    table_name=f"local_rag_documents_{embedder_config.model}",
+                    db_url=DB_URL,
+                    embedder=embedder,
                 ),
             )
 
@@ -184,13 +269,15 @@ class SingleAgent(Agent):
                 "Do not use commands that would open an editor like 'kubectl edit'",
                 "DO NOT BY ANY MEANS USE kubectl edit",
             ]
+            debug_logging = agent_debug_logging_enabled()
+            tool_kwargs = build_tool_kwargs(self.runtime_context, phase="debug")
 
             self.agent = llmAgent(
                 model=model,
-                tools=[BetterShellTools()],
-                debug_mode=True,
+                tools=[BetterShellTools(**tool_kwargs)],
+                debug_mode=debug_logging,
                 instructions=[x for x in self.config["debug-agent"]["instructions"]] + additionalInstructions,
-                show_tool_calls=True,
+                show_tool_calls=debug_logging,
                 markdown=True,
                 guidelines=[x for x in self.config["debug-agent"]["guidelines"]] + additionalGuidelines,
                 knowledge=knowledge_base,
@@ -217,15 +304,43 @@ class SingleAgent(Agent):
             self.prompt += "Do not use commands that would open an editor like 'kubectl edit'"
             self.prompt += "You will run the commands as Instructed! Please feel free to change it if necessary and if it makes sense to! You will solve the issue and run the commands!"
             self.prompt += "DO NOT BY ANY MEANS USE kubectl edit"
+            self.prompt += get_case_specific_guidance(self.config)
         except Exception as e:
             raise RuntimeError(f"Error creating debug agent prompt: {e}") from e
 
+    @withTimeout(False)
+    @timeout(480)
     def askQuestion(self):
         """Ask the formatted prepared question to the single agent."""
         try:
-            response = self.agent.run(self.prompt)
-            response = response.content
-            self.debugStatus = classify_status_from_response(response)
-            return
+            response = self.agent.run(self.prompt, return_response=True)
+            response_content = response.content
+            self.knowledgeResponse = response_content
+            self.debugStatus = classify_status_from_response(response_content)
+            model_name = self._resolved_debug_model_name or (self.agentProperties or {}).get("model")
+            if not model_name:
+                model_name = self.config.get("debug-agent", {}).get("model")
+            return extract_metrics(
+                response,
+                test_case=self.config["test-name"],
+                agent_type="debug",
+                task_status=int(self.debugStatus),
+                model_override=model_name,
+            )
+        except BlockedCommandThresholdError as exc:
+            self.knowledgeResponse = f"{exc}\n<|FAILED|>"
+            self.debugStatus = False
+            model_name = self._resolved_debug_model_name or (self.agentProperties or {}).get("model")
+            if not model_name:
+                model_name = self.config.get("debug-agent", {}).get("model")
+            return {
+                "test_case": self.config["test-name"],
+                "model": model_name,
+                "agent_type": "debug",
+                "input_tokens": 0,
+                "output_tokens": 0,
+                "total_tokens": 0,
+                "task_status": 0,
+            }
         except Exception as e:
             raise RuntimeError(f"Error asking question to knowledge agent: {e}") from e

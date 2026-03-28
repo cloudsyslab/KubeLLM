@@ -1,0 +1,33 @@
+# Phase 6 (sprint): unit tests + ground-truth config validation — no Kubernetes required.
+name: KubeLLM test
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  unit-and-config:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # Pin to the primary dev Python to avoid CI/local drift (adjust if the team standard changes).
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Pytest
+        run: python3 -m pytest tests/ -v
+
+      - name: Validate ground-truth configs
+        run: python3 debug_assistant_latest/runner.py --validate-ground-truth
+
+      - name: List test cases
+        run: python3 debug_assistant_latest/runner.py --list

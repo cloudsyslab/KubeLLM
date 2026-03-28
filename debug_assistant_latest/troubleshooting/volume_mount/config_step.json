@@ -1,7 +1,8 @@
 {
     "api-agent": {
         "model": "gpt-5-mini",
-        "embedder": "nomic-embed-text",
+        "embedder": "text-embedding-3-small",
+        "embedder-provider": "openai",
         "clear-knowledge": true,
         "new-run": true,
         "init-agent": true,
@@ -60,5 +61,37 @@
     ],
     "test-name": "volume_mount",
     "test-directory": "",
-    "yaml-file-name": "volume_mount.yaml"
+    "yaml-file-name": "volume_mount.yaml",
+    "ground-truth": {
+        "description": "Verify the log volume is mounted and usable",
+        "timeout_seconds": 60,
+        "checks": [
+            {
+                "name": "pod_ready",
+                "cmd": "kubectl get pod kube-volume-mount -o jsonpath='{.status.conditions[?(@.type==\"Ready\")].status}'",
+                "expect": "True",
+                "poll_interval_s": 2,
+                "max_attempts": 15,
+                "description": "Pod is Ready"
+            },
+            {
+                "name": "volume_mounted",
+                "cmd": "kubectl get pod kube-volume-mount -o jsonpath='{.spec.containers[0].volumeMounts[0].mountPath}'",
+                "expect": "/data/logs",
+                "depends_on": [
+                    "pod_ready"
+                ],
+                "description": "Volume is mounted at /data/logs"
+            },
+            {
+                "name": "log_path_usable",
+                "cmd": "kubectl exec kube-volume-mount -- python3 -c \"from pathlib import Path; print(Path('/data/logs/app.log').read_text())\"",
+                "expect_contains": "Application started",
+                "depends_on": [
+                    "volume_mounted"
+                ],
+                "description": "Application can write to /data/logs/app.log"
+            }
+        ]
+    }
 }

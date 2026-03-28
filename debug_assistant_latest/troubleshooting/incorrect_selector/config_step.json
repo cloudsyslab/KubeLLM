@@ -1,7 +1,8 @@
 {
     "api-agent": {
         "model": "gpt-5-mini",
-        "embedder": "nomic-embed-text",
+        "embedder": "text-embedding-3-small",
+        "embedder-provider": "openai",
         "clear-knowledge": true,
         "new-run": true,
         "init-agent": true,
@@ -55,11 +56,43 @@
         "dockerfile": false
     },
     "setup-commands": [
-        "bash -lc 'PROFILE=${MINIKUBE_PROFILE:-minikube}; CTX=$(kubectl config current-context 2>/dev/null || true); if command -v minikube >/dev/null 2>&1 && [ \"$CTX\" = \"$PROFILE\" ] && minikube -p \"$PROFILE\" status --format \"{{.Host}}\" 2>/dev/null | grep -qi running; then minikube -p \"$PROFILE\" image build -t kube-incorrect-selector-app -f debug_assistant_latest/troubleshooting/incorrect_selector/Dockerfile debug_assistant_latest/troubleshooting/incorrect_selector; else docker build -t kube-incorrect-selector-app -f debug_assistant_latest/troubleshooting/incorrect_selector/Dockerfile debug_assistant_latest/troubleshooting/incorrect_selector; fi'",
+        "minikube image build -t kube-incorrect-selector-app debug_assistant_latest/troubleshooting/incorrect_selector",
         "kubectl apply -f debug_assistant_latest/troubleshooting/incorrect_selector/incorrect_selector.yaml",
         "kubectl apply -f debug_assistant_latest/troubleshooting/incorrect_selector/app_service.yaml"
     ],
     "test-name": "incorrect_selector",
     "test-directory": "",
-    "yaml-file-name": "incorrect_selector.yaml"
+    "yaml-file-name": "incorrect_selector.yaml",
+    "ground-truth": {
+        "description": "Verify service selector matches pod label and endpoints are populated",
+        "timeout_seconds": 60,
+        "checks": [
+            {
+                "name": "pod_ready",
+                "cmd": "kubectl get pod kube-incorrect-selector -o jsonpath='{.status.conditions[?(@.type==\"Ready\")].status}'",
+                "expect": "True",
+                "poll_interval_s": 2,
+                "max_attempts": 15,
+                "description": "Pod is Ready"
+            },
+            {
+                "name": "endpoints_populated",
+                "cmd": "kubectl get endpoints app-service -o jsonpath='{.subsets}'",
+                "expect_regex": "addresses",
+                "depends_on": [
+                    "pod_ready"
+                ],
+                "description": "Service endpoints have addresses (selector matches pod)"
+            },
+            {
+                "name": "selector_matches",
+                "cmd": "kubectl get svc app-service -o jsonpath='{.spec.selector.app}'",
+                "expect": "kube-incorrect-selector",
+                "depends_on": [
+                    "pod_ready"
+                ],
+                "description": "Service selector matches pod label"
+            }
+        ]
+    }
 }

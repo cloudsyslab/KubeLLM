@@ -1,8 +1,20 @@
 #!/usr/bin/env bash
+# Refresh kubeconfig from a Minikube node running inside Docker, patch the API server IP, verify /readyz.
+#
+# Environment (optional):
+#   KUBELLM_MINIKUBE_DOCKER_CONTAINER — Docker container name for the Minikube node (default: minikube).
+#   KUBELLM_KUBECONFIG_PATH — File to write the patched kubeconfig (default: ~/.kube/kubellm-minikube.conf).
+#
+# If you previously used a custom lab layout (container "minh", kubeconfig ~/.kube/minh-admin.conf), set:
+#   export KUBELLM_MINIKUBE_DOCKER_CONTAINER=minh
+#   export KUBELLM_KUBECONFIG_PATH="$HOME/.kube/minh-admin.conf"
+#
+# Use this kubeconfig with kubectl --kubeconfig "$KUBELLM_KUBECONFIG_PATH" or:
+#   export KUBECONFIG="$KUBELLM_KUBECONFIG_PATH"
 set -euo pipefail
 
-CONTAINER="minh"
-KUBECONFIG_PATH="${HOME}/.kube/minh-admin.conf"
+CONTAINER="${KUBELLM_MINIKUBE_DOCKER_CONTAINER:-minikube}"
+KUBECONFIG_PATH="${KUBELLM_KUBECONFIG_PATH:-$HOME/.kube/kubellm-minikube.conf}"
 
 fail() {
   echo "preflight: $*" >&2
@@ -18,7 +30,7 @@ require_cmd kubectl
 require_cmd python3
 
 if ! docker inspect -f '{{.State.Running}}' "$CONTAINER" >/dev/null 2>&1; then
-  fail "container '$CONTAINER' not found or not running"
+  fail "container '$CONTAINER' not found or not running (set KUBELLM_MINIKUBE_DOCKER_CONTAINER if yours differs)"
 fi
 
 IP="$(docker inspect -f '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' "$CONTAINER")"
@@ -50,4 +62,4 @@ fi
 
 kubectl --kubeconfig "$KUBECONFIG_PATH" get nodes -o wide >/dev/null || fail "kubectl get nodes failed"
 
-echo "preflight: kubeconfig refreshed for $CONTAINER ($IP), API ready"
+echo "preflight: kubeconfig refreshed for container $CONTAINER ($IP) -> $KUBECONFIG_PATH, API ready"

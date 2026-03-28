@@ -1,12 +1,15 @@
 # kubeLLM 🤖
 
-KubeLLM is an LLM-based multi-agent framework that manages your kubernetes clusters all on its own. KubeLLM takes in ONE formatted prompt and it will automatically diagnose and apply fixes to Kubernetes configuration issues. 
+KubeLLM is an LLM-based multi-agent framework that manages your kubernetes clusters all on its own. KubeLLM takes in ONE formatted prompt and it will automatically diagnose and apply fixes to Kubernetes configuration issues.
+
+**Full documentation index:** [docs/README.md](docs/README.md) (architecture, agent iteration loop, operations, history).
 
 ---
 
-### Lab vs Local Execution
-- ALL tests and operational commands must be run on the lab server.
-- Local environment is for development/editing only (AI access and code changes).
+### Execution environment
+- Develop and run tests from your machine; use Docker, Kubernetes (for example Minikube), pgvector, and the RAG API as described below.
+- The runner and the FastAPI RAG server default to the same URL on loopback: `http://127.0.0.1:8000`.
+- Set `RAG_API_URL` or `--rag-api-url` when the RAG API runs on another host.
 
 ---
 
@@ -46,17 +49,23 @@ Create a repo-level `.env` file from the example:
 cp .env.example .env
 ```
 
-Then add your OpenAI key to `.env`:
+For OpenAI-backed chat or embedding configs, add your OpenAI key to `.env`:
 ```bash
 OPENAI_API_KEY=your_key_here
 ```
 
+For Ollama-only configs, `OPENAI_API_KEY` is not required unless you explicitly select an OpenAI chat model or embedder.
+
 You also need:
 - Docker available on the machine running tests
-- A working Kubernetes environment (Minikube on the lab server)
-- Access to the required model providers through `.env` or exported shell variables
+- A working Kubernetes environment (for example Minikube) when running cluster-backed tests
 - PostgreSQL/pgvector running locally on port `5532`
 - The RAG API server running and reachable by the client code
+
+Provider-specific prerequisites:
+- OpenAI-only path: `OPENAI_API_KEY`, pgvector, and the RAG API server. Ollama is not required.
+- Ollama-only path: Ollama service plus the selected Ollama model/embedder, pgvector, and the RAG API server. `OPENAI_API_KEY` is not required unless you choose an OpenAI model or embedder.
+- Missing dependencies for an unselected provider are ignored by design.
 
 Start pgvector:
 ```bash
@@ -73,42 +82,59 @@ docker run -d \
 
 Start the RAG API server:
 ```bash
+python start_apiserver.py
+```
+
+Linux/macOS wrapper:
+```bash
 bash start_apiserver.sh
 ```
 
-Note:
-- The current RAG API client in `debug_assistant_latest/rag_api.py` uses a fixed `BASE_URL`.
-- Confirm that the configured host matches the server you started before running tests.
+RAG API URL precedence:
+- `python3 debug_assistant_latest/runner.py ... --rag-api-url <url>`
+- `RAG_API_URL` from the shell or `.env`
+- default `http://127.0.0.1:${RAG_SERVER_PORT:-8000}`
 
-#### Lab Server Workflow
-Run all operational commands on the lab server. The normal flow is:
+Server bind defaults:
+- `RAG_SERVER_HOST=127.0.0.1`
+- `RAG_SERVER_PORT=8000`
+
+Set `RAG_SERVER_HOST=0.0.0.0` only when you intentionally want remote clients to reach the API server. If you do that from another machine, also set `RAG_API_URL` (or `--rag-api-url`) to the externally reachable URL.
+
+#### Typical workflow
+When the runner and API server run on the same machine, leave `RAG_API_URL` unset unless you intentionally split them. A typical flow:
 
 1. Go to the repo:
 ```bash
-cd ~/kubellm-minh-testing
+cd /path/to/KubeLLM-main
 ```
 
-2. Run preflight before any test:
+2. Start the RAG API server:
+```bash
+python3 start_apiserver.py
+```
+
+3. Run preflight before any test:
 ```bash
 bash orchestrator/preflight.sh
 ```
 
-3. List available test cases:
+4. List available test cases:
 ```bash
 python3 debug_assistant_latest/runner.py --list
 ```
 
-4. Run one test case:
+5. Run one test case:
 ```bash
 python3 debug_assistant_latest/runner.py wrong_port
 ```
 
-5. Run multiple matching tests:
+6. Run multiple matching tests:
 ```bash
 python3 debug_assistant_latest/runner.py --run-many "port_*" --jobs 4
 ```
 
-6. Run a repeat queue for stability testing:
+7. Run a repeat queue for stability testing:
 ```bash
 python3 debug_assistant_latest/runner.py wrong_port --repeat 10 --stall-limit-s 900
 ```
@@ -119,11 +145,17 @@ Override models:
 python3 debug_assistant_latest/runner.py wrong_port --debug-model gpt-4o
 python3 debug_assistant_latest/runner.py wrong_port --api-model gpt-5-mini
 python3 debug_assistant_latest/runner.py wrong_port --verification-model gpt-4o
+python3 debug_assistant_latest/runner.py wrong_port --embedder text-embedding-3-small --embedder-provider openai
 ```
 
 Use a specific Minikube profile:
 ```bash
-python3 debug_assistant_latest/runner.py wrong_port --minikube-profile minh
+python3 debug_assistant_latest/runner.py wrong_port --minikube-profile minikube
+```
+
+Point the runner at a non-default API server:
+```bash
+python3 debug_assistant_latest/runner.py wrong_port --rag-api-url http://other-host:8000
 ```
 
 Run with automatic backup and teardown:
@@ -150,9 +182,15 @@ cat .local/test_runs/*/wrong_port/stdout.log
 cat .local/test_runs/*/wrong_port/stderr.log
 ```
 
-Find the latest runs:
+Find the latest run directory:
 ```bash
-ls -lt .local/test_runs/ | head -5
+python3 debug_assistant_latest/runner.py --latest-run
+```
+
+Structured diagnosis and history:
+```bash
+python3 debug_assistant_latest/runner.py --diagnose-last
+python3 debug_assistant_latest/runner.py --dashboard
 ```
 
 #### Cleanup
