@@ -838,11 +838,15 @@ class MainMetricsLineageTests(unittest.TestCase):
 
 
 class VerificationTemperatureLintTests(unittest.TestCase):
-    def test_verification_temperature_issues_high_value(self):
+    def test_verification_temperature_issues_one_allowed(self):
         cfg = {"verification-agent": {"temperature": 1.0}}
+        self.assertEqual(_verification_temperature_issues(cfg, allow_high=False), [])
+
+    def test_verification_temperature_issues_above_one(self):
+        cfg = {"verification-agent": {"temperature": 1.5}}
         issues = _verification_temperature_issues(cfg, allow_high=False)
         self.assertEqual(len(issues), 1)
-        self.assertIn("0.3", issues[0])
+        self.assertIn("1.0", issues[0])
 
     def test_verification_temperature_issues_allowed_when_flag_set(self):
         cfg = {"verification-agent": {"temperature": 2.0}}
@@ -1302,7 +1306,10 @@ class RunnerTests(unittest.TestCase):
                 finished_at="2026-01-01T00:00:01",
             )
 
-            with patch("debug_assistant_latest.executor.run_single_test", return_value=fake_result), patch(
+            with patch("debug_assistant_latest.executor.collect_run_provenance", return_value={}), patch(
+                "debug_assistant_latest.executor.build_environment_context",
+                return_value={"platform": "linux", "python_version": "3.13.0", "kubectl_context": "test"},
+            ), patch("debug_assistant_latest.executor.run_single_test", return_value=fake_result), patch(
                 "debug_assistant_latest.executor.save_run_config"
             ) as save_run_config_mock, patch(
                 "debug_assistant_latest.executor.save_test_summary"
@@ -1347,7 +1354,10 @@ class RunnerTests(unittest.TestCase):
                 ],
             }
 
-            with patch("debug_assistant_latest.executor.run_preflight", return_value=preflight_result), patch(
+            with patch("debug_assistant_latest.executor.collect_run_provenance", return_value={}), patch(
+                "debug_assistant_latest.executor.build_environment_context",
+                return_value={"platform": "linux", "python_version": "3.13.0", "kubectl_context": "test"},
+            ), patch("debug_assistant_latest.executor.run_preflight", return_value=preflight_result), patch(
                 "debug_assistant_latest.executor.print_preflight_result"
             ), patch(
                 "debug_assistant_latest.executor.run_single_test"

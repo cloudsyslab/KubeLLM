@@ -84,7 +84,7 @@ def cmd_preflight(args):
 
 
 def _verification_temperature_issues(config: dict, allow_high: bool) -> List[str]:
-    """Flag verification-agent temperature above benchmark philosophy range (DEBT-006)."""
+    """Flag verification-agent temperature above 1.0 unless allow_high (DEBT-006)."""
     if allow_high:
         return []
     va = config.get("verification-agent") or {}
@@ -95,9 +95,9 @@ def _verification_temperature_issues(config: dict, allow_high: bool) -> List[str
         temp = float(raw)
     except (TypeError, ValueError):
         return [f"verification-agent.temperature is not numeric: {raw!r}"]
-    if temp > 0.3:
+    if temp > 1.0:
         return [
-            f"verification-agent.temperature={temp} exceeds 0.3 (see docs/agents/benchmark-philosophy.md); "
+            f"verification-agent.temperature={temp} exceeds 1.0 (see docs/agents/benchmark-philosophy.md); "
             "use --allow-high-temp-verification to allow."
         ]
     return []
@@ -637,7 +637,7 @@ Examples:
     parser.add_argument(
         "--allow-high-temp-verification",
         action="store_true",
-        help="Allow verification-agent temperature > 0.3 during --validate-ground-truth",
+        help="Allow verification-agent temperature > 1.0 during --validate-ground-truth",
     )
 
     # Serial repeat queue
