@@ -67,6 +67,7 @@ class TestSummary:
     config_overrides_applied: Dict[str, Any] = field(default_factory=dict)
     ground_truth_passed: Optional[bool] = None  # True/False if GT ran, None if GT did not run
     ground_truth_configured: bool = False
+    environment_context: Optional[Dict[str, Any]] = None
 
     def to_dict(self) -> dict:
         """Convert to dictionary for JSON serialization."""
@@ -86,6 +87,8 @@ class TestSummary:
             "metrics": {},
             "config_overrides_applied": self.config_overrides_applied,
         }
+        if self.environment_context is not None:
+            result["environment_context"] = self.environment_context
         for agent_name, agent_metrics in normalize_metrics_map(self.metrics).items():
             result["metrics"][agent_name] = asdict(agent_metrics)
         return result
@@ -141,6 +144,7 @@ def load_test_summary(summary_path: Path) -> TestSummary:
         config_overrides_applied=data.get("config_overrides_applied", {}),
         ground_truth_passed=data.get("ground_truth_passed"),
         ground_truth_configured=data.get("ground_truth_configured", data.get("ground_truth_passed") is not None),
+        environment_context=data.get("environment_context"),
     )
 
 
@@ -148,6 +152,7 @@ def load_test_summary(summary_path: Path) -> TestSummary:
 class AggregateReport:
     """Aggregate report across a test run."""
     run_id: str
+    run_uuid: str
     generated_at: str
     run_config: Dict[str, Any]
     total_tests: int = 0
@@ -178,6 +183,7 @@ def generate_aggregate_report(
     run_config: Dict[str, Any],
     run_id: str,
     wall_clock_s: float = 0.0,
+    run_uuid: str = "",
 ) -> AggregateReport:
     """
     Generate an aggregate report from individual test summaries.
@@ -242,6 +248,7 @@ def generate_aggregate_report(
 
     return AggregateReport(
         run_id=run_id,
+        run_uuid=run_uuid or str(run_config.get("run_uuid") or ""),
         generated_at=datetime.now().isoformat(),
         run_config=run_config,
         total_tests=total,
@@ -286,6 +293,15 @@ def save_aggregate_report(report: AggregateReport, output_dir: Path) -> Path:
         json.dump(asdict(report), f, indent=2)
 
     return aggregate_path
+
+
+def save_provenance(provenance: Dict[str, Any], output_dir: Path) -> Path:
+    """Write provenance.json next to run_config.json for audit and cross-run joins."""
+    output_dir.mkdir(parents=True, exist_ok=True)
+    path = output_dir / "provenance.json"
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump(provenance, f, indent=2)
+    return path
 
 
 def save_run_config(run_config: Dict[str, Any], output_dir: Path) -> Path:
