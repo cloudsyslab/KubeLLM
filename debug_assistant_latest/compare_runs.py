@@ -48,6 +48,7 @@ def _summary_row(summary) -> Dict[str, Any]:
         "status": summary.status,
         "verified": summary.verified,
         "ground_truth_passed": summary.ground_truth_passed,
+        "debug_self_report": getattr(summary, "debug_self_report", None),
         "debug_tokens": dbg_tok,
         "verification_tokens": ver_tok,
         "total_tokens": dbg_tok + ver_tok,
@@ -64,6 +65,33 @@ def _fmt_tri(v: Optional[bool]) -> str:
     if v is False:
         return "N"
     return "-"
+
+
+def _load_json_if_exists(path: Path) -> Optional[Dict[str, Any]]:
+    if not path.is_file():
+        return None
+    with open(path, encoding="utf-8") as f:
+        return json.load(f)
+
+
+def _harness_provenance_line(run_dir: Path) -> str:
+    """Compact harness fingerprint from provenance.json when present (ARCH-006)."""
+    prov = _load_json_if_exists(run_dir / "provenance.json")
+    if not prov:
+        return "(no provenance.json)"
+    parts: List[str] = []
+    ru = prov.get("run_uuid")
+    if ru:
+        short = ru if len(ru) <= 12 else f"{ru[:8]}…"
+        parts.append(f"run_uuid={short}")
+    gc = prov.get("git_commit")
+    if isinstance(gc, str) and gc:
+        parts.append(f"git={gc[:7]}")
+    rag = prov.get("rag_api") if isinstance(prov.get("rag_api"), dict) else {}
+    ver = rag.get("api_version")
+    if ver:
+        parts.append(f"rag_api_version={ver}")
+    return ", ".join(parts) if parts else "(empty provenance.json)"
 
 
 def _index_summaries(run_dir: Path) -> Dict[str, Dict[str, Any]]:
@@ -100,8 +128,8 @@ def compare_runs_markdown(run_dir_a: Path, run_dir_b: Path) -> str:
         "",
         "### Per-test",
         "",
-        "| test | status A | ver A | GT A | tok A | $ A | s A | status B | ver B | GT B | tok B | $ B | s B |",
-        "|:---|:---:|:---:|:---:|:---:|:---:|:---:|:---:|:---:|:---:|:---:|:---:|:---:|",
+        "| test | status A | dbg A | ver A | GT A | tok A | $ A | s A | status B | dbg B | ver B | GT B | tok B | $ B | s B |",
+        "|:---|:---:|:---:|:---:|:---:|:---:|:---:|:---:|:---:|:---:|:---:|:---:|:---:|:---:|:---:|",
     ]
 
     for name in tests:
@@ -109,20 +137,30 @@ def compare_runs_markdown(run_dir_a: Path, run_dir_b: Path) -> str:
         rb = idx_b.get(name)
         if ra is None:
             lines.append(
-                f"| {name} | — | — | — | — | — | — | {rb['status']} | {_fmt_tri(rb['verified'])} | {_fmt_tri(rb['ground_truth_passed'])} | {rb['total_tokens']} | {rb['total_cost']} | {rb['duration_s']} |"
+                f"| {name} | — | — | — | — | — | — | — | {rb['status']} | {_fmt_tri(rb['debug_self_report'])} | {_fmt_tri(rb['verified'])} | {_fmt_tri(rb['ground_truth_passed'])} | {rb['total_tokens']} | {rb['total_cost']} | {rb['duration_s']} |"
             )
             continue
         if rb is None:
             lines.append(
-                f"| {name} | {ra['status']} | {_fmt_tri(ra['verified'])} | {_fmt_tri(ra['ground_truth_passed'])} | {ra['total_tokens']} | {ra['total_cost']} | {ra['duration_s']} | — | — | — | — | — | — |"
+                f"| {name} | {ra['status']} | {_fmt_tri(ra['debug_self_report'])} | {_fmt_tri(ra['verified'])} | {_fmt_tri(ra['ground_truth_passed'])} | {ra['total_tokens']} | {ra['total_cost']} | {ra['duration_s']} | — | — | — | — | — | — | — |"
             )
             continue
         lines.append(
-            f"| {name} | {ra['status']} | {_fmt_tri(ra['verified'])} | {_fmt_tri(ra['ground_truth_passed'])} | {ra['total_tokens']} | {ra['total_cost']} | {ra['duration_s']} | "
-            f"{rb['status']} | {_fmt_tri(rb['verified'])} | {_fmt_tri(rb['ground_truth_passed'])} | {rb['total_tokens']} | {rb['total_cost']} | {rb['duration_s']} |"
+            f"| {name} | {ra['status']} | {_fmt_tri(ra['debug_self_report'])} | {_fmt_tri(ra['verified'])} | {_fmt_tri(ra['ground_truth_passed'])} | {ra['total_tokens']} | {ra['total_cost']} | {ra['duration_s']} | "
+            f"{rb['status']} | {_fmt_tri(rb['debug_self_report'])} | {_fmt_tri(rb['verified'])} | {_fmt_tri(rb['ground_truth_passed'])} | {rb['total_tokens']} | {rb['total_cost']} | {rb['duration_s']} |"
         )
 
-    lines.append("")
+    lines.extend(
+        [
+            "",
+            "### Harness / provenance",
+            "",
+            f"| | **{id_a}** | **{id_b}** |",
+            "|:---|:---|:---|",
+            f"| Snapshot | {_harness_provenance_line(run_dir_a)} | {_harness_provenance_line(run_dir_b)} |",
+            "",
+        ]
+    )
     return "\n".join(lines)
 
 

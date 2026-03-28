@@ -105,6 +105,13 @@ python3 debug_assistant_latest/runner.py wrong_port --verify-only
 
 Schema: `debug_assistant_latest/ground_truth.schema.json`.
 
+## Flaky benchmark scenarios
+
+Kubernetes timing, teardown ordering, and parallel runs (`--jobs` > 1) can produce intermittent failures that are **environment or harness**, not model capability. For benchmarks (unlike typical product CI), the right response is to **label and fix** root causes—not hide failures behind retries.
+
+- Maintain a machine-readable register at [`data/flaky.json`](../data/flaky.json) (scenario id, last seen, notes, issue link).
+- If a scenario is temporarily excluded from headline metrics, document that exclusion explicitly; do not treat a green run as comparable to historical data without that context.
+
 ## Cluster helper scripts
 
 ```bash

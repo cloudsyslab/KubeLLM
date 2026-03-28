@@ -12,6 +12,7 @@ Key features:
 - Structured results with PASS/FAIL/ERROR/SKIP status
 """
 
+import hashlib
 import json
 import os
 import re
@@ -532,6 +533,17 @@ def format_results(result: GroundTruthResult) -> str:
     return "\n".join(lines)
 
 
+def _ground_truth_schema_provenance() -> Dict[str, str]:
+    """Stable schema identity for longitudinal comparisons (ARCH-005)."""
+    raw = GROUND_TRUTH_SCHEMA_PATH.read_bytes()
+    parsed = json.loads(raw.decode("utf-8"))
+    schema_id = parsed.get("$id") or GROUND_TRUTH_SCHEMA_PATH.name
+    return {
+        "ground_truth_schema_version": str(schema_id),
+        "ground_truth_schema_sha256": hashlib.sha256(raw).hexdigest(),
+    }
+
+
 def save_ground_truth_result(result: GroundTruthResult, output_dir: Path) -> Path:
     """Save ground truth results to JSON file.
 
@@ -545,8 +557,11 @@ def save_ground_truth_result(result: GroundTruthResult, output_dir: Path) -> Pat
     output_dir.mkdir(parents=True, exist_ok=True)
     output_file = output_dir / "ground_truth.json"
 
+    payload = result.to_dict()
+    payload.update(_ground_truth_schema_provenance())
+
     with open(output_file, "w", encoding="utf-8") as f:
-        json.dump(result.to_dict(), f, indent=2)
+        json.dump(payload, f, indent=2)
 
     return output_file
 
