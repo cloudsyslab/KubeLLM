@@ -92,6 +92,16 @@ def _execute_with_retry(func, *args, **kwargs):
     # If we exhausted retries, raise the last error
     raise last_error
 
+def _ensure_lineage_columns(cursor: sqlite3.Cursor) -> None:
+    """Add run_uuid/run_id to existing DBs (lightweight migration)."""
+    cursor.execute("PRAGMA table_info(metrics)")
+    cols = {row[1] for row in cursor.fetchall()}
+    if "run_uuid" not in cols:
+        cursor.execute("ALTER TABLE metrics ADD COLUMN run_uuid TEXT")
+    if "run_id" not in cols:
+        cursor.execute("ALTER TABLE metrics ADD COLUMN run_id TEXT")
+
+
 def calculate_cost(model_name: str, input_tokens: int, output_tokens: int) -> float:
     """Calculate cost based on model pricing from model_pricing.json next to this module."""
     prices_map = _load_model_prices()
@@ -130,16 +140,33 @@ def _store_metrics_entry_impl(db_path, metrics, task_status_verified):
                 task_status INTEGER DEFAULT 0,
                 task_status_verified  INTEGER DEFAULT 0,
                 duration_s REAL DEFAULT 0.0,
-                cost REAL DEFAULT 0.0
+                cost REAL DEFAULT 0.0,
+                run_uuid TEXT,
+                run_id TEXT
             )
         ''')
+        _ensure_lineage_columns(cursor)
 
         # Insert the entry
         timestamp = datetime.now().isoformat()
         cursor.execute('''
-            INSERT INTO metrics (timestamp, test_case, model, agent_type, input_tokens, output_tokens, total_tokens, task_status, task_status_verified, duration_s, cost)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        ''', (timestamp, metrics.get("test_case"), metrics.get("model"), metrics.get("agent_type"), metrics.get("input_tokens"), metrics.get("output_tokens"), metrics.get("total_tokens"), metrics.get("task_status"), task_status_verified, metrics.get("duration_s"), metrics.get("cost")))
+            INSERT INTO metrics (timestamp, test_case, model, agent_type, input_tokens, output_tokens, total_tokens, task_status, task_status_verified, duration_s, cost, run_uuid, run_id)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ''', (
+            timestamp,
+            metrics.get("test_case"),
+            metrics.get("model"),
+            metrics.get("agent_type"),
+            metrics.get("input_tokens"),
+            metrics.get("output_tokens"),
+            metrics.get("total_tokens"),
+            metrics.get("task_status"),
+            task_status_verified,
+            metrics.get("duration_s"),
+            metrics.get("cost"),
+            metrics.get("run_uuid"),
+            metrics.get("run_id"),
+        ))
 
         conn.commit()
     finally:
@@ -149,6 +176,12 @@ def _store_metrics_entry_impl(db_path, metrics, task_status_verified):
 def store_metrics_entry(db_path, metrics, task_status_verified):
     """
     Create table if needed and insert a metrics entry. Reusable across scripts.
+
+    task_status is taken from ``metrics`` (per-agent outcome). The legacy column
+    ``task_status_verified`` must match the **same** agent layer: for
+    agent_type=\"debug\" pass the debug agent's task_status; for
+    agent_type=\"verification\" pass the verification agent's task_status.
+    Counts of verifier acceptance should query rows where agent_type=\"verification\".
 
     This function is safe for concurrent access from multiple processes.
     It uses WAL mode, busy timeout, and retry logic to handle contention.
@@ -213,8 +246,8 @@ def calculate_totals(db_path):
         cursor.execute('SELECT COUNT(*) FROM metrics WHERE agent_type = "debug" AND task_status = 1')
         total_successes = cursor.fetchone()[0] or 0
 
-        # Total verified success
-        cursor.execute('SELECT COUNT(*) FROM metrics WHERE agent_type = "debug" AND task_status_verified = 1')
+        # Verifier acceptance (verification agent rows only; see store_metrics_entry docstring)
+        cursor.execute('SELECT COUNT(*) FROM metrics WHERE agent_type = "verification" AND task_status = 1')
         total_verified_successes = cursor.fetchone()[0] or 0
     finally:
         conn.close()

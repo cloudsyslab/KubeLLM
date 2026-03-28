@@ -23,7 +23,7 @@ from debug_assistant_latest.executor import (
 )
 from rag_server_config import RAG_API_URL_ENV
 
-from config_merge import apply_runner_llm_env_defaults, load_config_with_overrides
+from config_merge import apply_runner_llm_env_defaults, build_overrides_from_args, load_config_with_overrides
 from ground_truth import (
     format_results as format_ground_truth_results,
     run_all_checks as run_ground_truth_checks,
@@ -83,10 +83,31 @@ def cmd_preflight(args):
     return _run_selected_preflight(args, test_names)
 
 
+def _verification_temperature_issues(config: dict, allow_high: bool) -> List[str]:
+    """Flag verification-agent temperature above benchmark philosophy range (DEBT-006)."""
+    if allow_high:
+        return []
+    va = config.get("verification-agent") or {}
+    raw = va.get("temperature")
+    if raw is None:
+        return []
+    try:
+        temp = float(raw)
+    except (TypeError, ValueError):
+        return [f"verification-agent.temperature is not numeric: {raw!r}"]
+    if temp > 0.3:
+        return [
+            f"verification-agent.temperature={temp} exceeds 0.3 (see docs/benchmark-philosophy.md); "
+            "use --allow-high-temp-verification to allow."
+        ]
+    return []
+
+
 def cmd_validate_ground_truth(args):
     """Handle --validate-ground-truth command."""
     test_cases = list_test_cases()
     errors_found = False
+    allow_hi = getattr(args, "allow_high_temp_verification", False)
 
     print(f"Validating ground truth configs for {len(test_cases)} test cases...\n")
 
@@ -94,7 +115,8 @@ def cmd_validate_ground_truth(args):
         config_path = get_config_path(tc)
         try:
             config = load_config_with_overrides(config_path, {})
-            gt_errors = validate_ground_truth_config(config)
+            gt_errors = list(validate_ground_truth_config(config))
+            gt_errors.extend(_verification_temperature_issues(config, allow_hi))
 
             if gt_errors:
                 print(f"[INVALID] {tc}:")
@@ -213,6 +235,9 @@ def _repeat_iteration_worker(result_queue, payload):
         "verbose": False,
         "repeat": 1,
         "stall_limit_s": 900,
+        "parallel_timeout": 600,
+        "max_retained_runs": 0,
+        "allow_high_temp_verification": False,
     }
     for _key, _val in _repeat_iter_defaults.items():
         if not hasattr(iter_args, _key):
@@ -378,16 +403,20 @@ def _run_repeat_queue(args, mode, base_run_id, base_output_dir):
         "stall_limit_s": stall_limit,
         "started_at": queue_started_at,
         "finished_at": queue_finished_at,
+        "cli_overrides": build_overrides_from_args(args),
         "results": [],
     }
     for iteration, ec, dur, out_dir in results:
         tag = "PASS" if ec == 0 else ("STALL" if ec is None else "FAIL")
+        od = Path(out_dir)
+        rc_path = od / "run_config.json"
         summary_obj["results"].append(
             {
                 "iteration": iteration,
                 "status": tag,
                 "duration_s": round(dur, 2),
                 "output_dir": out_dir,
+                "run_config_path": str(rc_path) if rc_path.is_file() else None,
             }
         )
 
@@ -485,6 +514,20 @@ Examples:
         default=1,
         help="Number of parallel test workers (default: 1). "
         "WARNING: >1 may cause K8s resource conflicts between tests",
+    )
+    parser.add_argument(
+        "--parallel-timeout",
+        type=int,
+        default=600,
+        metavar="SECONDS",
+        help="Hard per-test timeout when --jobs > 1 (default: 600)",
+    )
+    parser.add_argument(
+        "--max-retained-runs",
+        type=int,
+        default=0,
+        metavar="N",
+        help="After a fully successful run, keep only the N newest dirs under .local/test_runs (0=off)",
     )
 
     # Config overrides
@@ -590,6 +633,11 @@ Examples:
         "--validate-ground-truth",
         action="store_true",
         help="Validate ground truth configs without executing (schema check only)",
+    )
+    parser.add_argument(
+        "--allow-high-temp-verification",
+        action="store_true",
+        help="Allow verification-agent temperature > 0.3 during --validate-ground-truth",
     )
 
     # Serial repeat queue

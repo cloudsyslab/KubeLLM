@@ -1,9 +1,12 @@
+import hashlib
+import json
+import sys
+import os
 from api_agents import AgentAPI
 from debug_agents import AgentDebug, AgentDebugStepByStep, SingleAgent
 from verification_agents import AgentVerification_v1, AgentVerification_v2
 from utils import setUpEnvironment, printFinishMessage
 from config_merge import load_config_with_overrides
-import sys, os
 from metrics_db import store_metrics_entry, calculate_cost, calculate_totals
 import time
 from pathlib import Path
@@ -20,6 +23,45 @@ if not SCRIPT_DIR.parent.exists():
         f"Repository root directory not found: {SCRIPT_DIR.parent}\n"
         f"This script should be run from within the repository structure."
     )
+
+
+def _metrics_with_lineage(metrics: dict, runtime_context: Optional[Dict[str, Any]]) -> dict:
+    """Attach run_uuid/run_id from runtime_context for SQLite joins to RUN_DIR artifacts."""
+    out = dict(metrics)
+    if runtime_context:
+        ru = runtime_context.get("run_uuid")
+        ri = runtime_context.get("run_id")
+        if ru:
+            out["run_uuid"] = ru
+        if ri:
+            out["run_id"] = ri
+    return out
+
+
+def _persist_verification_artifact(
+    runtime_context: Optional[Dict[str, Any]],
+    verification_agent,
+) -> None:
+    """Write verification_report.txt and small meta JSON under log_dir (ARCH-004)."""
+    if not runtime_context:
+        return
+    raw = runtime_context.get("log_dir")
+    if not raw:
+        return
+    log_dir = Path(raw)
+    log_dir.mkdir(parents=True, exist_ok=True)
+    body = getattr(verification_agent, "verificationReport", None) or ""
+    status = getattr(verification_agent, "verificationStatus", None)
+    enc = body.encode("utf-8", errors="replace")
+    meta = {
+        "verification_status": status,
+        "content_sha256": hashlib.sha256(enc).hexdigest(),
+        "content_length": len(enc),
+    }
+    with open(log_dir / "verification_report.meta.json", "w", encoding="utf-8") as f:
+        json.dump(meta, f, indent=2)
+    with open(log_dir / "verification_report.txt", "w", encoding="utf-8") as f:
+        f.write(body)
 
 
 def _load_runtime_config(config_file, config_overrides: Optional[Dict[str, Any]] = None) -> dict:
@@ -155,8 +197,19 @@ def _run_verification_phase_after_debug(
         task_status=-1 if getattr(verification_agent, "_last_timeout", False) else None,
     )
     _finalize_metrics(verification_metrics, verification_end_time - verification_start_time)
-    store_metrics_entry(db_path, debug_metrics, verification_metrics.get("task_status"))
-    store_metrics_entry(db_path, verification_metrics, verification_metrics.get("task_status"))
+    # Debug row: task_status_verified mirrors debug self-report (same layer as task_status).
+    # Verification row: task_status_verified is the verification agent outcome.
+    store_metrics_entry(
+        db_path,
+        _metrics_with_lineage(debug_metrics, runtime_context),
+        debug_metrics.get("task_status"),
+    )
+    store_metrics_entry(
+        db_path,
+        _metrics_with_lineage(verification_metrics, runtime_context),
+        verification_metrics.get("task_status"),
+    )
+    _persist_verification_artifact(runtime_context, verification_agent)
 
     return verification_metrics, verification_agent.verificationStatus
 
@@ -213,7 +266,11 @@ def allStepsAtOnce(
 
     if getattr(debugAgent, "_last_timeout", False):
         print("\nDebug agent timed out. Skipping verification phase.\n")
-        store_metrics_entry(db_path, debug_metrics, debug_metrics.get("task_status"))
+        store_metrics_entry(
+            db_path,
+            _metrics_with_lineage(debug_metrics, runtime_context),
+            debug_metrics.get("task_status"),
+        )
         printFinishMessage()
         return {
             "status": False,
@@ -286,7 +343,11 @@ def stepByStep(
     _finalize_metrics(debug_metrics, debug_end_time - debug_start_time)
 
     if getattr(debugAgent, "_last_timeout", False):
-        store_metrics_entry(db_path, debug_metrics, debug_metrics.get("task_status"))
+        store_metrics_entry(
+            db_path,
+            _metrics_with_lineage(debug_metrics, runtime_context),
+            debug_metrics.get("task_status"),
+        )
         printFinishMessage()
         return {
             "status": False,
@@ -353,7 +414,11 @@ def singleAgentApproach(
     _finalize_metrics(debug_metrics, debug_end_time - debug_start_time)
 
     if getattr(agent, "_last_timeout", False):
-        store_metrics_entry(db_path, debug_metrics, debug_metrics.get("task_status"))
+        store_metrics_entry(
+            db_path,
+            _metrics_with_lineage(debug_metrics, runtime_context),
+            debug_metrics.get("task_status"),
+        )
         printFinishMessage()
         return {
             "status": False,
@@ -373,14 +438,14 @@ def singleAgentApproach(
     }
 
 
-def run( debugType, configFile ):
+def run(debugType, configFile, config_overrides: Optional[Dict[str, Any]] = None, runtime_context: Optional[Dict[str, Any]] = None):
     if debugType == "allStepsAtOnce":
-        allStepsAtOnce(configFile)
-    elif debugType == "stepByStep":
-        stepByStep(configFile)
-    elif debugType == "singleAgent":
-        singleAgentApproach(configFile)
-    return
+        return allStepsAtOnce(configFile, config_overrides=config_overrides, runtime_context=runtime_context)
+    if debugType == "stepByStep":
+        return stepByStep(configFile, config_overrides=config_overrides, runtime_context=runtime_context)
+    if debugType == "singleAgent":
+        return singleAgentApproach(configFile, config_overrides=config_overrides, runtime_context=runtime_context)
+    return None
 
 if __name__ == "__main__":
     if (len(sys.argv) < 2):
