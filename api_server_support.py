@@ -1,12 +1,14 @@
 from dataclasses import dataclass, field
-from typing import Optional
+from typing import List, Optional
 
 import requests
 from bs4 import BeautifulSoup
 
-from runtime_config import build_ollama_embedder
+from runtime_config import OPENAI_PROVIDER, OLLAMA_PROVIDER, build_embedder
 
 DEFAULT_ASSISTANT_MESSAGE = "Upload a doc and ask me questions..."
+EMBEDDING_CHUNK_SIZE_CHARS = 4000
+EMBEDDING_CHUNK_OVERLAP_CHARS = 400
 
 
 @dataclass
@@ -16,6 +18,7 @@ class SessionState:
     rag_assistant_run_id: Optional[str] = None
     llm_model: Optional[str] = None
     embeddings_model: Optional[str] = None
+    embeddings_provider: Optional[str] = None
 
     def reset_messages(self):
         self.messages = [{"role": "assistant", "content": DEFAULT_ASSISTANT_MESSAGE}]
@@ -23,6 +26,9 @@ class SessionState:
     def reset_run(self):
         self.rag_assistant = None
         self.rag_assistant_run_id = None
+        self.llm_model = None
+        self.embeddings_model = None
+        self.embeddings_provider = None
         self.reset_messages()
 
 
@@ -49,14 +55,107 @@ def scrape_url_to_document(url: str):
         tag.decompose()
 
     text = soup.get_text(separator="\n", strip=True)
-    return Document(content=text, metadata={"source": url, "title": title})
+    return Document(content=text, meta_data={"source": url, "title": title})
 
 
-def load_knowledge_document(url: str, table_name: str, embeddings_model: str, db_url: str):
+def _chunk_text_for_embedding(
+    text: str,
+    *,
+    max_chars: int = EMBEDDING_CHUNK_SIZE_CHARS,
+    overlap_chars: int = EMBEDDING_CHUNK_OVERLAP_CHARS,
+) -> List[str]:
+    normalized = text.strip()
+    if not normalized:
+        return []
+    if max_chars <= 0:
+        raise ValueError("max_chars must be positive")
+    if overlap_chars < 0 or overlap_chars >= max_chars:
+        raise ValueError("overlap_chars must be non-negative and smaller than max_chars")
+
+    chunks: List[str] = []
+    start = 0
+    text_length = len(normalized)
+    min_breakpoint = max_chars // 2
+
+    while start < text_length:
+        end = min(text_length, start + max_chars)
+        if end < text_length:
+            newline_break = normalized.rfind("\n", start, end)
+            if newline_break >= start + min_breakpoint:
+                end = newline_break
+            else:
+                space_break = normalized.rfind(" ", start, end)
+                if space_break >= start + min_breakpoint:
+                    end = space_break
+
+        chunk = normalized[start:end].strip()
+        if chunk:
+            chunks.append(chunk)
+
+        if end >= text_length:
+            break
+
+        next_start = max(0, end - overlap_chars)
+        if next_start <= start:
+            next_start = end
+        start = next_start
+
+    return chunks
+
+
+def _prepare_documents_for_embedding(document) -> List:
+    from phi.document import Document
+
+    chunks = _chunk_text_for_embedding(document.content)
+    if len(chunks) <= 1:
+        return [document]
+
+    base_meta = dict(getattr(document, "meta_data", {}) or {})
+    prepared_documents = []
+    for index, chunk in enumerate(chunks, start=1):
+        meta_data = dict(base_meta)
+        meta_data["chunk_index"] = index
+        meta_data["chunk_count"] = len(chunks)
+        prepared_documents.append(
+            Document(
+                content=chunk,
+                name=document.name,
+                meta_data=meta_data,
+            )
+        )
+    return prepared_documents
+
+
+def load_knowledge_document(
+    url: str,
+    table_name: str,
+    embeddings_model: str,
+    db_url: str,
+    embeddings_provider: Optional[str] = None,
+):
     from phi.agent import AgentKnowledge
     from phi.vectordb.pgvector import PgVector
 
-    embedder = build_ollama_embedder(embeddings_model)
+    embedder = build_embedder(embeddings_model, provider=embeddings_provider)
+    provider_name = embeddings_provider or "selected"
+    try:
+        # Preflight the selected embedder so provider/service failures are
+        # surfaced directly instead of being masked by PgVector's empty-batch
+        # fallback path.
+        embedder.get_embedding_and_usage("kubellm embedder preflight")
+    except Exception as exc:
+        hint = ""
+        if embeddings_provider == OPENAI_PROVIDER:
+            hint = " Check OPENAI_API_KEY, billing, and OpenAI model quota."
+        elif embeddings_provider == OLLAMA_PROVIDER:
+            hint = (
+                f" Check that the Ollama service is running and that embedder model "
+                f"'{embeddings_model}' is available locally."
+            )
+        raise RuntimeError(
+            f"{provider_name} embedder '{embeddings_model}' failed preflight: {exc}.{hint}"
+        ) from exc
+
     kb = AgentKnowledge(
         vector_db=PgVector(
             schema="ai",
@@ -65,4 +164,4 @@ def load_knowledge_document(url: str, table_name: str, embeddings_model: str, db
             embedder=embedder,
         )
     )
-    kb.load_documents([scrape_url_to_document(url)])
+    kb.load_documents(_prepare_documents_for_embedding(scrape_url_to_document(url)))

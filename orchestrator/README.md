@@ -1,16 +1,17 @@
 # KubeLLM Orchestrator
 
+Repo documentation index: [docs/README.md](../docs/README.md). Runner and orchestrator steps: [docs/operations.md](../docs/operations.md).
+
 This folder is the control plane for the local orchestrator workflow. It defines:
 - The system prompt the orchestrator uses each run.
 - The workflow loop for delegating work to workers.
 - Templates for task specs, PRs, and reviews.
-- Utility scripts used on the lab server and locally.
+- Utility scripts for cluster preflight, diagnostics, and optional context packaging.
 
-## Safety Banner (Lab vs Local)
-- Never run lab commands locally. Only review outputs the user provides.
-- Before any command, confirm whether it is local or lab unless the user already said local.
-- Do not run `orchestrator/preflight.sh` or `orchestrator/collect_diagnostics.sh` unless explicitly told "run on lab now."
-- All shell commands must be read-only unless the user says "execute."
+## Safety (cluster and shell)
+- Confirm `kubectl` context and namespace before apply/delete; destructive cluster commands need explicit user intent.
+- Prefer read-only inspection (`get`, `describe`, `logs`) unless the user asked to mutate cluster state.
+- `orchestrator/preflight.sh` and `orchestrator/collect_diagnostics.sh` touch cluster configuration and collect data — run them when validating or debugging runs, not blindly on every prompt.
 
 ## System Prompt (use verbatim)
 
@@ -26,8 +27,6 @@ If uncertain, label it "Hypothesis" and give a verification step.
 Mission: Keep a full mental model of this repo, then translate user intent into precise work for workers. You are not the implementer; you plan, delegate, verify, and iterate. Output must be implementable immediately with minimal moving parts and minimal repo changes.
 
 Hard constraints:
-- I cannot run Claude (or any agent tooling) directly on the lab server.
-- I can develop locally, push to GitHub, and pull on the lab server; I can run arbitrary commands on the lab server (docker/kubectl/scripts). Full autonomy.
 - Repo hygiene is critical: no "memory docs", prompt transcripts, context bundles, logs, db files, or generated artifacts committed or left in repo root. Model/runtime artifacts must go to ignored dirs only.
 - Treat the existing repo structure as source-of-truth. Propose small, safe changes. No big reorganizations.
 
@@ -39,14 +38,15 @@ Primary duties:
 1) Understand the repo in depth: entrypoints, configs, test harnesses, and canonical paths.
 2) Turn user intent into concrete worker prompts, including scoped Task Specs and required context.
 3) Review worker output against acceptance criteria and drive iteration until done.
-4) Provide lab validation and rollback steps for any apply/deploy action.
+4) Provide validation and rollback steps for any apply/deploy action.
 
 ## Context Sources (use before writing worker prompts)
 
 | Source | Purpose |
 |--------|---------|
-| `CLAUDE.md` | Canonical repo guide - architecture, commands, conventions. Workers should read this first. |
-| `REPO_INDEX.md` | File inventory with one-line summaries; use for clutter detection. |
+| `CLAUDE.md` | Short router to docs; conventions and quick commands. |
+| `docs/README.md` | Documentation map (architecture, agent loop, operations, history). |
+| `docs/ARCHITECTURE.md` | Component map and data flow (replaces stale `REPO_INDEX.md`). |
 | `orchestrator/context_pack.py` | Only for shipping context to external systems; workers with repo access don't need this. |
 
 Workers can self-serve context from these files. Do not paste full file contents into worker prompts unless the worker lacks repo access.
@@ -74,7 +74,7 @@ Guidance for task specs:
 - PR target: Usually `main` unless specified
 - Commit style: Conventional commits, co-authored by Claude
 
-## Workflow Loop (Orchestrator -> Worker -> Review -> Lab)
+## Workflow Loop (Orchestrator -> Worker -> Review -> Validate)
 
 1) **Orchestrator**
    - Runs discovery (or delegates to worker's Explore agent).
@@ -91,18 +91,17 @@ Guidance for task specs:
    - Reviews diff against checklist.
    - Requests fixes if needed.
 
-4) **Lab Runner**
-   - Pulls merged changes.
-   - Runs preflight.
-   - Runs test case(s).
-   - Collects diagnostics.
-   - Cleans up and rolls back.
+4) **Validate in environment**
+   - Syncs the branch (for example `git pull`).
+   - Runs preflight and targeted test case(s).
+   - Collects diagnostics when needed.
+   - Cleans up and rolls back when applicable.
 
 ## Scripts
 
 - `orchestrator/preflight.sh`
-  - Refreshes kubeconfig from the minikube-in-docker container (`minh`), patches the API server IP, and verifies `/readyz` plus `kubectl get nodes`.
-  - Use this first on the lab server before any apply or test.
+  - Refreshes kubeconfig from the Minikube node Docker container (default name `minikube`; override with `KUBELLM_MINIKUBE_DOCKER_CONTAINER`), writes `KUBELLM_KUBECONFIG_PATH` (default `~/.kube/kubellm-minikube.conf`), verifies `/readyz` and `kubectl get nodes`.
+  - Use before cluster-backed test runs when using this scripted setup; skip or adapt if you manage kubeconfig another way.
 
 - `orchestrator/context_pack.py`
   - Builds a small zip of relevant repo context (entrypoints, configs, key YAMLs).
@@ -200,7 +199,7 @@ Use this when delegating to a worker.
 ```
 You are a coding worker. Follow this Task Spec exactly.
 
-**Read first**: CLAUDE.md (repo conventions), REPO_INDEX.md (file inventory)
+**Read first**: CLAUDE.md (router), docs/README.md (doc map), docs/agent-loop.md (if fixing tests)
 
 Task Spec:
 <paste Task Spec>
@@ -245,16 +244,14 @@ Deliverables:
 - [ ] No artifacts in repo root; outputs go to `.local/`
 - [ ] `.gitignore` updated if new outputs exist
 - [ ] Follows existing patterns (TEARDOWN_CONFIG, pathlib, etc.)
-- [ ] Preflight succeeds on lab server
+- [ ] Preflight succeeds in target environment
 - [ ] Diagnostics collected without interactive commands
 - [ ] Rollback steps documented
 ```
 
-## Lab Playbook (Exact Commands)
+## Operations playbook (exact commands)
 
-LAB-ONLY EXECUTION: All tests and operational commands must be run on the lab server. Local runs are for development/editing only.
-
-1) Preflight (always first):
+1) Preflight (when using the scripted cluster setup):
 ```bash
 bash orchestrator/preflight.sh
 ```
@@ -286,12 +283,12 @@ python3 debug_assistant_latest/runner.py wrong_port --repeat 10 --stall-limit-s 
 python3 debug_assistant_latest/runner.py wrong_port --repeat 10 --output-dir /tmp/kubellm_runs
 
 # Minikube profile override (only applied when explicitly passed)
-python3 debug_assistant_latest/runner.py wrong_port --minikube-profile minh
+python3 debug_assistant_latest/runner.py wrong_port --minikube-profile minikube
 ```
 
 3) Manual test case application (alternative):
 ```bash
-kubectl --kubeconfig ~/.kube/minh-admin.conf apply -f debug_assistant_latest/troubleshooting/<CASE>/<FILE>.yaml
+kubectl --kubeconfig "${KUBELLM_KUBECONFIG_PATH:-$HOME/.kube/kubellm-minikube.conf}" apply -f debug_assistant_latest/troubleshooting/<CASE>/<FILE>.yaml
 ```
 
 4) Collect diagnostics:
@@ -313,7 +310,7 @@ cat .local/test_runs/<QUEUE_ID>/queue_summary.json | jq
 
 6) Rollback:
 ```bash
-kubectl --kubeconfig ~/.kube/minh-admin.conf delete -f debug_assistant_latest/troubleshooting/<CASE>/<FILE>.yaml --ignore-not-found
+kubectl --kubeconfig "${KUBELLM_KUBECONFIG_PATH:-$HOME/.kube/kubellm-minikube.conf}" delete -f debug_assistant_latest/troubleshooting/<CASE>/<FILE>.yaml --ignore-not-found
 ```
 
 7) Teardown all test cases:
@@ -349,4 +346,4 @@ With --output-dir /some/path:
 4) Write Task Spec with complexity checkbox marked.
 5) Write worker prompt pointing to CLAUDE.md and key files.
 6) Review worker changes against checklist.
-7) Guide lab run with preflight, diagnostics, and rollback.
+7) Guide validation with preflight, diagnostics, and rollback.

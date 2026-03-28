@@ -1,11 +1,18 @@
 import json
 import argparse
+import os
 import sys
 import tempfile
+import threading
+import time
+import types
 import unittest
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 import inspect
+
+import requests
+from fastapi.testclient import TestClient
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 DEBUG_DIR = REPO_ROOT / "debug_assistant_latest"
@@ -16,19 +23,39 @@ sys.path.insert(0, str(DEBUG_DIR))
 if not hasattr(inspect, "getargspec"):
     inspect.getargspec = inspect.getfullargspec
 
-from debug_assistant_latest.config_merge import load_config_with_overrides, merge_config_overrides
-from debug_assistant_latest.ground_truth import CheckStatus, run_all_checks, run_check, validate_ground_truth_config
+from debug_assistant_latest.config_merge import (
+    apply_runner_llm_env_defaults,
+    load_config_with_overrides,
+    merge_config_overrides,
+)
+from debug_assistant_latest.ground_truth import CheckStatus, execute_command, run_all_checks, run_check, validate_ground_truth_config
 from debug_assistant_latest.report import AgentMetrics, TestSummary, generate_aggregate_report, load_test_summary
-from debug_assistant_latest.runner import (
-    TestResult,
+from debug_assistant_latest.cli import (
     _apply_repeat_overrides,
     _build_repeat_payload,
     _run_repeat_queue,
+)
+from debug_assistant_latest.executor import (
+    TestResult,
+    _best_effort_configure_console_streams,
+    _safe_flush_stream,
+    _safe_write_to_stream,
     cmd_run_single,
     result_to_summary,
 )
 from debug_assistant_latest import teardown
+import assistant
+import api_server
 from api_server_support import SessionState, knowledge_table_name
+import api_server_support
+import runtime_config
+import timeout_helpers
+import debug_assistant_latest.agent_helpers as agent_helpers
+import debug_assistant_latest.prompt_helpers as prompt_helpers
+from debug_assistant_latest import rag_api
+from debug_assistant_latest import rag_server_config
+from debug_assistant_latest.better_shell import BetterShellTools
+from runtime_progress import BlockedCommandThresholdError, ProgressWriter
 from debug_assistant_latest.verification_base import parse_verification_status, print_verification_status
 
 
@@ -51,8 +78,533 @@ class ConfigMergeTests(unittest.TestCase):
             self.assertEqual(config["debug-agent"]["model"], "gpt-4o")
             self.assertTrue(config["test-directory"].startswith(tmpdir))
 
+    def test_apply_runner_llm_env_defaults_use_ollama_fills_unset_fields(self):
+        import argparse
+
+        args = argparse.Namespace(
+            api_model=None,
+            debug_model=None,
+            verification_model=None,
+            embedder=None,
+            embedder_provider=None,
+        )
+        with patch.dict(
+            os.environ,
+            {
+                "KUBELLM_USE_OLLAMA": "1",
+                "KUBELLM_OLLAMA_CHAT_MODEL": "llama3.2:3b",
+                "KUBELLM_OLLAMA_EMBEDDER": "nomic-embed-text",
+            },
+            clear=False,
+        ):
+            apply_runner_llm_env_defaults(args)
+        self.assertEqual(args.api_model, "llama3.2:3b")
+        self.assertEqual(args.debug_model, "llama3.2:3b")
+        self.assertEqual(args.verification_model, "llama3.2:3b")
+        self.assertEqual(args.embedder, "nomic-embed-text")
+        self.assertEqual(args.embedder_provider, "ollama")
+
+    def test_apply_runner_llm_env_defaults_cli_wins_over_use_ollama(self):
+        import argparse
+
+        args = argparse.Namespace(
+            api_model="custom-api",
+            debug_model=None,
+            verification_model=None,
+            embedder=None,
+            embedder_provider=None,
+        )
+        with patch.dict(
+            os.environ,
+            {
+                "KUBELLM_USE_OLLAMA": "1",
+                "KUBELLM_OLLAMA_CHAT_MODEL": "llama3.2:3b",
+                "KUBELLM_OLLAMA_EMBEDDER": "nomic-embed-text",
+            },
+            clear=False,
+        ):
+            apply_runner_llm_env_defaults(args)
+        self.assertEqual(args.api_model, "custom-api")
+        self.assertEqual(args.debug_model, "llama3.2:3b")
+
+    def test_apply_runner_llm_env_defaults_per_field_env(self):
+        import argparse
+
+        args = argparse.Namespace(
+            api_model=None,
+            debug_model=None,
+            verification_model=None,
+            embedder=None,
+            embedder_provider=None,
+        )
+        with patch.dict(
+            os.environ,
+            {
+                "KUBELLM_USE_OLLAMA": "",
+                "KUBELLM_DEBUG_MODEL": "mistral:7b",
+                "KUBELLM_EMBEDDER_PROVIDER": "ollama",
+            },
+            clear=False,
+        ):
+            apply_runner_llm_env_defaults(args)
+        self.assertEqual(args.debug_model, "mistral:7b")
+        self.assertEqual(args.embedder_provider, "ollama")
+
+
+class RagServerConfigTests(unittest.TestCase):
+    def test_resolve_client_base_url_defaults_to_shared_local_port(self):
+        with patch.dict(os.environ, {}, clear=True):
+            self.assertEqual(rag_server_config.resolve_client_base_url(), "http://127.0.0.1:8000")
+
+    def test_resolve_client_base_url_uses_server_port_when_url_unset(self):
+        with patch.dict(os.environ, {"RAG_SERVER_PORT": "8123"}, clear=True):
+            self.assertEqual(rag_server_config.resolve_client_base_url(), "http://127.0.0.1:8123")
+
+    def test_resolve_client_base_url_prefers_explicit_url(self):
+        with patch.dict(os.environ, {"RAG_API_URL": "http://env-host:9000"}, clear=True):
+            self.assertEqual(
+                rag_server_config.resolve_client_base_url("http://cli-host:7000/"),
+                "http://cli-host:7000",
+            )
+
+
+class RuntimeConfigTests(unittest.TestCase):
+    def test_build_chat_model_openai_path_skips_gemini_and_ollama_imports(self):
+        imported_modules = []
+
+        def fake_import(module_name):
+            imported_modules.append(module_name)
+            if module_name == "phi.model.openai":
+                return types.SimpleNamespace(OpenAIChat=lambda **kwargs: kwargs)
+            if module_name in {"phi.model.google", "phi.model.ollama"}:
+                raise AssertionError(f"Unexpected import: {module_name}")
+            raise AssertionError(f"Unexpected module import request: {module_name}")
+
+        with patch.dict(os.environ, {"OPENAI_API_KEY": "test-key"}, clear=False), patch(
+            "runtime_config.importlib.import_module", side_effect=fake_import
+        ):
+            model = runtime_config.build_chat_model("gpt-5-mini", temperature=0.4)
+
+        self.assertEqual(model["id"], "gpt-5-mini")
+        self.assertEqual(model["temperature"], 0.4)
+        self.assertEqual(imported_modules, ["phi.model.openai"])
+
+    def test_build_chat_model_ollama_path_skips_openai_and_gemini_imports(self):
+        imported_modules = []
+
+        def fake_import(module_name):
+            imported_modules.append(module_name)
+            if module_name == "phi.model.ollama":
+                return types.SimpleNamespace(Ollama=lambda **kwargs: kwargs)
+            if module_name in {"phi.model.openai", "phi.model.google"}:
+                raise AssertionError(f"Unexpected import: {module_name}")
+            raise AssertionError(f"Unexpected module import request: {module_name}")
+
+        with patch.dict(os.environ, {}, clear=True), patch(
+            "runtime_config.importlib.import_module", side_effect=fake_import
+        ):
+            model = runtime_config.build_chat_model("llama3.1:8b")
+
+        self.assertEqual(model["id"], "llama3.1:8b")
+        self.assertEqual(imported_modules, ["phi.model.ollama"])
+
+    def test_build_embedder_openai_path_skips_ollama_imports(self):
+        imported_modules = []
+
+        def fake_import(module_name):
+            imported_modules.append(module_name)
+            if module_name == "phi.embedder.openai":
+                return types.SimpleNamespace(OpenAIEmbedder=lambda **kwargs: kwargs)
+            if module_name == "phi.embedder.ollama":
+                raise AssertionError(f"Unexpected import: {module_name}")
+            raise AssertionError(f"Unexpected module import request: {module_name}")
+
+        with patch.dict(os.environ, {"OPENAI_API_KEY": "test-key"}, clear=False), patch(
+            "runtime_config.importlib.import_module", side_effect=fake_import
+        ):
+            embedder = runtime_config.build_embedder("text-embedding-3-small")
+
+        self.assertEqual(embedder["model"], "text-embedding-3-small")
+        self.assertEqual(embedder["dimensions"], 1536)
+        self.assertEqual(imported_modules, ["phi.embedder.openai"])
+
+    def test_resolve_embedder_config_defaults_by_chat_provider(self):
+        openai_config = runtime_config.resolve_embedder_config(chat_model_name="gpt-5-mini")
+        ollama_config = runtime_config.resolve_embedder_config(chat_model_name="llama3.1:8b")
+
+        self.assertEqual((openai_config.provider, openai_config.model), ("openai", "text-embedding-3-small"))
+        self.assertEqual((ollama_config.provider, ollama_config.model), ("ollama", "nomic-embed-text"))
+
+    def test_resolve_embedder_config_requires_explicit_provider_for_gemini(self):
+        with self.assertRaisesRegex(ValueError, "Gemini"):
+            runtime_config.resolve_embedder_config(chat_model_name="gemini-1.5-pro")
+
+    def test_db_url_uses_psycopg2_driver_consistently(self):
+        self.assertEqual(runtime_config.DB_URL, runtime_config.DB_URL_PSYCOPG2)
+        self.assertTrue(runtime_config.DB_URL.startswith("postgresql+psycopg2://"))
+
+
+class TimeoutHelperTests(unittest.TestCase):
+    def test_timeout_unblocks_caller_on_windows(self):
+        def target():
+            time.sleep(0.2)
+            return "ok"
+
+        fake_module = types.SimpleNamespace(timeout=MagicMock(), TimeoutError=RuntimeError)
+
+        with patch.object(timeout_helpers, "timeout_decorator", fake_module), patch("timeout_helpers.os.name", "nt"):
+            decorated = timeout_helpers.timeout(0.01)(target)
+            started = time.perf_counter()
+            with self.assertRaises(timeout_helpers.TimeoutError):
+                decorated()
+            elapsed = time.perf_counter() - started
+
+        self.assertLess(elapsed, 0.1)
+
+    def test_timeout_uses_signals_off_windows(self):
+        fake_decorator = object()
+        fake_timeout = MagicMock(return_value=fake_decorator)
+        fake_module = types.SimpleNamespace(timeout=fake_timeout, TimeoutError=RuntimeError)
+
+        with patch.object(timeout_helpers, "timeout_decorator", fake_module), patch("timeout_helpers.os.name", "posix"):
+            result = timeout_helpers.timeout(480)
+
+        fake_timeout.assert_called_once_with(480, use_signals=True)
+        self.assertIs(result, fake_decorator)
+
+
+class AgentHelperTests(unittest.TestCase):
+    def test_build_llm_agent_disables_debug_logs_by_default_on_windows(self):
+        fake_factory = MagicMock(return_value="agent")
+
+        with patch.object(agent_helpers, "llmAgent", fake_factory), patch.object(
+            agent_helpers, "build_model", return_value="model"
+        ), patch.object(agent_helpers, "BetterShellTools", return_value="tool"), patch(
+            "debug_assistant_latest.agent_helpers.os.name", "nt"
+        ), patch.dict(os.environ, {}, clear=False):
+            result = agent_helpers.build_llm_agent("gpt-5-mini", ["i"], ["g"])
+
+        self.assertEqual(result, "agent")
+        self.assertFalse(fake_factory.call_args.kwargs["debug_mode"])
+        self.assertFalse(fake_factory.call_args.kwargs["show_tool_calls"])
+
+    def test_build_llm_agent_allows_windows_debug_override(self):
+        fake_factory = MagicMock(return_value="agent")
+
+        with patch.object(agent_helpers, "llmAgent", fake_factory), patch.object(
+            agent_helpers, "build_model", return_value="model"
+        ), patch.object(agent_helpers, "BetterShellTools", return_value="tool"), patch(
+            "debug_assistant_latest.agent_helpers.os.name", "nt"
+        ), patch.dict(os.environ, {"KUBELLM_AGENT_DEBUG_LOGS": "1"}, clear=False):
+            agent_helpers.build_llm_agent("gpt-5-mini", ["i"], ["g"])
+
+        self.assertTrue(fake_factory.call_args.kwargs["debug_mode"])
+        self.assertTrue(fake_factory.call_args.kwargs["show_tool_calls"])
+
+
+class PromptHelperTests(unittest.TestCase):
+    def test_get_tool_usage_rules_adds_windows_guidance(self):
+        with patch("debug_assistant_latest.prompt_helpers.os.name", "nt"):
+            rules = prompt_helpers.get_tool_usage_rules()
+
+        self.assertIn("PowerShell-compatible", rules)
+        self.assertIn("ownerReferences[0]", rules)
+        self.assertIn("kubectl port-forward", rules)
+
+
+class BetterShellTests(unittest.TestCase):
+    def test_run_shell_command_exposes_string_command_schema(self):
+        tool = BetterShellTools()
+
+        parameters = tool.functions["run_shell_command"].parameters
+
+        self.assertEqual(parameters["type"], "object")
+        self.assertEqual(parameters["required"], ["command"])
+        self.assertEqual(parameters["properties"]["command"]["type"], "string")
+        self.assertNotIn("args", parameters["properties"])
+
+    def test_run_shell_command_uses_powershell_on_windows(self):
+        tool = BetterShellTools()
+        fake_result = types.SimpleNamespace(stdout="ok\n", returncode=0)
+
+        with patch("subprocess.run", return_value=fake_result) as run_mock, patch(
+            "debug_assistant_latest.better_shell.os.name", "nt"
+        ):
+            output = tool.run_shell_command("Get-Location")
+
+        self.assertEqual(output, "ok\n")
+        args, kwargs = run_mock.call_args
+        self.assertEqual(args[0][:3], ["powershell", "-NoProfile", "-Command"])
+        self.assertFalse(kwargs["shell"])
+        self.assertEqual(kwargs["encoding"], "utf-8")
+        self.assertEqual(kwargs["errors"], "replace")
+        self.assertEqual(kwargs["timeout"], 120)
+
+    def test_run_shell_command_allows_direct_powershell_edit_on_windows(self):
+        tool = BetterShellTools()
+        fake_result = types.SimpleNamespace(stdout="", stderr="", returncode=0)
+        command = (
+            "(Get-Content 'C:\\repo\\wrong_port.yaml') "
+            "-replace 'containerPort: 8000','containerPort: 8765' | "
+            "Set-Content 'C:\\repo\\wrong_port.yaml'"
+        )
+
+        with patch("subprocess.run", return_value=fake_result) as run_mock, patch(
+            "debug_assistant_latest.better_shell.os.name", "nt"
+        ):
+            output = tool.run_shell_command(command)
+
+        self.assertEqual(output, "")
+        run_mock.assert_called_once()
+
+    def test_run_shell_command_blocks_known_bad_windows_pattern_with_actionable_error(self):
+        tool = BetterShellTools()
+        command = "kubectl port-forward pod/kube-wrong-port 8765:8765 & sleep 1; curl -s http://localhost:8765 | head -n 5"
+
+        with patch("debug_assistant_latest.better_shell.os.name", "nt"):
+            output = tool.run_shell_command(command)
+
+        self.assertIn("Error:", output)
+        self.assertIn("kubectl exec", output)
+        self.assertIn("kubectl get", output)
+
+    def test_run_shell_command_raises_after_repeated_blocked_commands(self):
+        tool = BetterShellTools(phase="debug", blocked_threshold=3)
+        command = "kubectl port-forward pod/kube-wrong-port 8765:8765"
+
+        with patch("debug_assistant_latest.better_shell.os.name", "nt"):
+            self.assertIn("Error:", tool.run_shell_command(command))
+            self.assertIn("Error:", tool.run_shell_command(command))
+            with self.assertRaises(BlockedCommandThresholdError):
+                tool.run_shell_command(command)
+
+    def test_run_shell_command_resets_blocked_counter_after_allowed_command(self):
+        tool = BetterShellTools(phase="debug", blocked_threshold=3)
+        blocked = "kubectl port-forward pod/kube-wrong-port 8765:8765"
+        fake_result = types.SimpleNamespace(stdout="ok\n", stderr="", returncode=0)
+
+        with patch("debug_assistant_latest.better_shell.os.name", "nt"), patch(
+            "subprocess.run", return_value=fake_result
+        ):
+            self.assertIn("Error:", tool.run_shell_command(blocked))
+            self.assertEqual(tool.run_shell_command("Get-Location"), "ok\n")
+
+        self.assertEqual(tool._consecutive_blocked, 0)
+
+    def test_run_shell_command_accepts_dict_command_payload(self):
+        tool = BetterShellTools()
+        fake_result = types.SimpleNamespace(stdout="ok\n", stderr="", returncode=0)
+
+        with patch("subprocess.run", return_value=fake_result) as run_mock, patch(
+            "debug_assistant_latest.better_shell.os.name", "nt"
+        ):
+            output = tool.run_shell_command({"command": "Get-Location"})
+
+        self.assertEqual(output, "ok\n")
+        args, kwargs = run_mock.call_args
+        self.assertEqual(args[0][:3], ["powershell", "-NoProfile", "-Command"])
+        self.assertEqual(args[0][-1], "Get-Location")
+        self.assertFalse(kwargs["shell"])
+
+    def test_run_shell_command_processed_entrypoint_accepts_legacy_command_payload(self):
+        tool = BetterShellTools()
+        fake_result = types.SimpleNamespace(stdout="ok\n", stderr="", returncode=0)
+        function = tool.functions["run_shell_command"]
+        function.process_entrypoint()
+
+        with patch("subprocess.run", return_value=fake_result) as run_mock, patch(
+            "debug_assistant_latest.better_shell.os.name", "nt"
+        ):
+            output = function.entrypoint(command={"command": "Get-Location"})
+
+        self.assertEqual(output, "ok\n")
+        args, kwargs = run_mock.call_args
+        self.assertEqual(args[0][-1], "Get-Location")
+        self.assertFalse(kwargs["shell"])
+
+    def test_run_shell_command_returns_actionable_error_for_non_command_payload(self):
+        tool = BetterShellTools()
+
+        with patch("debug_assistant_latest.better_shell.os.name", "nt"):
+            output = tool.run_shell_command({"type": "string"})
+
+        self.assertIn("Error:", output)
+        self.assertIn("literal shell command string", output)
+
+    def test_build_llm_agent_ollama_request_kwargs_include_shell_tool_schema(self):
+        agent = agent_helpers.build_llm_agent("llama3.1:8b", ["i"], ["g"])
+
+        agent.update_model()
+        tools = agent.model.request_kwargs["tools"]
+
+        self.assertEqual(len(tools), 1)
+        parameters = tools[0]["function"]["parameters"]
+        self.assertEqual(parameters["properties"]["command"]["type"], "string")
+        self.assertEqual(parameters["required"], ["command"])
+        self.assertNotIn("args", parameters["properties"])
+
+
+class RunnerStreamTests(unittest.TestCase):
+    def test_safe_write_to_stream_replaces_unencodable_console_text(self):
+        class FakeStream:
+            encoding = "cp1252"
+
+            def __init__(self):
+                self.writes = []
+
+            def write(self, data):
+                data.encode(self.encoding)
+                self.writes.append(data)
+
+            def flush(self):
+                return None
+
+        stream = FakeStream()
+        _safe_write_to_stream(stream, "step -> next \u2192 done")
+
+        self.assertEqual(stream.writes, ["step -> next ? done"])
+
+    def test_safe_flush_stream_swallows_oserror(self):
+        class FakeStream:
+            def flush(self):
+                raise OSError("bad handle")
+
+        _safe_flush_stream(FakeStream())
+
+    def test_best_effort_configure_console_streams_reconfigures_streams(self):
+        stdout_stream = MagicMock()
+        stderr_stream = MagicMock()
+
+        with patch("sys.stdout", stdout_stream), patch("sys.stderr", stderr_stream):
+            _best_effort_configure_console_streams()
+
+        stdout_stream.reconfigure.assert_called_once_with(encoding="utf-8", errors="replace")
+        stderr_stream.reconfigure.assert_called_once_with(encoding="utf-8", errors="replace")
+
+
+class ProgressWriterTests(unittest.TestCase):
+    def test_progress_writer_serializes_concurrent_jsonl_writes(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            writer = ProgressWriter(Path(tmpdir) / "progress.log")
+
+            def emit(prefix):
+                for index in range(20):
+                    writer.write_event("thread_event", prefix=prefix, index=index)
+
+            threads = [threading.Thread(target=emit, args=(name,)) for name in ("a", "b", "c")]
+            for thread in threads:
+                thread.start()
+            for thread in threads:
+                thread.join()
+            writer.close()
+
+            lines = (Path(tmpdir) / "progress.log").read_text(encoding="utf-8").splitlines()
+
+        self.assertEqual(len(lines), 60)
+        records = [json.loads(line) for line in lines]
+        self.assertEqual(sorted(record["seq"] for record in records), list(range(1, 61)))
+
+
+class AssistantIntegrationTests(unittest.TestCase):
+    def test_get_rag_assistant_openai_path_works_without_ollama_imports(self):
+        imported_modules = []
+
+        def fake_import(module_name):
+            imported_modules.append(module_name)
+            if module_name == "phi.model.openai":
+                return types.SimpleNamespace(OpenAIChat=lambda **kwargs: {"kind": "chat", **kwargs})
+            if module_name == "phi.embedder.openai":
+                return types.SimpleNamespace(OpenAIEmbedder=lambda **kwargs: {"kind": "embedder", **kwargs})
+            if module_name in {"phi.model.ollama", "phi.embedder.ollama", "phi.model.google"}:
+                raise AssertionError(f"Unexpected import: {module_name}")
+            raise AssertionError(f"Unexpected module import request: {module_name}")
+
+        fake_agent = object()
+        with patch.dict(os.environ, {"OPENAI_API_KEY": "test-key"}, clear=False), patch(
+            "runtime_config.importlib.import_module", side_effect=fake_import
+        ), patch.object(assistant, "AgentKnowledge", return_value="knowledge"), patch.object(
+            assistant, "PgVector", return_value="pgvector"
+        ) as pgvector_mock, patch.object(assistant, "PgAgentStorage", return_value="storage"), patch.object(
+            assistant, "BetterShellTools", return_value="tool"
+        ), patch.object(assistant, "Agent", return_value=fake_agent):
+            result = assistant.get_rag_assistant(
+                llm_model="gpt-5-mini",
+                embeddings_model="text-embedding-3-small",
+                embeddings_provider="openai",
+            )
+
+        self.assertIs(result, fake_agent)
+        self.assertIn("phi.model.openai", imported_modules)
+        self.assertIn("phi.embedder.openai", imported_modules)
+        self.assertTrue(all("ollama" not in name for name in imported_modules))
+        self.assertEqual(pgvector_mock.call_args.kwargs["table_name"], "local_rag_documents_text-embedding-3-small")
+
+    def test_get_rag_assistant_ollama_path_works_without_openai_env_or_imports(self):
+        imported_modules = []
+
+        def fake_import(module_name):
+            imported_modules.append(module_name)
+            if module_name == "phi.model.ollama":
+                return types.SimpleNamespace(Ollama=lambda **kwargs: {"kind": "chat", **kwargs})
+            if module_name == "phi.embedder.ollama":
+                return types.SimpleNamespace(OllamaEmbedder=lambda **kwargs: {"kind": "embedder", **kwargs})
+            if module_name in {"phi.model.openai", "phi.embedder.openai", "phi.model.google"}:
+                raise AssertionError(f"Unexpected import: {module_name}")
+            raise AssertionError(f"Unexpected module import request: {module_name}")
+
+        fake_agent = object()
+        with patch.dict(os.environ, {}, clear=True), patch(
+            "runtime_config.importlib.import_module", side_effect=fake_import
+        ), patch.object(assistant, "AgentKnowledge", return_value="knowledge"), patch.object(
+            assistant, "PgVector", return_value="pgvector"
+        ) as pgvector_mock, patch.object(assistant, "PgAgentStorage", return_value="storage"), patch.object(
+            assistant, "BetterShellTools", return_value="tool"
+        ), patch.object(assistant, "Agent", return_value=fake_agent):
+            result = assistant.get_rag_assistant(
+                llm_model="llama3.1:8b",
+                embeddings_model="nomic-embed-text",
+                embeddings_provider="ollama",
+            )
+
+        self.assertIs(result, fake_agent)
+        self.assertEqual(imported_modules, ["phi.model.ollama", "phi.embedder.ollama"])
+        self.assertEqual(pgvector_mock.call_args.kwargs["table_name"], "local_rag_documents_nomic-embed-text")
+
 
 class GroundTruthTests(unittest.TestCase):
+    def test_execute_command_uses_direct_argv_on_windows_for_jsonpath(self):
+        fake_result = types.SimpleNamespace(stdout="True\n", stderr="", returncode=0)
+        command = "kubectl get pod test -o jsonpath='{.status.conditions[?(@.type==\"Ready\")].status}'"
+
+        with patch("subprocess.run", return_value=fake_result) as run_mock, patch(
+            "debug_assistant_latest.ground_truth.os.name", "nt"
+        ):
+            output, exit_code, error = execute_command(command)
+
+        self.assertEqual((output, exit_code, error), ("True", 0, None))
+        args, kwargs = run_mock.call_args
+        self.assertEqual(
+            args[0],
+            ["kubectl", "get", "pod", "test", "-o", 'jsonpath={.status.conditions[?(@.type=="Ready")].status}'],
+        )
+        self.assertFalse(kwargs["shell"])
+        self.assertEqual(kwargs["encoding"], "utf-8")
+        self.assertEqual(kwargs["errors"], "replace")
+
+    def test_execute_command_uses_powershell_on_windows_when_shell_is_required(self):
+        fake_result = types.SimpleNamespace(stdout="clean\n", stderr="", returncode=0)
+        command = "kubectl logs test 2>&1 | grep boom || echo clean"
+
+        with patch("subprocess.run", return_value=fake_result) as run_mock, patch(
+            "debug_assistant_latest.ground_truth.os.name", "nt"
+        ):
+            output, exit_code, error = execute_command(command)
+
+        self.assertEqual((output, exit_code, error), ("clean", 0, None))
+        args, kwargs = run_mock.call_args
+        self.assertEqual(args[0][:3], ["powershell", "-NoProfile", "-Command"])
+        self.assertFalse(kwargs["shell"])
+
     def test_run_check_skips_when_dependency_missing(self):
         result = run_check(
             {
@@ -506,8 +1058,8 @@ class RunnerTests(unittest.TestCase):
                     self._alive = False
 
             base_run_id = "repeat-123"
-            with patch("debug_assistant_latest.runner.Process", FakeProcess), patch(
-                "debug_assistant_latest.runner._repeat_iteration_worker", fake_worker
+            with patch("debug_assistant_latest.cli.Process", FakeProcess), patch(
+                "debug_assistant_latest.cli._repeat_iteration_worker", fake_worker
             ):
                 exit_code = _run_repeat_queue(args, "single", base_run_id, tmp_base)
 
@@ -558,8 +1110,8 @@ class RunnerTests(unittest.TestCase):
                     pass
 
             base_run_id = "repeat-stall"
-            with patch("debug_assistant_latest.runner.Process", FakeProcess), patch(
-                "debug_assistant_latest.runner.Queue", FakeQueue
+            with patch("debug_assistant_latest.cli.Process", FakeProcess), patch(
+                "debug_assistant_latest.cli.Queue", FakeQueue
             ):
                 exit_code = _run_repeat_queue(args, "single", base_run_id, tmp_base)
 
@@ -590,10 +1142,14 @@ class RunnerTests(unittest.TestCase):
                 debug_model=None,
                 api_model=None,
                 verification_model=None,
+                embedder=None,
+                embedder_provider=None,
                 technique="allStepsAtOnce",
                 backup_before_run=False,
                 teardown_after_run=False,
                 minikube_profile=None,
+                rag_api_url=None,
+                skip_preflight=True,
             )
 
             fake_result = TestResult(
@@ -609,16 +1165,17 @@ class RunnerTests(unittest.TestCase):
                 finished_at="2026-01-01T00:00:01",
             )
 
-            with patch("debug_assistant_latest.runner.run_single_test", return_value=fake_result), patch(
-                "debug_assistant_latest.runner.save_run_config"
+            with patch("debug_assistant_latest.executor.run_single_test", return_value=fake_result), patch(
+                "debug_assistant_latest.executor.save_run_config"
             ) as save_run_config_mock, patch(
-                "debug_assistant_latest.runner.save_test_summary"
+                "debug_assistant_latest.executor.save_test_summary"
             ) as save_test_summary_mock, patch(
-                "debug_assistant_latest.runner.generate_aggregate_report", return_value={"ok": True}
+                "debug_assistant_latest.executor.generate_aggregate_report",
+                return_value=types.SimpleNamespace(passed=1, failed=0, errors=0),
             ) as generate_report_mock, patch(
-                "debug_assistant_latest.runner.save_aggregate_report"
+                "debug_assistant_latest.executor.save_aggregate_report"
             ) as save_aggregate_mock, patch(
-                "debug_assistant_latest.runner.print_console_summary"
+                "debug_assistant_latest.executor.print_console_summary"
             ) as print_console_mock:
                 exit_code = cmd_run_single(args, "wrong_port")
 
@@ -628,6 +1185,424 @@ class RunnerTests(unittest.TestCase):
             generate_report_mock.assert_called_once()
             save_aggregate_mock.assert_called_once()
             print_console_mock.assert_called_once()
+
+    def test_cmd_run_single_preflight_failure_writes_terminal_artifacts(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            args = argparse.Namespace(
+                output_dir=Path(tmpdir),
+                debug_model=None,
+                api_model=None,
+                verification_model=None,
+                embedder=None,
+                embedder_provider=None,
+                technique="allStepsAtOnce",
+                backup_before_run=False,
+                teardown_after_run=False,
+                minikube_profile="test-profile",
+                rag_api_url=None,
+                skip_preflight=False,
+            )
+            preflight_result = {
+                "passed": False,
+                "checks": [
+                    {"name": "docker_engine", "passed": False, "message": "engine down"},
+                    {"name": "cluster_access", "passed": False, "message": "kubectl get nodes failed"},
+                ],
+            }
+
+            with patch("debug_assistant_latest.executor.run_preflight", return_value=preflight_result), patch(
+                "debug_assistant_latest.executor.print_preflight_result"
+            ), patch(
+                "debug_assistant_latest.executor.run_single_test"
+            ) as run_single_mock, patch(
+                "debug_assistant_latest.executor.print_console_summary"
+            ):
+                exit_code = cmd_run_single(args, "wrong_port")
+
+            self.assertEqual(exit_code, 1)
+            run_single_mock.assert_not_called()
+            summary_path = Path(tmpdir) / "wrong_port" / "summary.json"
+            aggregate_path = Path(tmpdir) / "aggregate.json"
+            progress_path = Path(tmpdir) / "wrong_port" / "progress.log"
+            self.assertTrue(summary_path.exists())
+            self.assertTrue(aggregate_path.exists())
+            self.assertTrue(progress_path.exists())
+
+            summary = json.loads(summary_path.read_text(encoding="utf-8"))
+            self.assertEqual(summary["status"], "ERROR")
+            self.assertIn("Preflight failed", summary["error_message"])
+
+            progress_events = [
+                json.loads(line)["event"]
+                for line in progress_path.read_text(encoding="utf-8").splitlines()
+            ]
+            self.assertIn("preflight_end", progress_events)
+            self.assertEqual(progress_events[-1], "run_end")
+
+
+class ApiServerRouteTests(unittest.TestCase):
+    def setUp(self):
+        api_server.session_state.reset_run()
+
+    def tearDown(self):
+        api_server.session_state.reset_run()
+
+    def test_initialize_route_returns_structured_json_error(self):
+        client = TestClient(api_server.app)
+
+        with patch("api_server.resolve_embedder_config", side_effect=RuntimeError("ollama package missing")):
+            response = client.post("/initialize/", data={"llm_model": "llama3.1:8b"})
+
+        self.assertEqual(response.status_code, 500)
+        self.assertEqual(
+            response.json()["detail"],
+            "Could not initialize assistant: ollama package missing",
+        )
+
+    def test_server_info_reports_version_and_signature(self):
+        client = TestClient(api_server.app)
+
+        response = client.get("/server_info/")
+
+        self.assertEqual(response.status_code, 200)
+        body = response.json()
+        self.assertEqual(body["api_version"], rag_server_config.RAG_API_VERSION)
+        self.assertEqual(body["repo_signature"], rag_server_config.compute_repo_signature())
+        self.assertTrue(body["module_path"].endswith("api_server.py"))
+
+    def test_ask_route_returns_structured_json_error(self):
+        client = TestClient(api_server.app)
+        api_server.session_state.rag_assistant = types.SimpleNamespace(run=MagicMock(side_effect=RuntimeError("boom")))
+
+        response = client.post("/ask/", data={"prompt": "hello"})
+
+        self.assertEqual(response.status_code, 500)
+        self.assertEqual(response.json()["detail"], "Could not answer question: boom")
+
+    def test_clear_knowledge_base_is_idempotent_when_table_missing(self):
+        client = TestClient(api_server.app)
+        api_server.session_state.rag_assistant = object()
+        api_server.session_state.embeddings_model = "text-embedding-3-small"
+
+        fake_inspector = MagicMock()
+        fake_inspector.has_table.return_value = False
+        with patch("api_server.inspect", return_value=fake_inspector):
+            response = client.post("/clear_knowledge_base/")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(
+            response.json(),
+            {
+                "status": "Knowledge base already empty",
+                "table": "ai.local_rag_documents_text-embedding-3-small",
+            },
+        )
+
+    def test_healthz_returns_ok_and_server_info(self):
+        client = TestClient(api_server.app)
+        response = client.get("/healthz/")
+        self.assertEqual(response.status_code, 200)
+        body = response.json()
+        self.assertEqual(body["status"], "ok")
+        self.assertEqual(body["server_info"]["api_version"], rag_server_config.RAG_API_VERSION)
+
+    def test_read_root_returns_html(self):
+        client = TestClient(api_server.app)
+        response = client.get("/")
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("text/html", response.headers.get("content-type", ""))
+        self.assertIn("Local RAG API", response.text)
+
+    def test_chat_history_returns_session_messages(self):
+        client = TestClient(api_server.app)
+        response = client.get("/chat_history/")
+        self.assertEqual(response.status_code, 200)
+        messages = response.json()["messages"]
+        self.assertTrue(messages)
+        self.assertEqual(messages[0]["role"], "assistant")
+
+    def test_new_run_resets_session(self):
+        client = TestClient(api_server.app)
+        api_server.session_state.rag_assistant = object()
+        api_server.session_state.llm_model = "gpt-4o"
+        response = client.post("/new_run/")
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json(), {"status": "New run started"})
+        self.assertIsNone(api_server.session_state.rag_assistant)
+        self.assertIsNone(api_server.session_state.llm_model)
+
+    def test_ask_requires_initialized_assistant(self):
+        client = TestClient(api_server.app)
+        response = client.post("/ask/", data={"prompt": "hello"})
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(response.json()["detail"], "Agent not initialized")
+
+    def test_upload_md_requires_initialized_assistant(self):
+        client = TestClient(api_server.app)
+        response = client.post(
+            "/upload_md/",
+            files={"file": ("x.md", b"# x", "text/markdown")},
+        )
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(response.json()["detail"], "Agent not initialized")
+
+    def test_upload_pdf_requires_initialized_assistant(self):
+        client = TestClient(api_server.app)
+        response = client.post(
+            "/upload_pdf/",
+            files={"file": ("x.pdf", b"%PDF-1.4", "application/pdf")},
+        )
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(response.json()["detail"], "Agent not initialized")
+
+    def test_add_url_requires_initialized_assistant(self):
+        client = TestClient(api_server.app)
+        response = client.post("/add_url/", data={"url": "https://example.com"})
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(response.json()["detail"], "Agent not initialized")
+
+    def test_add_url_requires_embeddings_model(self):
+        client = TestClient(api_server.app)
+        api_server.session_state.rag_assistant = object()
+        api_server.session_state.embeddings_model = None
+        response = client.post("/add_url/", data={"url": "https://example.com"})
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(response.json()["detail"], "Embeddings model not initialized")
+
+    def test_clear_knowledge_base_requires_embeddings_model(self):
+        client = TestClient(api_server.app)
+        api_server.session_state.rag_assistant = object()
+        api_server.session_state.embeddings_model = None
+        response = client.post("/clear_knowledge_base/")
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(response.json()["detail"], "Embeddings model not initialized")
+
+    def test_add_url_success_calls_load_knowledge_document(self):
+        client = TestClient(api_server.app)
+        api_server.session_state.rag_assistant = object()
+        api_server.session_state.embeddings_model = "text-embedding-3-small"
+        api_server.session_state.embeddings_provider = "openai"
+        with patch("api_server.load_knowledge_document") as load_mock:
+            response = client.post("/add_url/", data={"url": "https://example.com/doc"})
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["status"], "URL added")
+        load_mock.assert_called_once_with(
+            "https://example.com/doc",
+            "local_rag_documents_text-embedding-3-small",
+            "text-embedding-3-small",
+            api_server.DB_URL,
+            embeddings_provider="openai",
+        )
+
+    def test_upload_md_invokes_load_documents_when_reader_returns_docs(self):
+        from phi.document import Document
+
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+
+            def path_ctor(*parts):
+                if len(parts) == 1 and isinstance(parts[0], str) and parts[0].startswith("./test_knowledge/"):
+                    return tmp_path / parts[0].replace("./test_knowledge/", "")
+                return Path(*parts)
+
+            load_documents = MagicMock()
+            api_server.session_state.rag_assistant = types.SimpleNamespace(
+                knowledge=types.SimpleNamespace(load_documents=load_documents)
+            )
+            doc = Document(content="# Hello", meta_data={})
+            with patch("api_server.Path", side_effect=path_ctor), patch("api_server.TextReader") as tr_mock:
+                tr_mock.return_value.read.return_value = [doc]
+                client = TestClient(api_server.app)
+                response = client.post(
+                    "/upload_md/",
+                    files={"file": ("note.md", b"# Hello\n", "text/markdown")},
+                )
+            self.assertEqual(response.status_code, 200)
+            self.assertEqual(response.json()["status"], "Markdown file uploaded")
+            load_documents.assert_called_once()
+            tr_mock.return_value.read.assert_called_once()
+            read_path = tr_mock.return_value.read.call_args[0][0]
+            self.assertEqual(read_path, tmp_path / "note.md")
+
+    def test_upload_pdf_invokes_load_documents_when_reader_returns_docs(self):
+        from phi.document import Document
+
+        load_documents = MagicMock()
+        api_server.session_state.rag_assistant = types.SimpleNamespace(
+            knowledge=types.SimpleNamespace(load_documents=load_documents)
+        )
+        doc = Document(content="pdf text", meta_data={})
+        with patch("api_server.PDFReader") as reader_mock:
+            reader_mock.return_value.read.return_value = [doc]
+            client = TestClient(api_server.app)
+            response = client.post(
+                "/upload_pdf/",
+                files={"file": ("x.pdf", b"%PDF-1.4 fake", "application/pdf")},
+            )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["status"], "PDF uploaded")
+        load_documents.assert_called_once()
+        reader_mock.return_value.read.assert_called_once()
+
+    def test_global_exception_handler_returns_json_detail(self):
+        client = TestClient(api_server.app, raise_server_exceptions=False)
+        with patch("api_server.build_server_info", side_effect=RuntimeError("kaput")):
+            response = client.get("/healthz/")
+        self.assertEqual(response.status_code, 500)
+        self.assertIn("kaput", response.json()["detail"])
+
+
+class RagApiTests(unittest.TestCase):
+    def setUp(self):
+        rag_api.reset_compatibility_cache()
+
+    def tearDown(self):
+        rag_api.reset_compatibility_cache()
+
+    def _server_info_response(self, **overrides):
+        response = MagicMock()
+        response.ok = True
+        payload = {
+            "api_version": rag_server_config.RAG_API_VERSION,
+            "repo_signature": rag_server_config.compute_repo_signature(),
+            "server_pid": 123,
+            "server_started_at": "2026-03-24T17:00:00+00:00",
+            "module_path": "C:/repo/api_server.py",
+        }
+        payload.update(overrides)
+        response.json.return_value = payload
+        return response
+
+    def test_initialize_assistant_surfaces_non_json_http_errors(self):
+        class FakeResponse:
+            status_code = 502
+            text = "upstream failed hard"
+            reason = "Bad Gateway"
+
+            def raise_for_status(self):
+                raise requests.HTTPError("boom", response=self)
+
+            def json(self):
+                raise ValueError("not json")
+
+        with patch("debug_assistant_latest.rag_api.requests.get", return_value=self._server_info_response()), patch(
+            "debug_assistant_latest.rag_api.requests.request", return_value=FakeResponse()
+        ):
+            with self.assertRaisesRegex(RuntimeError, "status 502: upstream failed hard"):
+                rag_api.initialize_assistant("gpt-5-mini")
+
+    def test_initialize_assistant_sends_embeddings_provider_when_configured(self):
+        response = MagicMock()
+        response.raise_for_status.return_value = None
+        response.json.return_value = {"status": "ok"}
+
+        with patch("debug_assistant_latest.rag_api.requests.get", return_value=self._server_info_response()), patch(
+            "debug_assistant_latest.rag_api.requests.request", return_value=response
+        ) as request_mock:
+            payload = rag_api.initialize_assistant(
+                "gpt-5-mini",
+                embeddings_model="text-embedding-3-small",
+                embeddings_provider="openai",
+            )
+
+        self.assertEqual(payload, {"status": "ok"})
+        self.assertEqual(
+            request_mock.call_args.kwargs["data"],
+            {
+                "llm_model": "gpt-5-mini",
+                "embeddings_model": "text-embedding-3-small",
+                "embeddings_provider": "openai",
+            },
+        )
+
+    def test_initialize_assistant_rejects_incompatible_server_before_request(self):
+        with patch(
+            "debug_assistant_latest.rag_api.requests.get",
+            return_value=self._server_info_response(repo_signature="stale-signature"),
+        ), patch("debug_assistant_latest.rag_api.requests.request") as request_mock:
+            with self.assertRaisesRegex(RuntimeError, "RAG API server mismatch detected"):
+                rag_api.initialize_assistant("gpt-5-mini")
+
+        request_mock.assert_not_called()
+
+    def test_consecutive_api_calls_fetch_server_info_once_per_base_url(self):
+        rag_api.reset_compatibility_cache()
+        fixed_base = "http://127.0.0.1:8765"
+        expected_info_url = f"{fixed_base}{rag_api.SERVER_INFO_PATH}"
+
+        info_response = self._server_info_response()
+        post_response = MagicMock()
+        post_response.raise_for_status.return_value = None
+        post_response.json.return_value = {"status": "ok"}
+
+        get_urls = []
+
+        def capture_get(url, **kwargs):
+            get_urls.append(url)
+            return info_response
+
+        with patch.object(rag_api, "get_base_url", return_value=fixed_base), patch(
+            "debug_assistant_latest.rag_api.requests.get", side_effect=capture_get
+        ), patch("debug_assistant_latest.rag_api.requests.request", return_value=post_response):
+            rag_api.initialize_assistant("gpt-5-mini")
+            rag_api.ask_question("hello")
+
+        info_gets = [u for u in get_urls if u == expected_info_url]
+        self.assertEqual(len(info_gets), 1, f"expected one GET {expected_info_url}, got {get_urls}")
+
+
+class SingleAgentTests(unittest.TestCase):
+    def test_prepare_agent_uses_configured_model_and_embedder_settings(self):
+        from debug_assistant_latest.debug_agents import SingleAgent
+
+        config = {
+            "api-agent": {
+                "model": "gpt-5-mini",
+                "embedder": "text-embedding-3-small",
+                "embedder-provider": "openai",
+                "knowledge": ["https://example.com"],
+            },
+            "debug-agent": {
+                "model": "gpt-5-nano",
+                "instructions": [],
+                "guidelines": [],
+            },
+            "debug-prompt": {"additional-directions": ""},
+            "test-directory": "",
+            "yaml-file-name": "wrong_port.yaml",
+            "relevant-files": {
+                "deployment": [],
+                "application": [],
+                "service": [],
+                "dockerfile": False,
+            },
+        }
+
+        agent = SingleAgent("single-agent", config)
+        fake_llm_agent = object()
+        with patch("debug_assistant_latest.debug_agents.build_model", return_value="model") as build_model_mock, patch(
+            "debug_assistant_latest.debug_agents.resolve_embedder_config",
+            return_value=runtime_config.EmbedderConfig(model="text-embedding-3-small", provider="openai"),
+        ) as resolve_embedder_mock, patch(
+            "debug_assistant_latest.debug_agents.build_embedder", return_value="embedder"
+        ) as build_embedder_mock, patch(
+            "debug_assistant_latest.debug_agents.PgVector", return_value="pgvector"
+        ) as pgvector_mock, patch(
+            "debug_assistant_latest.debug_agents.WebsiteKnowledgeBase", return_value="knowledge"
+        ), patch("debug_assistant_latest.debug_agents.BetterShellTools", return_value="tool"), patch(
+            "debug_assistant_latest.debug_agents.llmAgent", return_value=fake_llm_agent
+        ):
+            agent.prepareAgent()
+
+        self.assertIs(agent.agent, fake_llm_agent)
+        build_model_mock.assert_called_once_with("gpt-5-nano")
+        resolve_embedder_mock.assert_called_once_with(
+            embeddings_model="text-embedding-3-small",
+            provider="openai",
+            chat_model_name="gpt-5-nano",
+        )
+        build_embedder_mock.assert_called_once_with("text-embedding-3-small", provider="openai")
+        self.assertEqual(pgvector_mock.call_args.kwargs["table_name"], "local_rag_documents_text-embedding-3-small")
 
 
 class ApiServerSupportTests(unittest.TestCase):
@@ -641,10 +1616,87 @@ class ApiServerSupportTests(unittest.TestCase):
 
         self.assertIsNone(session.rag_assistant)
         self.assertIsNone(session.rag_assistant_run_id)
+        self.assertIsNone(session.llm_model)
+        self.assertIsNone(session.embeddings_model)
+        self.assertIsNone(session.embeddings_provider)
         self.assertEqual(session.messages, [{"role": "assistant", "content": "Upload a doc and ask me questions..."}])
 
     def test_knowledge_table_name_uses_embedding_model(self):
         self.assertEqual(knowledge_table_name("nomic-embed-text"), "local_rag_documents_nomic-embed-text")
+
+    def test_load_knowledge_document_uses_shared_embedder_builder(self):
+        from phi.document import Document
+
+        fake_kb = MagicMock()
+        fake_embedder = MagicMock()
+        fake_embedder.get_embedding_and_usage.return_value = ([0.1, 0.2], {"total_tokens": 1})
+
+        with patch("api_server_support.build_embedder", return_value=fake_embedder) as build_embedder_mock, patch(
+            "api_server_support.scrape_url_to_document",
+            return_value=Document(content="doc", meta_data={"source": "https://example.com"}),
+        ), patch("phi.agent.AgentKnowledge", return_value=fake_kb), patch(
+            "phi.vectordb.pgvector.PgVector", return_value="vector_db"
+        ):
+            api_server_support.load_knowledge_document(
+                "https://example.com",
+                "local_rag_documents_text-embedding-3-small",
+                "text-embedding-3-small",
+                "postgresql://example",
+                embeddings_provider="openai",
+            )
+
+        build_embedder_mock.assert_called_once_with("text-embedding-3-small", provider="openai")
+        fake_embedder.get_embedding_and_usage.assert_called_once_with("kubellm embedder preflight")
+        loaded_documents = fake_kb.load_documents.call_args.args[0]
+        self.assertEqual(len(loaded_documents), 1)
+        self.assertEqual(loaded_documents[0].content, "doc")
+
+    def test_load_knowledge_document_surfaces_provider_preflight_error(self):
+        fake_embedder = MagicMock()
+        fake_embedder.get_embedding_and_usage.side_effect = RuntimeError("insufficient_quota")
+
+        with patch("api_server_support.build_embedder", return_value=fake_embedder):
+            with self.assertRaisesRegex(RuntimeError, "Check OPENAI_API_KEY, billing, and OpenAI model quota"):
+                api_server_support.load_knowledge_document(
+                    "https://example.com",
+                    "local_rag_documents_text-embedding-3-small",
+                    "text-embedding-3-small",
+                    "postgresql://example",
+                    embeddings_provider="openai",
+                )
+
+    def test_load_knowledge_document_chunks_large_documents_before_load(self):
+        from phi.document import Document
+
+        fake_kb = MagicMock()
+        fake_embedder = MagicMock()
+        fake_embedder.get_embedding_and_usage.return_value = ([0.1, 0.2], {"total_tokens": 1})
+        large_document = Document(
+            content=("0123456789 " * 600),
+            meta_data={"source": "https://example.com", "title": "Example"},
+        )
+
+        with patch("api_server_support.build_embedder", return_value=fake_embedder), patch(
+            "api_server_support.scrape_url_to_document", return_value=large_document
+        ), patch("phi.agent.AgentKnowledge", return_value=fake_kb), patch(
+            "phi.vectordb.pgvector.PgVector", return_value="vector_db"
+        ):
+            api_server_support.load_knowledge_document(
+                "https://example.com",
+                "local_rag_documents_nomic-embed-text",
+                "nomic-embed-text",
+                "postgresql://example",
+                embeddings_provider="ollama",
+            )
+
+        loaded_documents = fake_kb.load_documents.call_args.args[0]
+        self.assertGreater(len(loaded_documents), 1)
+        self.assertTrue(
+            all(len(doc.content) <= api_server_support.EMBEDDING_CHUNK_SIZE_CHARS for doc in loaded_documents)
+        )
+        self.assertEqual(loaded_documents[0].meta_data["source"], "https://example.com")
+        self.assertEqual(loaded_documents[0].meta_data["chunk_index"], 1)
+        self.assertEqual(loaded_documents[-1].meta_data["chunk_count"], len(loaded_documents))
 
 
 if __name__ == "__main__":

@@ -1,0 +1,116 @@
+{
+  "status": "complete",
+  "summary": "Official documentation and research support an analyzer-first, LLM-second review design. SARIF is the strongest universal interchange layer because OASIS standardized it and both GitHub and Sonar consume it directly, while tools that do not emit SARIF often emit stable JSON that can be adapted. The clearest documented hybrid pipelines are GitHub Copilot Autofix, Sonar Agentic Analysis, Semgrep Multimodal, and Microsoft Research CORE: each uses structured findings, rule metadata, locations, and nearby code as grounding, then lets the LLM explain, prioritize, or fix. For a local-first language-agnostic review skill, the practical architecture is: run local analyzers, normalize to SARIF or SARIF-like issue cards, preserve fingerprints/rule help/locations/snippets, cluster and dedupe, then ask the LLM to judge severity and produce reviewer-facing explanations.",
+  "findings": [
+    {
+      "claim": "SARIF 2.1.0 is the main standardized interchange format for aggregating static-analysis output across tools.",
+      "source": "https://www.oasis-open.org/standard/sarifv2-1-os/",
+      "confidence": "high",
+      "evidence": "OASIS says SARIF defines a \"standard format\" for static-analysis output and faster cross-tool aggregation."
+    },
+    {
+      "claim": "Any SARIF-to-LLM pipeline should preserve stable rule IDs, consistent file paths, and fingerprints, because GitHub uses those fields to deduplicate alerts across runs.",
+      "source": "https://docs.github.com/en/code-security/reference/code-scanning/sarif-files/sarif-support-for-code-scanning",
+      "confidence": "high",
+      "evidence": "GitHub \"uses fingerprints to match results across various runs\" and warns inconsistent paths create duplicate alerts."
+    },
+    {
+      "claim": "GitHub Copilot Autofix is an official SARIF-grounded LLM workflow: it sends CodeQL alert data in SARIF, nearby code, and CodeQL help text to GPT-5.1.",
+      "source": "https://docs.github.com/en/code-security/responsible-use/responsible-use-autofix-code-scanning",
+      "confidence": "high",
+      "evidence": "Inputs include \"CodeQL alert data in SARIF format,\" nearby source snippets, and CodeQL query help; the LLM is GPT-5.1."
+    },
+    {
+      "claim": "GitHub keeps the analyzer in the loop instead of trusting raw LLM output: Copilot Autofix suggestions are tested before display and monitored on a 2,300+ alert harness.",
+      "source": "https://docs.github.com/en/code-security/responsible-use/responsible-use-autofix-code-scanning",
+      "confidence": "high",
+      "evidence": "GitHub describes a test harness with 2,300+ alerts and says each suggested fix is tested before it appears in a pull request."
+    },
+    {
+      "claim": "Sonar's Agentic Analysis documents the exact hybrid verify loop the user is asking about: generate code, run analysis, receive structured issues, interpret them, fix, and re-analyze.",
+      "source": "https://docs.sonarsource.com/sonarqube-cloud/advanced-setup/agentic-analysis",
+      "confidence": "high",
+      "evidence": "The documented loop is: generate code, call advanced analysis, receive structured issue reports, interpret issues, fix, and iterate."
+    },
+    {
+      "claim": "Sonar's recent agent workflow is grounded by analyzer context, not just prompt text: it restores dependencies, compiled artifacts, type information, and build configuration from prior analysis.",
+      "source": "https://docs.sonarsource.com/sonarqube-cloud/advanced-setup/agentic-analysis",
+      "confidence": "high",
+      "evidence": "Context collection includes dependencies, .class files, symbol tables, type hierarchies, import graphs, and compiler settings."
+    },
+    {
+      "claim": "Sonar can ingest third-party SARIF as external issues, but it requires SARIF 2.1.0 and specific mandatory fields such as tool name, message text, and ruleId.",
+      "source": "https://docs.sonarsource.com/sonarqube-community-build/analyzing-source-code/importing-external-issues/importing-issues-from-sarif-reports",
+      "confidence": "high",
+      "evidence": "Mandatory fields include version 2.1.0, runs[].tool.driver.name, runs[].results[].message.text, and runs[].results[].ruleId."
+    },
+    {
+      "claim": "Semgrep is a strong multi-language pre-pass candidate because Semgrep Code supports 35+ languages.",
+      "source": "https://semgrep.dev/docs/supported-languages",
+      "confidence": "high",
+      "evidence": "Semgrep's official language table says Semgrep Code \"Supports 35+ languages.\""
+    },
+    {
+      "claim": "Semgrep already exposes the kind of structured payload an LLM reviewer needs: JSON and SARIF outputs include rule IDs, messages, locations, fingerprints, fixes, and rich rule metadata.",
+      "source": "https://semgrep.dev/docs/semgrep-appsec-platform/json-and-sarif",
+      "confidence": "high",
+      "evidence": "The docs list ruleId, message, locations, fingerprints, fixes, help, tags, severity, and metadata fields in JSON/SARIF output."
+    },
+    {
+      "claim": "Semgrep Multimodal is an analyzer-grounded AI pattern: it explains findings by linking the rule message to the triggered code, relevant lines, surrounding context, and threat model.",
+      "source": "https://semgrep.dev/docs/semgrep-multimodal/overview",
+      "confidence": "high",
+      "evidence": "Semgrep says it explains findings by \"connecting the rule’s message to the code that triggered it\" with surrounding context."
+    },
+    {
+      "claim": "Semgrep's published performance numbers are positive but vendor-reported rather than independent: as of August 21, 2025 it reports 3,500+ customers, 6.5M findings analyzed, 60% average reduction in findings, and a 96% human-agree rate.",
+      "source": "https://semgrep.dev/docs/semgrep-multimodal/metrics",
+      "confidence": "medium",
+      "evidence": "Semgrep reports: 3,500+ customers, 6,500,000+ findings, 60% average reduction in findings, and 96% human-agree rate."
+    },
+    {
+      "claim": "Microsoft Research's CORE is the clearest Microsoft-documented analyzer-first LLM architecture I found: static analyzers flag issues, a proposer LLM revises code, static checks filter candidates, and a ranker LLM screens unintended changes.",
+      "source": "https://www.microsoft.com/en-us/research/publication/frustrated-with-code-quality-issues-llms-can-help/",
+      "confidence": "high",
+      "evidence": "CORE retains candidates that pass static checks and reports cross-language results with CodeQL and SonarQube on Python and Java."
+    },
+    {
+      "claim": "Microsoft's published CodeReviewer architecture is a multilingual pretrained review model centered on code change quality estimation, review comment generation, and code refinement.",
+      "source": "https://www.microsoft.com/en-us/research/publication/automating-code-review-activities-by-large-scale-pre-training/",
+      "confidence": "high",
+      "evidence": "The CodeReviewer paper evaluates \"quality estimation, review comment generation and code refinement\" on a nine-language dataset."
+    }
+  ],
+  "artifacts": [
+    {
+      "type": "data",
+      "path": "tool-output-map",
+      "description": "Official machine-readable outputs worth normalizing before prompt construction",
+      "content": "{\"canonical\":\"SARIF when available; JSON adapter otherwise\",\"tools\":[{\"tool\":\"CodeQL CLI\",\"format\":\"SARIF v2.1.0\",\"source\":\"https://docs.github.com/en/code-security/reference/code-scanning/codeql/codeql-cli/sarif-output\"},{\"tool\":\"Semgrep\",\"format\":\"JSON and SARIF\",\"source\":\"https://semgrep.dev/docs/semgrep-appsec-platform/json-and-sarif\"},{\"tool\":\"ESLint\",\"format\":\"json-with-metadata\",\"source\":\"https://eslint.org/docs/latest/use/formatters/\"},{\"tool\":\"Pylint\",\"format\":\"json2\",\"source\":\"https://pylint.readthedocs.io/en/stable/user_guide/usage/output.html\"},{\"tool\":\"Pyright\",\"format\":\"--outputjson\",\"source\":\"https://microsoft.github.io/pyright/#/command-line?id=json-output\"}]}"
+    },
+    {
+      "type": "data",
+      "path": "prompt-card-schema-v1",
+      "description": "Minimal LLM-digestible issue card schema synthesized from SARIF, GitHub, Sonar, and Semgrep docs",
+      "content": "{\"max_cards_per_review\":50,\"sort_order\":[\"severity\",\"confidence\",\"distance_to_changed_lines\"],\"fields\":[\"tool\",\"rule_id\",\"severity\",\"confidence\",\"path\",\"start_line\",\"message\",\"snippet\",\"help\",\"fingerprints\",\"cwe_tags\",\"flow_summary\"],\"llm_task\":[\"Treat analyzer findings as candidates, not final verdicts.\",\"Merge duplicates across tools using fingerprints, path, line, and message.\",\"Escalate only issues that are likely real and material in this diff.\",\"Explain why the issue matters in reviewer language and propose the smallest safe fix.\"]}"
+    },
+    {
+      "type": "code_sample",
+      "path": "sarif-digest-v1",
+      "description": "Example reducer from SARIF to prompt-ready issue cards",
+      "content": "def prompt_cards_from_sarif(sarif):\\n    cards = []\\n    for run in sarif.get('runs', []):\\n        rules = {r['id']: r for r in run.get('tool', {}).get('driver', {}).get('rules', [])}\\n        tool = run.get('tool', {}).get('driver', {}).get('name')\\n        for result in run.get('results', []):\\n            loc = ((result.get('locations') or [{}])[0].get('physicalLocation') or {})\\n            region = loc.get('region') or {}\\n            rule = rules.get(result.get('ruleId'), {})\\n            cards.append({\\n                'tool': tool,\\n                'rule_id': result.get('ruleId'),\\n                'severity': result.get('level') or rule.get('defaultConfiguration', {}).get('level'),\\n                'path': loc.get('artifactLocation', {}).get('uri'),\\n                'line': region.get('startLine'),\\n                'message': result.get('message', {}).get('text'),\\n                'snippet': (region.get('snippet') or {}).get('text'),\\n                'help': ((rule.get('help') or {}).get('text') or (rule.get('shortDescription') or {}).get('text')),\\n                'fingerprints': result.get('partialFingerprints') or result.get('fingerprints') or {},\\n                'flows': len(result.get('codeFlows') or [])\\n            })\\n    return sorted(cards, key=lambda c: (c['severity'] or '', c['path'] or '', c['line'] or 0))"
+    }
+  ],
+  "gaps": [
+    "I found no 2024-2026 Microsoft documentation that updates CodeReviewer itself into a SARIF-grounded or static-analysis-grounded review pipeline; the nearest Microsoft hybrid evidence was CORE and GitHub Copilot Autofix.",
+    "I found no public independent benchmark that directly compares raw-diff LLM review versus SARIF-grounded LLM review across multiple tool stacks.",
+    "I found no widely adopted open-source reference implementation for SARIF-to-prompt summarization beyond vendor product descriptions and guidance.",
+    "Sonar's strongest documented hybrid flow, Agentic Analysis, is not purely local-first because it depends on prior SonarQube Cloud analysis context."
+  ],
+  "escalations": [
+    "Decide whether the canonical interchange should be strict SARIF only or 'SARIF preferred, native JSON adapters allowed' for local tools like ESLint, Pylint, and Pyright.",
+    "Define a severity and confidence normalization table before prompting the LLM; vendor levels such as error/warning/note, HIGH/MEDIUM/LOW, and confidence percentages are not directly comparable.",
+    "Set prompt-budget and clustering rules up front; raw SARIF can exceed context windows if every result is passed verbatim.",
+    "Set a privacy boundary explicitly: official vendor hybrids often send code and alert context to hosted models, so a local-first skill needs a documented no-upload path."
+  ]
+}

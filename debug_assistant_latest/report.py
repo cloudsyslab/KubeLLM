@@ -62,6 +62,7 @@ class TestSummary:
     finished_at: str = ""
     duration_s: float = 0.0
     error_message: Optional[str] = None
+    error_context: Optional[str] = None
     metrics: Dict[str, AgentMetrics] = field(default_factory=dict)
     config_overrides_applied: Dict[str, Any] = field(default_factory=dict)
     ground_truth_passed: Optional[bool] = None  # True/False if GT ran, None if GT did not run
@@ -81,6 +82,7 @@ class TestSummary:
             "finished_at": self.finished_at,
             "duration_s": round(self.duration_s, 3),
             "error_message": self.error_message,
+            "error_context": self.error_context,
             "metrics": {},
             "config_overrides_applied": self.config_overrides_applied,
         }
@@ -134,6 +136,7 @@ def load_test_summary(summary_path: Path) -> TestSummary:
         finished_at=data.get("finished_at", ""),
         duration_s=data.get("duration_s", 0.0),
         error_message=data.get("error_message"),
+        error_context=data.get("error_context"),
         metrics=metrics,
         config_overrides_applied=data.get("config_overrides_applied", {}),
         ground_truth_passed=data.get("ground_truth_passed"),

@@ -1,7 +1,8 @@
 {
     "api-agent": {
         "model": "gpt-5-mini",
-        "embedder": "nomic-embed-text",
+        "embedder": "text-embedding-3-small",
+        "embedder-provider": "openai",
         "clear-knowledge": true,
         "new-run": true,
         "init-agent": true,
@@ -61,5 +62,39 @@
     ],
     "test-name": "port_mismatch",
     "test-directory": "",
-    "yaml-file-name": "port_mismatch.yaml"
+    "yaml-file-name": "port_mismatch.yaml",
+    "ground-truth": {
+        "description": "Verify service targetPort matches container port and server is reachable",
+        "timeout_seconds": 60,
+        "checks": [
+            {
+                "name": "pod_ready",
+                "cmd": "kubectl get pod kube-port-mismatch -o jsonpath='{.status.conditions[?(@.type==\"Ready\")].status}'",
+                "expect": "True",
+                "poll_interval_s": 2,
+                "max_attempts": 15,
+                "description": "Pod is Ready"
+            },
+            {
+                "name": "port_aligned",
+                "cmd": "kubectl get svc app-service -o jsonpath='{.spec.ports[0].targetPort}'",
+                "expect": "8765",
+                "depends_on": [
+                    "pod_ready"
+                ],
+                "description": "Service targetPort matches container port (8765)"
+            },
+            {
+                "name": "server_responding",
+                "cmd": "kubectl exec kube-port-mismatch -- python3 -c \"import urllib.request; print(urllib.request.urlopen('http://localhost:8765/').getcode())\"",
+                "expect": "200",
+                "poll_interval_s": 2,
+                "max_attempts": 5,
+                "depends_on": [
+                    "pod_ready"
+                ],
+                "description": "Server responds to HTTP request on port 8765"
+            }
+        ]
+    }
 }
