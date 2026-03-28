@@ -11,7 +11,7 @@ from rag_api import (
 )
 
 # Initialize the assistant
-initialize_response = initialize_assistant("gpt-5-nano", "nomic-embed-text")
+initialize_response = initialize_assistant("gpt-5-nano", "text-embedding-3-small", "openai")
 print("Initialize Response:", initialize_response)
 
 # Ask a question
@@ -37,4 +37,3 @@ print("Chat History Response:", chat_history_response)
 # Start a new run
 new_run_response = start_new_run()
 print("New Run Response:", new_run_response)
-

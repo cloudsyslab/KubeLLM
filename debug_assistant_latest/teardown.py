@@ -132,12 +132,17 @@ def teardown_environment(test_env_name: str) -> None:
     test_dir = _get_test_dir(test_env_name)
 
     for image in config["docker_images"]:
-        subprocess.run(
-            f"docker ps -a -q --filter ancestor={image} | xargs -r docker rm -f",
-            shell=True,
-            check=False,
+        # Get container IDs (cross-platform, no pipe/xargs)
+        result = subprocess.run(
+            ["docker", "ps", "-a", "-q", "--filter", f"ancestor={image}"],
+            capture_output=True,
+            text=True,
         )
-        subprocess.run(f"docker rmi -f {image}", shell=True, check=False)
+        for cid in result.stdout.strip().split('\n'):
+            if cid:
+                subprocess.run(["docker", "rm", "-f", cid], check=False)
+        # Remove image
+        subprocess.run(["docker", "rmi", "-f", image], check=False)
 
     for file_type in config["restore_files"]:
         dst, backup = _resolve_restore_paths(test_dir, test_env_name, file_type)

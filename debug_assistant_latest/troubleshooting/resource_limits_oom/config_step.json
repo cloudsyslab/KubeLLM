@@ -1,7 +1,8 @@
 {
     "api-agent": {
         "model": "gpt-5-mini",
-        "embedder": "nomic-embed-text",
+        "embedder": "text-embedding-3-small",
+        "embedder-provider": "openai",
         "clear-knowledge": true,
         "new-run": true,
         "init-agent": true,
@@ -58,5 +59,37 @@
     ],
     "test-name": "resource_limits_oom",
     "test-directory": "",
-    "yaml-file-name": "resource_limits_oom.yaml"
+    "yaml-file-name": "resource_limits_oom.yaml",
+    "ground-truth": {
+        "description": "Verify memory limit is adequate and no OOMKilled",
+        "timeout_seconds": 90,
+        "checks": [
+            {
+                "name": "pod_running",
+                "cmd": "kubectl get pod resource-limits-oom-app -o jsonpath='{.status.phase}'",
+                "expect": "Running",
+                "poll_interval_s": 3,
+                "max_attempts": 20,
+                "description": "Pod is Running"
+            },
+            {
+                "name": "no_oom",
+                "cmd": "kubectl get pod resource-limits-oom-app -o jsonpath='{.status.containerStatuses[0].lastState.terminated.reason}' 2>/dev/null || echo 'none'",
+                "expect_regex": "^(none|)$",
+                "depends_on": [
+                    "pod_running"
+                ],
+                "description": "Last termination reason is not OOMKilled"
+            },
+            {
+                "name": "memory_adequate",
+                "cmd": "python -c \"import subprocess; value=subprocess.run(['kubectl', 'get', 'pod', 'resource-limits-oom-app', '-o', 'jsonpath={.spec.containers[0].resources.limits.memory}'], capture_output=True, text=True, check=True).stdout.strip(); print(int(value[:-2]) * (1024 if value.endswith('Gi') else 1) if value.endswith(('Mi', 'Gi')) else 0)\"",
+                "expect_gte": 128,
+                "depends_on": [
+                    "pod_running"
+                ],
+                "description": "Memory limit is >= 128Mi after normalizing Mi/Gi units"
+            }
+        ]
+    }
 }
