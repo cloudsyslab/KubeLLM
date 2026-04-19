@@ -6,10 +6,9 @@ RUN apt-get update && \
         python3-pip \
         python3-venv
 
-
-COPY server.py /app
 WORKDIR /app
-RUN mkdir -p /data RUN mkdir -p /data/logsRUN mkdir -p /data/logs mkdir -p /data/logs
+COPY server.py /app/server.py
+RUN mkdir -p /data/logs
 
 EXPOSE 8765
 
