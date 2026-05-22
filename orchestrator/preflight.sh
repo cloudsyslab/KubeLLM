@@ -13,7 +13,13 @@
 #   export KUBECONFIG="$KUBELLM_KUBECONFIG_PATH"
 set -euo pipefail
 
-CONTAINER="${KUBELLM_MINIKUBE_DOCKER_CONTAINER:-minikube}"
+if [[ $# -lt 1 ]]; then
+  echo "Usage: $0 <minikube-profile-name>" >&2
+  exit 1
+fi
+
+PROFILE_NAME="$1"
+CONTAINER="${KUBELLM_MINIKUBE_DOCKER_CONTAINER:-$PROFILE_NAME}"
 KUBECONFIG_PATH="${KUBELLM_KUBECONFIG_PATH:-$HOME/.kube/kubellm-minikube.conf}"
 
 fail() {
