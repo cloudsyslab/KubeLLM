@@ -4,7 +4,7 @@ from typing import List, Optional
 import requests
 from bs4 import BeautifulSoup
 
-from runtime_config import OPENAI_PROVIDER, OLLAMA_PROVIDER, build_embedder
+from runtime_config import build_resolved_embedder
 
 DEFAULT_ASSISTANT_MESSAGE = "Upload a doc and ask me questions..."
 EMBEDDING_CHUNK_SIZE_CHARS = 4000
@@ -136,32 +136,17 @@ def load_knowledge_document(
     from phi.agent import AgentKnowledge
     from phi.vectordb.pgvector import PgVector
 
-    embedder = build_embedder(embeddings_model, provider=embeddings_provider)
-    provider_name = embeddings_provider or "selected"
-    try:
-        # Preflight the selected embedder so provider/service failures are
-        # surfaced directly instead of being masked by PgVector's empty-batch
-        # fallback path.
-        embedder.get_embedding_and_usage("kubellm embedder preflight")
-    except Exception as exc:
-        hint = ""
-        if embeddings_provider == OPENAI_PROVIDER:
-            hint = " Check OPENAI_API_KEY, billing, and OpenAI model quota."
-        elif embeddings_provider == OLLAMA_PROVIDER:
-            hint = (
-                f" Check that the Ollama service is running and that embedder model "
-                f"'{embeddings_model}' is available locally."
-            )
-        raise RuntimeError(
-            f"{provider_name} embedder '{embeddings_model}' failed preflight: {exc}.{hint}"
-        ) from exc
+    resolved_embedder = build_resolved_embedder(embeddings_model, provider=embeddings_provider)
+    embedder = resolved_embedder.embedder
+    active_table_name = knowledge_table_name(resolved_embedder.config.model)
 
     kb = AgentKnowledge(
         vector_db=PgVector(
             schema="ai",
-            table_name=table_name,
+            table_name=active_table_name,
             db_url=db_url,
             embedder=embedder,
         )
     )
     kb.load_documents(_prepare_documents_for_embedding(scrape_url_to_document(url)))
+    return active_table_name

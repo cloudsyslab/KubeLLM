@@ -8,6 +8,29 @@ from timeout_helpers import timeout as TIMEOUT_DECORATOR, withTimeout
 
 STATUS_MAP = {True: 1, False: 0, None: -1}
 
+_RELAXED_STATUS_LABEL_RE = re.compile(
+    r"(?im)^\s*(?:#+\s*)?(?:final\s+)?(?:verification\s+)?"
+    r"(?:status|result|conclusion)\s*[:=-]\s*"
+    r"(?P<status>verification[_ -]?error|unknown|unable to verify|cannot verify|"
+    r"not verified|not fixed|unresolved|failed|failure|broken|"
+    r"verified|passed|success|fixed|resolved)\b"
+)
+
+_STANDALONE_STATUS_RE = re.compile(
+    r"(?i)^(?:verification[_ -]?error|unknown|unable to verify|cannot verify|"
+    r"not verified|not fixed|unresolved|failed|failure|broken|"
+    r"verified|passed|success|fixed|resolved)$"
+)
+
+
+def _status_word_to_value(status_word: str):
+    normalized = re.sub(r"[\s_-]+", " ", status_word.strip().lower())
+    if normalized in {"verified", "passed", "success", "fixed", "resolved"}:
+        return True
+    if normalized in {"failed", "failure", "broken", "not verified", "not fixed", "unresolved"}:
+        return False
+    return None
+
 
 def parse_verification_status(report: str):
     report = report or ""
@@ -18,6 +41,17 @@ def parse_verification_status(report: str):
         return False
     if re.search(r"<\|\s*VERIFICATION_ERROR\s*\|>", report) or "<|VERIFICATION_ERROR|>" in report:
         return None
+
+    relaxed_matches = list(_RELAXED_STATUS_LABEL_RE.finditer(report))
+    if relaxed_matches:
+        return _status_word_to_value(relaxed_matches[-1].group("status"))
+
+    nonempty_lines = [line.strip().strip("*`").strip() for line in report.splitlines() if line.strip()]
+    if nonempty_lines:
+        standalone = _STANDALONE_STATUS_RE.fullmatch(nonempty_lines[-1])
+        if standalone:
+            return _status_word_to_value(standalone.group(0))
+
     return None
 
 

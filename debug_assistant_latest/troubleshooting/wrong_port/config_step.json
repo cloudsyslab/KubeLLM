@@ -14,8 +14,8 @@
         "model": "gpt-5-nano",
         "instructions": [
             "If all and only all commands fail to execute, declare that there was an error in trying to solve the issue, and end that statement with this token: <|ERROR|>.",
-            "You have solved this issue when this goal is met: The status of all pods say 'RUNNING'",
-            "After every step, check to see if you have met the goal",
+            "You have solved this issue only when the original user-visible problem is fixed in the live cluster. Verify the relevant Kubernetes resources and application behavior with commands before declaring success; pod Running/Ready status alone is not sufficient unless the original problem is only pod startup.",
+            "After every step, check whether the original problem is fixed in the live cluster. If you changed manifests, images, or cluster configuration, apply the change and verify the live resource state reflects it before declaring success.",
             "If you believe you have met the goal, declare that you have solved the user's issue, and end that statement with this token: <|SOLVED|>.",
             "If the steps do not solve the issue, or if you need more information, declare that you cannot solve the issue, and end that statement with this token: <|FAILED|>.",
             "Do not use live feed flags when checking the logs such as 'kubectl logs -f'",
@@ -36,12 +36,12 @@
         "temperature": 1
     },
     "knowledge-prompt": {
-        "problem-desc": "The pod on my Kubernetes cluster cannot be accessed by making a curl request. Any requests made to the application running in this pod result in a timeout.",
+        "problem-desc": "This workload is deployed without a Kubernetes Service. I am debugging direct workload access, and HTTP requests to the application running in the selected pod time out.",
         "system-prompt": "Give specific commands to fix this issue. If modifying file contents is necessary, use an OS-appropriate one-shot command and prefer PowerShell edits on Windows. If providing a file path, make sure to keep the full file path. Suggest only the essential steps needed to solve the issue. Be frugal.",
         "additional-directions": ""
     },
     "debug-prompt": {
-        "additional-directions": "If any deployment files are modified, reapply the deployment to the cluster. For this Pod-only scenario, do not use port-forwarding or background verification. Once debugging is complete, verify the pod reaches Ready state and can respond to local HTTP requests on the correct port."
+        "additional-directions": "If any deployment files are modified, reapply the deployment to the cluster. Do not use port-forwarding or background verification. Once debugging is complete, verify the deployment rolls out successfully, the live pod template uses the correct container port, and the selected pod responds to local HTTP requests on the correct port."
     },
     "relevant-files": {
         "deployment": [
@@ -54,42 +54,42 @@
         "dockerfile": true
     },
     "setup-commands": [
-        "minikube image build -t marioutsa/kube-wrong-port-app debug_assistant_latest/troubleshooting/wrong_port",
+        "bash -lc 'PROFILE=${MINIKUBE_PROFILE:-minikube}; CTX=$(kubectl config current-context 2>/dev/null || true); if command -v minikube >/dev/null 2>&1 && [ \"$CTX\" = \"$PROFILE\" ] && minikube -p \"$PROFILE\" status --format \"{{.Host}}\" 2>/dev/null | grep -qi running; then minikube -p \"$PROFILE\" image build -t marioutsa/kube-wrong-port-app:latest -f Dockerfile debug_assistant_latest/troubleshooting/wrong_port; else docker build -t marioutsa/kube-wrong-port-app:latest -f debug_assistant_latest/troubleshooting/wrong_port/Dockerfile debug_assistant_latest/troubleshooting/wrong_port; fi'",
         "kubectl apply -f debug_assistant_latest/troubleshooting/wrong_port/wrong_port.yaml"
     ],
     "test-name": "wrong_port",
     "test-directory": "",
     "yaml-file-name": "wrong_port.yaml",
     "ground-truth": {
-        "description": "Verify containerPort matches server listen port and server is reachable",
+        "description": "Verify Deployment pod template containerPort matches server listen port and server is reachable",
         "timeout_seconds": 60,
         "checks": [
             {
-                "name": "pod_ready",
-                "cmd": "kubectl get pod kube-wrong-port -o jsonpath='{.status.conditions[?(@.type==\"Ready\")].status}'",
-                "expect": "True",
+                "name": "deployment_available",
+                "cmd": "kubectl rollout status deployment/kube-wrong-port --timeout=60s",
+                "expect_exit": 0,
                 "poll_interval_s": 2,
-                "max_attempts": 15,
-                "description": "Pod is Ready (not just Running)"
+                "max_attempts": 2,
+                "description": "Deployment rollout completed successfully"
             },
             {
                 "name": "port_aligned",
-                "cmd": "kubectl get pod kube-wrong-port -o jsonpath='{.spec.containers[0].ports[0].containerPort}'",
+                "cmd": "kubectl get deployment kube-wrong-port -o jsonpath='{.spec.template.spec.containers[0].ports[0].containerPort}'",
                 "expect": "8765",
-                "description": "Container port matches server.py listen port (8765)",
+                "description": "Live Deployment pod template containerPort matches server.py listen port (8765)",
                 "depends_on": [
-                    "pod_ready"
+                    "deployment_available"
                 ]
             },
             {
                 "name": "server_responding",
-                "cmd": "kubectl exec kube-wrong-port -- python3 -c \"import urllib.request; print(urllib.request.urlopen('http://localhost:8765/').getcode())\"",
+                "cmd": "pod=$(kubectl get pod -l app=kube-wrong-port -o jsonpath='{.items[0].metadata.name}') && kubectl exec \"$pod\" -- python3 -c \"import urllib.request; print(urllib.request.urlopen('http://localhost:8765/').getcode())\"",
                 "expect": "200",
                 "poll_interval_s": 2,
                 "max_attempts": 5,
-                "description": "Server responds to HTTP request on port 8765",
+                "description": "Selected Deployment pod responds to HTTP request on port 8765",
                 "depends_on": [
-                    "pod_ready"
+                    "deployment_available"
                 ]
             }
         ]

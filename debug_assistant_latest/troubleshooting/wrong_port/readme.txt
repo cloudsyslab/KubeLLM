@@ -1,20 +1,22 @@
-CASE: Incorrect Port Exposed In Container Dockerfile
+CASE: Incorrect Port Declared For Deployment Workload
 
 Case Setup:
-- Server application set to handle http requests on port 8765 and on the localhost interface
-- Dockerfile configured to install necessary packages for server application and expose the container port 8000
-- Kubernetes pod configuration file to deploy the container image to the kubernetes cluster
+- Server application handles HTTP requests on port 8765.
+- Dockerfile exposes port 8000.
+- Kubernetes Deployment manifest declares containerPort 8000.
+- This workload has no Kubernetes Service; the case verifies direct workload behavior from inside the selected pod.
 
 Replication Steps:
-1. Deploy the image created from the included Dockerfile to the Kubernetes cluster using the following command `kubectl apply -f path_to_directory/wrong_port.yaml`
-2. Attempt to make an http GET request to the application at the IP address associated with the pod and on the port the application is running on. This can be done using the BASH command `curl podIP:port`
-3. The GET request should result in a timeout as the incorrect container port is being exposed.
+1. Build the image from this directory.
+2. Apply wrong_port.yaml to the Kubernetes cluster.
+3. Attempt an HTTP GET request to the workload on the declared port.
+4. The request should fail because the application listens on a different port.
 
 Solution Steps:
-1. Modify the Dockerfile to expose the correct port on the container that the app server is listening on.
-2. Rebuild the container image for the application and force rebuild to ensure that the image is rebuilt from the directory, and does not use cached layers as this may not apply the changes correctly to the image
-3. Delete the current application deployment from the cluster using the command `kubectl delete -f path_to_directory/wrong_port.yaml`
-4. Reapply the application deployment to the cluster using the command `kubectl apply -f path_to_directory/wrong_port.yaml`
+1. Inspect server.py to find the actual listening port.
+2. Update the Deployment manifest and Dockerfile to use port 8765.
+3. Rebuild the image.
+4. Reapply wrong_port.yaml.
 
 Solution State:
-- Any http GET requests made to the pod IP on the listening port will return a default html page
+- The Deployment is available, the live pod template containerPort is 8765, and an in-pod HTTP request to localhost:8765 returns 200.

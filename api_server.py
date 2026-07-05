@@ -155,14 +155,14 @@ async def add_url(url: str = Form(...)):
     table_name = knowledge_table_name(session_state.embeddings_model)
 
     try:
-        load_knowledge_document(
+        active_table_name = load_knowledge_document(
             url,
             table_name,
             session_state.embeddings_model,
             DB_URL,
             embeddings_provider=session_state.embeddings_provider,
         )
-        return {"status": "URL added", "url": url, "table": table_name}
+        return {"status": "URL added", "url": url, "table": active_table_name or table_name}
     except Exception as exc:
         raise HTTPException(status_code=500, detail=f"Could not load knowledge base: {exc}") from exc
 
