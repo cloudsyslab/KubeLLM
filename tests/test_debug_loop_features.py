@@ -16,6 +16,7 @@ sys.path.insert(0, str(DEBUG_DIR))
 
 import debug_assistant_latest.main as legacy_main
 import debug_assistant_latest.preflight as preflight
+import debug_assistant_latest.utils as debug_utils
 from debug_assistant_latest.dashboard import build_dashboard_data
 from debug_assistant_latest.debug_agents import AgentDebugStepByStep, SingleAgent
 from debug_assistant_latest.preflight import PreflightCheck
@@ -119,6 +120,18 @@ class VerificationParsingTests(unittest.TestCase):
         self.assertTrue(parse_verification_status("** <| VERIFIED |> **"))
         self.assertFalse(parse_verification_status("```text\n<| FAILED |>\n```"))
         self.assertIsNone(parse_verification_status("Result: <| VERIFICATION_ERROR |>"))
+
+    def test_parse_verification_status_allows_labeled_plain_language_statuses(self):
+        self.assertTrue(parse_verification_status("All checks passed.\nVERIFICATION STATUS: VERIFIED"))
+        self.assertFalse(parse_verification_status("Curl still times out.\nResult: failed"))
+        self.assertIsNone(parse_verification_status("Could not reach kubectl.\nConclusion: cannot verify"))
+
+    def test_parse_verification_status_allows_standalone_final_status_line(self):
+        self.assertTrue(parse_verification_status("The pod is Ready and curl returns 200.\nVERIFIED"))
+        self.assertFalse(parse_verification_status("The service still times out.\nFAILED"))
+
+    def test_parse_verification_status_ignores_unlabeled_body_mentions(self):
+        self.assertIsNone(parse_verification_status("I checked whether the issue is verified, but need more data."))
 
 
 class DebugAgentMetricsTests(unittest.TestCase):
@@ -532,6 +545,100 @@ class PreflightTests(unittest.TestCase):
                 "config_validity",
             ],
         )
+
+
+class SetupLocalImageValidationTests(unittest.TestCase):
+    def _write_case(self, tmpdir: str, *, image_pull_policy: str = "Never"):
+        case_dir = Path(tmpdir)
+        manifest = case_dir / "case.yaml"
+        manifest.write_text(
+            "\n".join(
+                [
+                    "apiVersion: v1",
+                    "kind: Pod",
+                    "metadata:",
+                    "  name: local-image-pod",
+                    "spec:",
+                    "  containers:",
+                    "  - name: app",
+                    "    image: local-app:latest",
+                    f"    imagePullPolicy: {image_pull_policy}",
+                    "",
+                ]
+            ),
+            encoding="utf-8",
+        )
+        return {
+            "test-directory": str(case_dir),
+            "yaml-file-name": "case.yaml",
+            "relevant-files": {"deployment": ["case.yaml"]},
+            "minikube-profile": "test-profile",
+        }
+
+    def test_validate_local_images_available_passes_when_image_exists(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            config = self._write_case(tmpdir)
+            completed = subprocess_result(0, stdout="docker.io/library/local-app:latest\n")
+
+            with patch.object(debug_utils.subprocess, "run", return_value=completed) as run_mock:
+                debug_utils.validate_local_images_available(config, attempts=1, delay_s=0)
+
+            run_mock.assert_called_once()
+            self.assertEqual(run_mock.call_args.args[0], ["minikube", "-p", "test-profile", "image", "ls"])
+
+    def test_validate_local_images_available_fails_when_image_missing_after_retries(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            config = self._write_case(tmpdir)
+            completed = subprocess_result(0, stdout="docker.io/library/other-app:latest\n")
+
+            with patch.object(debug_utils.subprocess, "run", return_value=completed) as run_mock:
+                with self.assertRaisesRegex(RuntimeError, "local-app:latest"):
+                    debug_utils.validate_local_images_available(config, attempts=2, delay_s=0)
+
+            self.assertEqual(run_mock.call_count, 2)
+
+    def test_validate_local_images_available_skips_non_never_pull_images(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            config = self._write_case(tmpdir, image_pull_policy="IfNotPresent")
+
+            with patch.object(debug_utils.subprocess, "run") as run_mock:
+                debug_utils.validate_local_images_available(config, attempts=1, delay_s=0)
+
+            run_mock.assert_not_called()
+
+    def test_set_up_environment_runs_setup_then_validates(self):
+        config = {
+            "setup-commands": ["echo setup"],
+            "test-directory": str(Path.cwd()),
+            "yaml-file-name": "",
+        }
+
+        with patch.object(debug_utils.subprocess, "run") as run_mock, patch.object(
+            debug_utils, "validate_local_images_available"
+        ) as validate_mock:
+            debug_utils.setUpEnvironment(config)
+
+        run_mock.assert_called_once()
+        validate_mock.assert_called_once()
+
+    def test_troubleshooting_minikube_image_builds_use_context_relative_dockerfile(self):
+        bad_commands = []
+        for config_path in (DEBUG_DIR / "troubleshooting").glob("*/config_step.json"):
+            config = json.loads(config_path.read_text(encoding="utf-8"))
+            for command in config.get("setup-commands", []):
+                if "minikube" not in command or " image build " not in command:
+                    continue
+                minikube_branch = command.split("; else ", 1)[0]
+                if " image build -t " not in minikube_branch or ":latest -f Dockerfile " not in minikube_branch:
+                    bad_commands.append(f"{config_path}: missing explicit latest tag or context-relative Dockerfile")
+                if " -f debug_assistant_latest/troubleshooting/" in minikube_branch:
+                    bad_commands.append(f"{config_path}: minikube build uses repo-root Dockerfile path")
+
+        self.assertEqual([], bad_commands)
+
+
+def subprocess_result(returncode=0, stdout="", stderr=""):
+    return types.SimpleNamespace(returncode=returncode, stdout=stdout, stderr=stderr)
 
 
 class ResultInterpreterTests(unittest.TestCase):

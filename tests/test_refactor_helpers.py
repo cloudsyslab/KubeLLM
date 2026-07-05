@@ -1,3 +1,4 @@
+import asyncio
 import json
 import argparse
 import os
@@ -67,6 +68,19 @@ from debug_assistant_latest import rag_server_config
 from debug_assistant_latest.better_shell import BetterShellTools
 from runtime_progress import BlockedCommandThresholdError, ProgressWriter
 from debug_assistant_latest.verification_base import parse_verification_status, print_verification_status
+
+
+class FakeEmbedder:
+    def __init__(self, **kwargs):
+        self.kwargs = kwargs
+        self.preflight_calls = []
+
+    def get_embedding_and_usage(self, text):
+        self.preflight_calls.append(text)
+        return [0.1, 0.2], {"total_tokens": 1}
+
+    def __getitem__(self, key):
+        return self.kwargs[key]
 
 
 class ConfigMergeTests(unittest.TestCase):
@@ -238,6 +252,82 @@ class RuntimeConfigTests(unittest.TestCase):
         self.assertEqual(embedder["dimensions"], 1536)
         self.assertEqual(imported_modules, ["phi.embedder.openai"])
 
+    def test_build_resolved_embedder_keeps_successful_openai(self):
+        imported_modules = []
+
+        def fake_import(module_name):
+            imported_modules.append(module_name)
+            if module_name == "phi.embedder.openai":
+                return types.SimpleNamespace(OpenAIEmbedder=FakeEmbedder)
+            if module_name == "phi.embedder.ollama":
+                raise AssertionError(f"Unexpected import: {module_name}")
+            raise AssertionError(f"Unexpected module import request: {module_name}")
+
+        with patch.dict(os.environ, {"OPENAI_API_KEY": "test-key"}, clear=False), patch(
+            "runtime_config.importlib.import_module", side_effect=fake_import
+        ):
+            resolved = runtime_config.build_resolved_embedder("text-embedding-3-small", provider="openai")
+
+        self.assertEqual((resolved.config.provider, resolved.config.model), ("openai", "text-embedding-3-small"))
+        self.assertEqual(resolved.embedder.preflight_calls, [runtime_config.EMBEDDER_PREFLIGHT_TEXT])
+        self.assertEqual(imported_modules, ["phi.embedder.openai"])
+
+    def test_build_resolved_embedder_surfaces_openai_quota_error_without_ollama_imports(self):
+        imported_modules = []
+
+        class QuotaEmbedder(FakeEmbedder):
+            def get_embedding_and_usage(self, text):
+                raise RuntimeError("Error code: 429 - insufficient_quota")
+
+        def fake_import(module_name):
+            imported_modules.append(module_name)
+            if module_name == "phi.embedder.openai":
+                return types.SimpleNamespace(OpenAIEmbedder=QuotaEmbedder)
+            if module_name == "phi.embedder.ollama":
+                raise AssertionError(f"Unexpected import: {module_name}")
+            raise AssertionError(f"Unexpected module import request: {module_name}")
+
+        with patch.dict(os.environ, {"OPENAI_API_KEY": "test-key"}, clear=False), patch(
+            "runtime_config.importlib.import_module", side_effect=fake_import
+        ):
+            with self.assertRaisesRegex(RuntimeError, "insufficient_quota"):
+                runtime_config.build_resolved_embedder("text-embedding-3-small", provider="openai")
+
+        self.assertEqual(imported_modules, ["phi.embedder.openai"])
+
+    def test_build_resolved_embedder_does_not_hide_non_quota_errors(self):
+        class AuthErrorEmbedder(FakeEmbedder):
+            def get_embedding_and_usage(self, text):
+                raise RuntimeError("401 invalid api key")
+
+        def fake_import(module_name):
+            if module_name == "phi.embedder.openai":
+                return types.SimpleNamespace(OpenAIEmbedder=AuthErrorEmbedder)
+            if module_name == "phi.embedder.ollama":
+                raise AssertionError(f"Unexpected import: {module_name}")
+            raise AssertionError(f"Unexpected module import request: {module_name}")
+
+        with patch.dict(os.environ, {"OPENAI_API_KEY": "test-key"}, clear=False), patch(
+            "runtime_config.importlib.import_module", side_effect=fake_import
+        ):
+            with self.assertRaisesRegex(RuntimeError, "401 invalid api key"):
+                runtime_config.build_resolved_embedder("text-embedding-3-small", provider="openai")
+
+    def test_all_troubleshooting_openai_embedder_configs_resolve_to_openai(self):
+        config_paths = sorted((DEBUG_DIR / "troubleshooting").glob("*/config_step.json"))
+        openai_embedder_configs = []
+        for config_path in config_paths:
+            config = json.loads(config_path.read_text(encoding="utf-8"))
+            api_agent = config.get("api-agent", {})
+            if api_agent.get("embedder-provider") == "openai":
+                openai_embedder_configs.append((config_path, api_agent.get("embedder")))
+
+        self.assertGreater(len(openai_embedder_configs), 0)
+        for config_path, embedder_model in openai_embedder_configs:
+            with self.subTest(config=config_path.name):
+                resolved = runtime_config.resolve_embedder_config(embedder_model, provider="openai")
+                self.assertEqual((resolved.provider, resolved.model), ("openai", embedder_model))
+
     def test_resolve_embedder_config_defaults_by_chat_provider(self):
         openai_config = runtime_config.resolve_embedder_config(chat_model_name="gpt-5-mini")
         ollama_config = runtime_config.resolve_embedder_config(chat_model_name="llama3.1:8b")
@@ -320,6 +410,25 @@ class PromptHelperTests(unittest.TestCase):
         self.assertIn("PowerShell-compatible", rules)
         self.assertIn("ownerReferences[0]", rules)
         self.assertIn("kubectl port-forward", rules)
+
+    def test_wrong_port_gets_deployment_guidance(self):
+        guidance = prompt_helpers.get_case_specific_guidance({"test-name": "wrong_port"})
+
+        self.assertIn("wrong_port Guidance", guidance)
+        self.assertIn("Deployment", guidance)
+        self.assertIn("roll out", guidance)
+        self.assertIn("live Deployment pod template", guidance)
+
+    def test_wrong_port_variant_gets_family_guidance(self):
+        guidance = prompt_helpers.get_case_specific_guidance({"test-name": "wrong_port_9090"})
+
+        self.assertIn("wrong_port Variant Guidance", guidance)
+        self.assertIn("bare Pod with no Service", guidance)
+        self.assertIn("delete/recreate the Pod", guidance)
+        self.assertIn("<listen_port>", guidance)
+
+    def test_unrelated_case_gets_no_case_specific_guidance(self):
+        self.assertEqual(prompt_helpers.get_case_specific_guidance({"test-name": "port_mismatch"}), "")
 
 
 class BetterShellTests(unittest.TestCase):
@@ -524,12 +633,12 @@ class AssistantIntegrationTests(unittest.TestCase):
             if module_name == "phi.model.openai":
                 return types.SimpleNamespace(OpenAIChat=lambda **kwargs: {"kind": "chat", **kwargs})
             if module_name == "phi.embedder.openai":
-                return types.SimpleNamespace(OpenAIEmbedder=lambda **kwargs: {"kind": "embedder", **kwargs})
+                return types.SimpleNamespace(OpenAIEmbedder=FakeEmbedder)
             if module_name in {"phi.model.ollama", "phi.embedder.ollama", "phi.model.google"}:
                 raise AssertionError(f"Unexpected import: {module_name}")
             raise AssertionError(f"Unexpected module import request: {module_name}")
 
-        fake_agent = object()
+        fake_agent = types.SimpleNamespace()
         with patch.dict(os.environ, {"OPENAI_API_KEY": "test-key"}, clear=False), patch(
             "runtime_config.importlib.import_module", side_effect=fake_import
         ), patch.object(assistant, "AgentKnowledge", return_value="knowledge"), patch.object(
@@ -557,12 +666,12 @@ class AssistantIntegrationTests(unittest.TestCase):
             if module_name == "phi.model.ollama":
                 return types.SimpleNamespace(Ollama=lambda **kwargs: {"kind": "chat", **kwargs})
             if module_name == "phi.embedder.ollama":
-                return types.SimpleNamespace(OllamaEmbedder=lambda **kwargs: {"kind": "embedder", **kwargs})
+                return types.SimpleNamespace(OllamaEmbedder=FakeEmbedder)
             if module_name in {"phi.model.openai", "phi.embedder.openai", "phi.model.google"}:
                 raise AssertionError(f"Unexpected import: {module_name}")
             raise AssertionError(f"Unexpected module import request: {module_name}")
 
-        fake_agent = object()
+        fake_agent = types.SimpleNamespace()
         with patch.dict(os.environ, {}, clear=True), patch(
             "runtime_config.importlib.import_module", side_effect=fake_import
         ), patch.object(assistant, "AgentKnowledge", return_value="knowledge"), patch.object(
@@ -579,6 +688,43 @@ class AssistantIntegrationTests(unittest.TestCase):
         self.assertIs(result, fake_agent)
         self.assertEqual(imported_modules, ["phi.model.ollama", "phi.embedder.ollama"])
         self.assertEqual(pgvector_mock.call_args.kwargs["table_name"], "local_rag_documents_nomic-embed-text")
+
+    def test_get_rag_assistant_surfaces_openai_embedder_quota_without_ollama_imports(self):
+        imported_modules = []
+
+        class QuotaEmbedder(FakeEmbedder):
+            def get_embedding_and_usage(self, text):
+                raise RuntimeError("Error code: 429 - insufficient_quota")
+
+        def fake_import(module_name):
+            imported_modules.append(module_name)
+            if module_name == "phi.model.openai":
+                return types.SimpleNamespace(OpenAIChat=lambda **kwargs: {"kind": "chat", **kwargs})
+            if module_name == "phi.embedder.openai":
+                return types.SimpleNamespace(OpenAIEmbedder=QuotaEmbedder)
+            if module_name == "phi.embedder.ollama":
+                raise AssertionError(f"Unexpected import: {module_name}")
+            if module_name in {"phi.model.ollama", "phi.model.google"}:
+                raise AssertionError(f"Unexpected import: {module_name}")
+            raise AssertionError(f"Unexpected module import request: {module_name}")
+
+        fake_agent = types.SimpleNamespace()
+        with patch.dict(os.environ, {"OPENAI_API_KEY": "test-key"}, clear=False), patch(
+            "runtime_config.importlib.import_module", side_effect=fake_import
+        ), patch.object(assistant, "AgentKnowledge", return_value="knowledge"), patch.object(
+            assistant, "PgVector", return_value="pgvector"
+        ) as pgvector_mock, patch.object(assistant, "PgAgentStorage", return_value="storage"), patch.object(
+            assistant, "BetterShellTools", return_value="tool"
+        ), patch.object(assistant, "Agent", return_value=fake_agent):
+            with self.assertRaisesRegex(RuntimeError, "insufficient_quota"):
+                assistant.get_rag_assistant(
+                    llm_model="gpt-5-mini",
+                    embeddings_model="text-embedding-3-small",
+                    embeddings_provider="openai",
+                )
+
+        pgvector_mock.assert_not_called()
+        self.assertEqual(imported_modules, ["phi.model.openai", "phi.embedder.openai"])
 
 
 class GroundTruthTests(unittest.TestCase):
@@ -1093,6 +1239,26 @@ class TeardownTests(unittest.TestCase):
             self.assertEqual((case_dir / "wrong_port.yaml").read_text(), "restored\n")
             self.assertTrue(any("kubectl" in call[0][0][0] for call in recorded_calls if call[0]))
 
+    def test_cleanup_transient_k8s_resources_deletes_known_helper_resources(self):
+        recorded_calls = []
+
+        def fake_run(*args, **kwargs):
+            recorded_calls.append((args, kwargs))
+            return None
+
+        with patch("debug_assistant_latest.teardown.subprocess.run", side_effect=fake_run):
+            teardown.cleanup_transient_k8s_resources()
+
+        commands = [call[0][0] for call in recorded_calls]
+        self.assertIn(
+            ["kubectl", "delete", "pod", "curl-test", "-n", "default", "--ignore-not-found=true"],
+            commands,
+        )
+        self.assertIn(
+            ["kubectl", "delete", "service", "curl-test", "-n", "default", "--ignore-not-found=true"],
+            commands,
+        )
+
 
 class RunnerTests(unittest.TestCase):
     def test_result_to_summary_preserves_ground_truth_flag(self):
@@ -1406,6 +1572,24 @@ class ApiServerRouteTests(unittest.TestCase):
             "Could not initialize assistant: ollama package missing",
         )
 
+    def test_initialize_route_records_requested_embedder_config(self):
+        fake_agent = types.SimpleNamespace(
+            create_session=MagicMock(return_value="run-1"),
+        )
+
+        with patch("api_server.get_rag_assistant", return_value=fake_agent):
+            response = asyncio.run(
+                api_server.initialize_assistant(
+                    llm_model="gpt-5-mini",
+                    embeddings_model="text-embedding-3-small",
+                    embeddings_provider="openai",
+                )
+            )
+
+        self.assertEqual(response, {"status": "Agent initialized"})
+        self.assertEqual(api_server.session_state.embeddings_model, "text-embedding-3-small")
+        self.assertEqual(api_server.session_state.embeddings_provider, "openai")
+
     def test_server_info_reports_version_and_signature(self):
         client = TestClient(api_server.app)
 
@@ -1525,14 +1709,13 @@ class ApiServerRouteTests(unittest.TestCase):
         self.assertEqual(response.json()["detail"], "Embeddings model not initialized")
 
     def test_add_url_success_calls_load_knowledge_document(self):
-        client = TestClient(api_server.app)
         api_server.session_state.rag_assistant = object()
         api_server.session_state.embeddings_model = "text-embedding-3-small"
         api_server.session_state.embeddings_provider = "openai"
-        with patch("api_server.load_knowledge_document") as load_mock:
-            response = client.post("/add_url/", data={"url": "https://example.com/doc"})
-        self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.json()["status"], "URL added")
+        with patch("api_server.load_knowledge_document", return_value="local_rag_documents_text-embedding-3-small") as load_mock:
+            response = asyncio.run(api_server.add_url(url="https://example.com/doc"))
+        self.assertEqual(response["status"], "URL added")
+        self.assertEqual(response["table"], "local_rag_documents_text-embedding-3-small")
         load_mock.assert_called_once_with(
             "https://example.com/doc",
             "local_rag_documents_text-embedding-3-small",
@@ -1727,11 +1910,13 @@ class SingleAgentTests(unittest.TestCase):
 
         agent = SingleAgent("single-agent", config)
         fake_llm_agent = object()
+        resolved_embedder = runtime_config.ResolvedEmbedder(
+            config=runtime_config.EmbedderConfig(model="text-embedding-3-small", provider="openai"),
+            embedder="embedder",
+        )
         with patch("debug_assistant_latest.debug_agents.build_model", return_value="model") as build_model_mock, patch(
-            "debug_assistant_latest.debug_agents.resolve_embedder_config",
-            return_value=runtime_config.EmbedderConfig(model="text-embedding-3-small", provider="openai"),
-        ) as resolve_embedder_mock, patch(
-            "debug_assistant_latest.debug_agents.build_embedder", return_value="embedder"
+            "debug_assistant_latest.debug_agents.build_resolved_embedder",
+            return_value=resolved_embedder,
         ) as build_embedder_mock, patch(
             "debug_assistant_latest.debug_agents.PgVector", return_value="pgvector"
         ) as pgvector_mock, patch(
@@ -1743,12 +1928,11 @@ class SingleAgentTests(unittest.TestCase):
 
         self.assertIs(agent.agent, fake_llm_agent)
         build_model_mock.assert_called_once_with("gpt-5-nano")
-        resolve_embedder_mock.assert_called_once_with(
+        build_embedder_mock.assert_called_once_with(
             embeddings_model="text-embedding-3-small",
             provider="openai",
             chat_model_name="gpt-5-nano",
         )
-        build_embedder_mock.assert_called_once_with("text-embedding-3-small", provider="openai")
         self.assertEqual(pgvector_mock.call_args.kwargs["table_name"], "local_rag_documents_text-embedding-3-small")
 
 
@@ -1776,15 +1960,18 @@ class ApiServerSupportTests(unittest.TestCase):
 
         fake_kb = MagicMock()
         fake_embedder = MagicMock()
-        fake_embedder.get_embedding_and_usage.return_value = ([0.1, 0.2], {"total_tokens": 1})
+        resolved_embedder = runtime_config.ResolvedEmbedder(
+            config=runtime_config.EmbedderConfig(model="text-embedding-3-small", provider="openai"),
+            embedder=fake_embedder,
+        )
 
-        with patch("api_server_support.build_embedder", return_value=fake_embedder) as build_embedder_mock, patch(
+        with patch("api_server_support.build_resolved_embedder", return_value=resolved_embedder) as build_embedder_mock, patch(
             "api_server_support.scrape_url_to_document",
             return_value=Document(content="doc", meta_data={"source": "https://example.com"}),
         ), patch("phi.agent.AgentKnowledge", return_value=fake_kb), patch(
             "phi.vectordb.pgvector.PgVector", return_value="vector_db"
-        ):
-            api_server_support.load_knowledge_document(
+        ) as pgvector_mock:
+            table_name = api_server_support.load_knowledge_document(
                 "https://example.com",
                 "local_rag_documents_text-embedding-3-small",
                 "text-embedding-3-small",
@@ -1793,17 +1980,18 @@ class ApiServerSupportTests(unittest.TestCase):
             )
 
         build_embedder_mock.assert_called_once_with("text-embedding-3-small", provider="openai")
-        fake_embedder.get_embedding_and_usage.assert_called_once_with("kubellm embedder preflight")
+        self.assertEqual(table_name, "local_rag_documents_text-embedding-3-small")
+        self.assertEqual(pgvector_mock.call_args.kwargs["table_name"], "local_rag_documents_text-embedding-3-small")
         loaded_documents = fake_kb.load_documents.call_args.args[0]
         self.assertEqual(len(loaded_documents), 1)
         self.assertEqual(loaded_documents[0].content, "doc")
 
     def test_load_knowledge_document_surfaces_provider_preflight_error(self):
-        fake_embedder = MagicMock()
-        fake_embedder.get_embedding_and_usage.side_effect = RuntimeError("insufficient_quota")
-
-        with patch("api_server_support.build_embedder", return_value=fake_embedder):
-            with self.assertRaisesRegex(RuntimeError, "Check OPENAI_API_KEY, billing, and OpenAI model quota"):
+        with patch(
+            "api_server_support.build_resolved_embedder",
+            side_effect=RuntimeError("openai embedder failed preflight"),
+        ):
+            with self.assertRaisesRegex(RuntimeError, "openai embedder failed preflight"):
                 api_server_support.load_knowledge_document(
                     "https://example.com",
                     "local_rag_documents_text-embedding-3-small",
@@ -1823,7 +2011,12 @@ class ApiServerSupportTests(unittest.TestCase):
             meta_data={"source": "https://example.com", "title": "Example"},
         )
 
-        with patch("api_server_support.build_embedder", return_value=fake_embedder), patch(
+        resolved_embedder = runtime_config.ResolvedEmbedder(
+            config=runtime_config.EmbedderConfig(model="nomic-embed-text", provider="ollama"),
+            embedder=fake_embedder,
+        )
+
+        with patch("api_server_support.build_resolved_embedder", return_value=resolved_embedder), patch(
             "api_server_support.scrape_url_to_document", return_value=large_document
         ), patch("phi.agent.AgentKnowledge", return_value=fake_kb), patch(
             "phi.vectordb.pgvector.PgVector", return_value="vector_db"

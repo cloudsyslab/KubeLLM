@@ -20,6 +20,7 @@ GEMINI_PROVIDER = "gemini"
 
 DEFAULT_OPENAI_EMBEDDER = "text-embedding-3-small"
 DEFAULT_OLLAMA_EMBEDDER = "nomic-embed-text"
+EMBEDDER_PREFLIGHT_TEXT = "kubellm embedder preflight"
 
 OPENAI_CHAT_PREFIXES = ("gpt", "o1", "o3", "o4")
 KNOWN_OLLAMA_EMBEDDERS = {
@@ -50,6 +51,12 @@ load_dotenv(ENV_PATH, override=True)
 class EmbedderConfig:
     model: str
     provider: str
+
+
+@dataclass(frozen=True)
+class ResolvedEmbedder:
+    config: EmbedderConfig
+    embedder: object
 
 
 def require_openai_api_key(model_name: str) -> None:
@@ -238,3 +245,40 @@ def build_embedder(embeddings_model: Optional[str], provider: Optional[str] = No
 
 def build_ollama_embedder(embeddings_model: str):
     return build_embedder(embeddings_model, provider=OLLAMA_PROVIDER)
+
+
+def _preflight_embedder(embedder, config: EmbedderConfig) -> None:
+    try:
+        embedder.get_embedding_and_usage(EMBEDDER_PREFLIGHT_TEXT)
+    except Exception as exc:
+        hint = ""
+        if config.provider == OPENAI_PROVIDER:
+            hint = " Check OPENAI_API_KEY, billing, and OpenAI model quota."
+        elif config.provider == OLLAMA_PROVIDER:
+            hint = (
+                f" Check that the Ollama service is running and that embedder model "
+                f"'{config.model}' is available locally."
+            )
+        raise RuntimeError(
+            f"{config.provider} embedder '{config.model}' failed preflight: {exc}.{hint}"
+        ) from exc
+
+
+def build_resolved_embedder(
+    embeddings_model: Optional[str] = None,
+    provider: Optional[str] = None,
+    chat_model_name: Optional[str] = None,
+    *,
+    preflight: bool = True,
+) -> ResolvedEmbedder:
+    requested_config = resolve_embedder_config(
+        embeddings_model=embeddings_model,
+        provider=provider,
+        chat_model_name=chat_model_name,
+    )
+    embedder = build_embedder(requested_config.model, provider=requested_config.provider)
+    if not preflight:
+        return ResolvedEmbedder(config=requested_config, embedder=embedder)
+
+    _preflight_embedder(embedder, requested_config)
+    return ResolvedEmbedder(config=requested_config, embedder=embedder)

@@ -14,8 +14,8 @@
         "model": "gpt-5-nano",
         "instructions": [
             "If all and only all commands fail to execute, declare that there was an error in trying to solve the issue, and end that statement with this token: <|ERROR|>.",
-            "You have solved this issue when this goal is met: The status of all pods say 'RUNNING'",
-            "After every step, check to see if you have met the goal",
+            "You have solved this issue only when the original user-visible problem is fixed in the live cluster. Verify the relevant Kubernetes resources and application behavior with commands before declaring success; pod Running/Ready status alone is not sufficient unless the original problem is only pod startup.",
+            "After every step, check whether the original problem is fixed in the live cluster. If you changed manifests, images, or cluster configuration, apply the change and verify the live resource state reflects it before declaring success.",
             "If you believe you have met the goal, declare that you have solved the user's issue, and end that statement with this token: <|SOLVED|>.",
             "If the steps do not solve the issue, or if you need more information, declare that you cannot solve the issue, and end that statement with this token: <|FAILED|>.",
             "Do not use live feed flags when checking the logs such as 'kubectl logs -f'",
@@ -56,7 +56,7 @@
         "dockerfile": false
     },
     "setup-commands": [
-        "minikube image build -t kube-incorrect-selector-app debug_assistant_latest/troubleshooting/incorrect_selector",
+        "bash -lc 'PROFILE=${MINIKUBE_PROFILE:-minikube}; CTX=$(kubectl config current-context 2>/dev/null || true); if command -v minikube >/dev/null 2>&1 && [ \"$CTX\" = \"$PROFILE\" ] && minikube -p \"$PROFILE\" status --format \"{{.Host}}\" 2>/dev/null | grep -qi running; then minikube -p \"$PROFILE\" image build -t kube-incorrect-selector-app:latest -f Dockerfile debug_assistant_latest/troubleshooting/incorrect_selector; else docker build -t kube-incorrect-selector-app:latest -f debug_assistant_latest/troubleshooting/incorrect_selector/Dockerfile debug_assistant_latest/troubleshooting/incorrect_selector; fi'",
         "kubectl apply -f debug_assistant_latest/troubleshooting/incorrect_selector/incorrect_selector.yaml",
         "kubectl apply -f debug_assistant_latest/troubleshooting/incorrect_selector/app_service.yaml"
     ],

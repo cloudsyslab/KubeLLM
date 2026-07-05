@@ -7,11 +7,8 @@ import logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
-# Allocate memory to simulate a real application
-# This will cause OOM when memory limit is too low
 logger.info("Starting server and allocating memory...")
-# Allocate approximately 70MB of memory
-large_list = [0] * (10 * 1024 * 1024)  # 10M integers ~ 80MB
+large_list = [0] * (10 * 1024 * 1024)
 logger.info(f"Memory allocated. List size: {sys.getsizeof(large_list) / (1024*1024):.2f} MB")
 
 class SimpleHTTPRequestHandler(BaseHTTPRequestHandler):

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 from http.server import BaseHTTPRequestHandler, HTTPServer
 import logging
-import requests  # BUG: This package is not installed in Dockerfile
+import requests
 
 # Setup logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -13,7 +13,6 @@ class SimpleHTTPRequestHandler(BaseHTTPRequestHandler):
             self.send_response(200)
             self.send_header('Content-type', 'text/html')
             self.end_headers()
-            # Try to use requests library to demonstrate it's installed
             message = f"Hello! Requests library version: {requests.__version__}"
             self.wfile.write(bytes(message, "utf8"))
         except Exception as e:

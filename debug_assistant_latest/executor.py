@@ -346,11 +346,13 @@ def run_single_test_in_process(
         # Import here to avoid circular imports in worker process
         from main import allStepsAtOnce, singleAgentApproach, stepByStep
         from config_merge import load_config_with_overrides, save_effective_config
-        from teardown import backup_environment, teardown_environment
+        from teardown import backup_environment, cleanup_transient_k8s_resources, teardown_environment
 
         config_path = get_config_path(test_name)
         config = load_config_with_overrides(config_path, overrides)
         ground_truth_configured = bool(config.get("ground-truth"))
+
+        cleanup_transient_k8s_resources()
 
         # Opt-in backup before run (fail fast if backup fails)
         if backup_before_run:
@@ -529,11 +531,13 @@ def run_single_test(
 
     try:
         from main import allStepsAtOnce, singleAgentApproach, stepByStep
-        from teardown import backup_environment, teardown_environment
+        from teardown import backup_environment, cleanup_transient_k8s_resources, teardown_environment
 
         config_path = get_config_path(test_name)
         config = load_config_with_overrides(config_path, overrides)
         ground_truth_configured = bool(config.get("ground-truth"))
+
+        cleanup_transient_k8s_resources()
 
         # Opt-in backup before run (fail fast if backup fails)
         if backup_before_run:

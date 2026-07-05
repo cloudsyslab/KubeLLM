@@ -29,8 +29,38 @@ TEARDOWN_CONFIG = {
         "restore_files": ["yaml", "server.py", "Dockerfile", "app_service.yaml"],
         "k8s_manifests": ["{name}.yaml", "app_service.yaml"],
     },
+    "wrong_interface_bind_address": {
+        "docker_images": ["kube-wrong-interface-bind-address-app"],
+        "restore_files": ["yaml", "server.py", "Dockerfile", "app_service.yaml"],
+        "k8s_manifests": ["{name}.yaml", "app_service.yaml"],
+    },
+    "wrong_interface_env_host": {
+        "docker_images": ["kube-wrong-interface-env-host-app"],
+        "restore_files": ["yaml", "server.py", "Dockerfile", "app_service.yaml"],
+        "k8s_manifests": ["{name}.yaml", "app_service.yaml"],
+    },
+    "wrong_interface_container_args": {
+        "docker_images": ["kube-wrong-interface-container-args-app"],
+        "restore_files": ["yaml", "server.py", "Dockerfile", "app_service.yaml"],
+        "k8s_manifests": ["{name}.yaml", "app_service.yaml"],
+    },
     "wrong_port": {
         "docker_images": ["kube-wrong-port-app", "marioutsa/kube-wrong-port-app"],
+        "restore_files": ["yaml", "server.py", "Dockerfile"],
+        "k8s_manifests": ["{name}.yaml"],
+    },
+    "wrong_port_9090": {
+        "docker_images": ["kube-wrong-port-9090-app"],
+        "restore_files": ["yaml", "server.py", "Dockerfile"],
+        "k8s_manifests": ["{name}.yaml"],
+    },
+    "wrong_port_5000": {
+        "docker_images": ["kube-wrong-port-5000-app"],
+        "restore_files": ["yaml", "server.py", "Dockerfile"],
+        "k8s_manifests": ["{name}.yaml"],
+    },
+    "wrong_port_7001": {
+        "docker_images": ["kube-wrong-port-7001-app"],
         "restore_files": ["yaml", "server.py", "Dockerfile"],
         "k8s_manifests": ["{name}.yaml"],
     },
@@ -64,6 +94,11 @@ TEARDOWN_CONFIG = {
         "restore_files": ["yaml", "server.py", "Dockerfile"],
         "k8s_manifests": ["{name}.yaml"],
     },
+    "environment_variable_wrong_name": {
+        "docker_images": ["kube-env-wrong-name-app"],
+        "restore_files": ["yaml", "server.py", "Dockerfile"],
+        "k8s_manifests": ["{name}.yaml"],
+    },
     "port_mismatch_wrong_interface": {
         "docker_images": ["kube-port-mismatch-wrong-interface-app"],
         "restore_files": ["yaml", "server.py", "Dockerfile", "app_service.yaml"],
@@ -74,8 +109,18 @@ TEARDOWN_CONFIG = {
         "restore_files": ["yaml", "server.py", "Dockerfile"],
         "k8s_manifests": ["{name}.yaml"],
     },
+    "readiness_missing_dependency_transitive": {
+        "docker_images": ["kube-readiness-transitive-dependency-app"],
+        "restore_files": ["yaml", "server.py", "Dockerfile", "helper_config.py"],
+        "k8s_manifests": ["{name}.yaml"],
+    },
     "selector_env_variable": {
         "docker_images": ["kube-selector-env-app"],
+        "restore_files": ["yaml", "server.py", "Dockerfile", "app_service.yaml"],
+        "k8s_manifests": ["{name}.yaml", "app_service.yaml"],
+    },
+    "selector_env_variable_label_and_secret": {
+        "docker_images": ["kube-selector-env-secret-app"],
         "restore_files": ["yaml", "server.py", "Dockerfile", "app_service.yaml"],
         "k8s_manifests": ["{name}.yaml", "app_service.yaml"],
     },
@@ -84,12 +129,48 @@ TEARDOWN_CONFIG = {
         "restore_files": ["yaml", "server.py", "Dockerfile"],
         "k8s_manifests": ["{name}.yaml"],
     },
+    "resource_limits_cpu_starvation": {
+        "docker_images": ["kube-resource-limits-cpu-starvation-app"],
+        "restore_files": ["yaml", "server.py", "Dockerfile"],
+        "k8s_manifests": ["{name}.yaml"],
+    },
     "volume_mount": {
         "docker_images": ["marioutsa/kube-volume-mount-app"],
         "restore_files": ["yaml", "server.py", "Dockerfile"],
         "k8s_manifests": ["{name}.yaml"],
     },
+    "incorrect_selector_missing_label": {
+        "docker_images": ["kube-selector-missing-label-app"],
+        "restore_files": ["yaml", "server.py", "Dockerfile", "app_service.yaml"],
+        "k8s_manifests": ["{name}.yaml", "app_service.yaml"],
+    },
+    "liveness_probe_wrong_path": {
+        "docker_images": ["kube-liveness-wrong-path-app"],
+        "restore_files": ["yaml", "server.py", "Dockerfile"],
+        "k8s_manifests": ["{name}.yaml"],
+    },
+    "missing_dependency_requirements": {
+        "docker_images": ["kube-missing-dependency-requirements-app"],
+        "restore_files": ["yaml", "server.py", "Dockerfile", "requirements.txt"],
+        "k8s_manifests": ["{name}.yaml"],
+    },
+    "port_mismatch_named_target": {
+        "docker_images": ["kube-port-mismatch-named-target-app"],
+        "restore_files": ["yaml", "server.py", "Dockerfile", "app_service.yaml"],
+        "k8s_manifests": ["{name}.yaml", "app_service.yaml"],
+    },
+    "readiness_failure_slow_start": {
+        "docker_images": ["kube-readiness-slow-start-app"],
+        "restore_files": ["yaml", "server.py", "Dockerfile"],
+        "k8s_manifests": ["{name}.yaml"],
+    },
 }
+
+
+TRANSIENT_K8S_RESOURCES = [
+    ("pod", "curl-test"),
+    ("service", "curl-test"),
+]
 
 
 def list_teardown_tests():
@@ -124,12 +205,23 @@ def backup_environment(test_env_name: str) -> None:
             shutil.copyfile(src, backup)
 
 
+def cleanup_transient_k8s_resources(namespace: str = "default") -> None:
+    """Remove helper resources that agents may create while probing services."""
+    for kind, name in TRANSIENT_K8S_RESOURCES:
+        subprocess.run(
+            ["kubectl", "delete", kind, name, "-n", namespace, "--ignore-not-found=true"],
+            check=False,
+        )
+
+
 def teardown_environment(test_env_name: str) -> None:
     config = TEARDOWN_CONFIG.get(test_env_name)
     if not config:
         raise ValueError(f"Unknown test case: {test_env_name}")
 
     test_dir = _get_test_dir(test_env_name)
+
+    cleanup_transient_k8s_resources()
 
     for image in config["docker_images"]:
         # Get container IDs (cross-platform, no pipe/xargs)
