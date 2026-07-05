@@ -35,14 +35,27 @@ TOOL_USAGE_RULES = get_tool_usage_rules()
 
 
 def get_case_specific_guidance(config):
-    if config.get("test-name") != "wrong_port":
+    test_name = config.get("test-name", "")
+    if test_name != "wrong_port" and not test_name.startswith("wrong_port_"):
         return ""
 
+    if test_name == "wrong_port":
+        return (
+            "### wrong_port Guidance\n"
+            "- This scenario uses a Deployment with no Service. Do not use `minikube service`, `kubectl port-forward`, or background verification commands.\n"
+            "- Inspect the manifest and `server.py` to find the Deployment name, declared `containerPort`, and actual server listen port.\n"
+            "- Align the manifest `containerPort` and Dockerfile `EXPOSE` value with the server listen port, then rebuild the image and reapply the manifest.\n"
+            "- Preferred verification path: wait for the Deployment to roll out, confirm the live Deployment pod template has the corrected `containerPort`, then use a one-shot `kubectl exec <pod_name> -- python3 -c \"import urllib.request; print(urllib.request.urlopen('http://localhost:<listen_port>/').getcode())\"` check.\n"
+            "- Once all three are true, stop debugging and report success: the Deployment is available, `containerPort` matches the server listen port, and the in-pod HTTP check returns `200`.\n"
+        )
+
     return (
-        "### wrong_port Guidance\n"
+        "### wrong_port Variant Guidance\n"
         "- This scenario is a bare Pod with no Service. Do not use `minikube service`, `kubectl port-forward`, or background verification commands.\n"
-        "- Preferred verification path: inspect the manifest, wait for `pod/kube-wrong-port` to become Ready, then use `kubectl exec kube-wrong-port -- python3 -c \"import urllib.request; print(urllib.request.urlopen('http://localhost:8765/').getcode())\"`.\n"
-        "- Once all three are true, stop debugging and report success: the pod is Ready, `containerPort` is `8765`, and the in-pod HTTP check returns `200`.\n"
+        "- Inspect the manifest and `server.py` to find the Pod name, declared `containerPort`, and actual server listen port.\n"
+        "- Align the manifest `containerPort` and Dockerfile `EXPOSE` value with the server listen port, then rebuild the image and delete/recreate the Pod from the manifest because bare Pod port fields are not updated in place.\n"
+        "- Preferred verification path: wait for the Pod to become Ready, confirm the live Pod spec has the corrected `containerPort`, then use a one-shot `kubectl exec <pod_name> -- python3 -c \"import urllib.request; print(urllib.request.urlopen('http://localhost:<listen_port>/').getcode())\"` check.\n"
+        "- Once all three are true, stop debugging and report success: the Pod is Ready, `containerPort` matches the server listen port, and the in-pod HTTP check returns `200`.\n"
     )
 
 

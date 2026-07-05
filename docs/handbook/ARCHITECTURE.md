@@ -203,9 +203,9 @@ Repeat queues also emit a queue-level summary and nested iteration directories.
 
 `debug_assistant_latest/troubleshooting/wrong_port/` is a good example:
 
-- `wrong_port.yaml` declares a pod exposing `containerPort: 8000`
+- `wrong_port.yaml` declares a Deployment pod template with `containerPort: 8000`
 - `server.py` actually listens on port `8765`
-- `config_step.json` describes the problem, selects agent models, defines setup commands, and includes deterministic checks that assert pod readiness, port alignment, and successful localhost HTTP response
+- `config_step.json` describes a workload-only, no-Service scenario, selects agent models, defines setup commands, and includes deterministic checks that assert rollout, port alignment, and successful in-pod localhost HTTP response
 
 That fixture shows the dominant repo pattern: a broken manifest plus a small app, wrapped by a config file that defines both the prompting context and the evaluation criteria.
 

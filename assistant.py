@@ -5,7 +5,7 @@ from phi.vectordb.pgvector import PgVector, SearchType
 from phi.storage.agent.postgres import PgAgentStorage
 from better_shell import BetterShellTools
 from statement import Model
-from runtime_config import DB_URL, build_chat_model, build_embedder, resolve_embedder_config
+from runtime_config import DB_URL, build_chat_model, build_resolved_embedder
 
 db_url = DB_URL
 
@@ -50,8 +50,9 @@ def get_rag_agent(
     llm = build_chat_model(model_name)
 
     if use_rag:
-        embedder_config = resolve_embedder_config(chat_model_name=model_name)
-        embedder = build_embedder(embedder_config.model, provider=embedder_config.provider)
+        resolved_embedder = build_resolved_embedder(chat_model_name=model_name)
+        embedder_config = resolved_embedder.config
+        embedder = resolved_embedder.embedder
 
         # Define the knowledge base
         knowledge = AgentKnowledge(
@@ -66,7 +67,7 @@ def get_rag_agent(
             num_documents=3,
         )
 
-        return Agent(
+        agent = Agent(
             name="local_rag_agent",
             run_id=run_id,
             user_id=user_id,
@@ -90,6 +91,8 @@ def get_rag_agent(
             add_datetime_to_instructions=True,
             debug_mode=debug_mode,
         )
+        agent.active_embedder_config = embedder_config
+        return agent
     else:
         return Agent(
             name="local_agent",
@@ -118,12 +121,13 @@ def get_rag_assistant(
 ) -> Agent:
     """Get a Local RAG Agent."""
     llm = build_chat_model(llm_model)
-    embedder_config = resolve_embedder_config(
+    resolved_embedder = build_resolved_embedder(
         embeddings_model=embeddings_model,
         provider=embeddings_provider,
         chat_model_name=llm_model,
     )
-    embedder = build_embedder(embedder_config.model, provider=embedder_config.provider)
+    embedder_config = resolved_embedder.config
+    embedder = resolved_embedder.embedder
 
     # Define the knowledge base
     knowledge = AgentKnowledge(
@@ -138,7 +142,7 @@ def get_rag_assistant(
         num_documents=3,
     )
 
-    return Agent(
+    agent = Agent(
         name="local_rag_assistant",
         run_id=run_id,
         user_id=user_id,
@@ -163,3 +167,5 @@ def get_rag_assistant(
         add_datetime_to_instructions=True,
         debug_mode=debug_mode,
     )
+    agent.active_embedder_config = embedder_config
+    return agent

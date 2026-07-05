@@ -7,8 +7,7 @@ import logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
-# BUG: Application requires APP_MESSAGE env var but it's not defined in deployment
-APP_MESSAGE = os.environ['APP_MESSAGE']  # Will raise KeyError if not set
+APP_MESSAGE = os.environ['APP_MESSAGE']
 
 class SimpleHTTPRequestHandler(BaseHTTPRequestHandler):
     def do_GET(self):

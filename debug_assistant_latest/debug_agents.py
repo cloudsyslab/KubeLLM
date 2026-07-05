@@ -9,7 +9,7 @@ from agent_base import Agent
 from agent_helpers import agent_debug_logging_enabled, build_llm_agent, build_model, build_tool_kwargs
 from better_shell import BetterShellTools
 from runtime_progress import BlockedCommandThresholdError
-from runtime_config import DB_URL, build_embedder, resolve_embedder_config
+from runtime_config import DB_URL, build_resolved_embedder
 from prompt_helpers import (
     TOOL_USAGE_RULES,
     append_relevant_files,
@@ -236,12 +236,13 @@ class SingleAgent(Agent):
 
             model = build_model(model_name)
             self._resolved_debug_model_name = model_name
-            embedder_config = resolve_embedder_config(
+            resolved_embedder = build_resolved_embedder(
                 embeddings_model=single_agent_config.get("embedder") or api_agent_config.get("embedder"),
                 provider=single_agent_config.get("embedder-provider") or api_agent_config.get("embedder-provider"),
                 chat_model_name=model_name,
             )
-            embedder = build_embedder(embedder_config.model, provider=embedder_config.provider)
+            embedder_config = resolved_embedder.config
+            embedder = resolved_embedder.embedder
 
             knowledge_base = WebsiteKnowledgeBase(
                 urls=api_agent_config.get("knowledge", []),
