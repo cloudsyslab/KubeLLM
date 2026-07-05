@@ -1258,6 +1258,22 @@ class TeardownTests(unittest.TestCase):
             ["kubectl", "delete", "service", "curl-test", "-n", "default", "--ignore-not-found=true"],
             commands,
         )
+        self.assertIn(
+            ["kubectl", "delete", "pod", "curl-check", "-n", "default", "--ignore-not-found=true"],
+            commands,
+        )
+        self.assertIn(
+            ["kubectl", "delete", "service", "curl-check", "-n", "default", "--ignore-not-found=true"],
+            commands,
+        )
+        self.assertIn(
+            ["kubectl", "delete", "pod", "curlcheck", "-n", "default", "--ignore-not-found=true"],
+            commands,
+        )
+        self.assertIn(
+            ["kubectl", "delete", "service", "curlcheck", "-n", "default", "--ignore-not-found=true"],
+            commands,
+        )
 
 
 class RunnerTests(unittest.TestCase):

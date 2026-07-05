@@ -170,6 +170,10 @@ TEARDOWN_CONFIG = {
 TRANSIENT_K8S_RESOURCES = [
     ("pod", "curl-test"),
     ("service", "curl-test"),
+    ("pod", "curl-check"),
+    ("service", "curl-check"),
+    ("pod", "curlcheck"),
+    ("service", "curlcheck"),
 ]
 
 
