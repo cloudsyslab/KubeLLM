@@ -7,15 +7,9 @@ if [[ ! -f "debug_assistant_latest/runner.py" ]]; then
 fi
 
 remaining_cases=(
-  "environment_variable_wrong_name"
-  "incorrect_selector_missing_label"
-  "liveness_probe_wrong_path"
-  "missing_dependency_requirements"
-  "port_mismatch_named_target"
-  "readiness_failure_slow_start"
-  "readiness_missing_dependency_transitive"
-  "resource_limits_cpu_starvation"
-  "selector_env_variable_label_and_secret"
+  "liveness_probe"
+  "wrong_port_7001"
+  "wrong_port_9090"
 )
 
 failed_cases=()
