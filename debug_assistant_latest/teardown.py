@@ -197,10 +197,58 @@ def _resolve_restore_paths(test_dir: Path, test_env_name: str, file_type: str):
     return test_dir / file_type, test_dir / f"backup_{file_type.replace('.', '_')}"
 
 
+def _fixture_tree_dirty_paths() -> list[str]:
+    repo_root = TROUBLESHOOTING_DIR.parent.parent
+    try:
+        fixture_path = TROUBLESHOOTING_DIR.relative_to(repo_root)
+    except ValueError:
+        fixture_path = TROUBLESHOOTING_DIR
+
+    try:
+        result = subprocess.run(
+            [
+                "git",
+                "status",
+                "--porcelain",
+                "--untracked-files=no",
+                "--",
+                str(fixture_path),
+            ],
+            cwd=repo_root,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+    except (FileNotFoundError, OSError):
+        return []
+
+    if result.returncode != 0:
+        # Non-git test roots should not make teardown helpers unusable.
+        return []
+
+    return [line.strip() for line in result.stdout.splitlines() if line.strip()]
+
+
+def assert_fixture_tree_clean() -> None:
+    dirty_paths = _fixture_tree_dirty_paths()
+    if not dirty_paths:
+        return
+
+    sample = "\n".join(f"  {path}" for path in dirty_paths[:20])
+    extra = "" if len(dirty_paths) <= 20 else f"\n  ... and {len(dirty_paths) - 20} more"
+    raise RuntimeError(
+        "Fixture tree is not clean; aborting before backup to avoid preserving corrupted files.\n"
+        "Clean or inspect these changes first:\n"
+        f"{sample}{extra}"
+    )
+
+
 def backup_environment(test_env_name: str) -> None:
     config = TEARDOWN_CONFIG.get(test_env_name)
     if not config:
         return
+
+    assert_fixture_tree_clean()
 
     test_dir = _get_test_dir(test_env_name)
     for file_type in config["restore_files"]:

@@ -426,6 +426,7 @@ def run_single_test_in_process(
                 if ground_truth_configured:
                     print("\n" + "=" * 60)
                     print("Running ground truth verification...")
+                    cleanup_transient_k8s_resources()
                     gt_result = run_ground_truth_checks(config)
                     if gt_result:
                         print(format_ground_truth_results(gt_result))
@@ -639,6 +640,7 @@ def run_single_test(
                         progress_writer.write_event("ground_truth_start", test_name=test_name)
                     print("\n" + "=" * 60)
                     print("Running ground truth verification...")
+                    cleanup_transient_k8s_resources()
                     gt_result = run_ground_truth_checks(config)
                     if gt_result:
                         print(format_ground_truth_results(gt_result))
