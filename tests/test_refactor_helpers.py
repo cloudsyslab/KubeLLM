@@ -2,6 +2,7 @@ import asyncio
 import json
 import argparse
 import os
+import subprocess
 import sys
 import tempfile
 import threading
@@ -54,6 +55,7 @@ from debug_assistant_latest.executor import (
     cmd_run_single,
     result_to_summary,
 )
+from debug_assistant_latest import executor
 from debug_assistant_latest import teardown
 import assistant
 import api_server
@@ -1213,6 +1215,40 @@ class TeardownTests(unittest.TestCase):
 
             self.assertTrue((case_dir / "backup_yaml.yaml").exists())
 
+    def test_backup_environment_aborts_when_fixture_tree_is_dirty(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            test_root = Path(tmpdir)
+            case_dir = test_root / "wrong_port"
+            case_dir.mkdir()
+            (case_dir / "wrong_port.yaml").write_text("kind: Deployment\n")
+
+            dirty_paths = [
+                "M debug_assistant_latest/troubleshooting/wrong_port/wrong_port.yaml"
+            ]
+            with patch.object(teardown, "TROUBLESHOOTING_DIR", test_root), patch.object(
+                teardown, "_fixture_tree_dirty_paths", return_value=dirty_paths
+            ), patch.dict(
+                teardown.TEARDOWN_CONFIG,
+                {"wrong_port": {"docker_images": [], "restore_files": ["yaml"], "k8s_manifests": []}},
+                clear=False,
+            ):
+                with self.assertRaisesRegex(RuntimeError, "Fixture tree is not clean"):
+                    teardown.backup_environment("wrong_port")
+
+            self.assertFalse((case_dir / "backup_yaml.yaml").exists())
+
+    def test_fixture_tree_dirty_paths_ignores_untracked_files(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo_root = Path(tmpdir)
+            test_root = repo_root / "debug_assistant_latest" / "troubleshooting"
+            test_root.mkdir(parents=True)
+            subprocess.run(["git", "init"], cwd=repo_root, check=True, capture_output=True)
+            (test_root / "new_case").mkdir()
+            (test_root / "new_case" / "config_step.json").write_text("{}\n")
+
+            with patch.object(teardown, "TROUBLESHOOTING_DIR", test_root):
+                self.assertEqual(teardown._fixture_tree_dirty_paths(), [])
+
     def test_teardown_environment_restores_backup_and_deletes_manifest(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             test_root = Path(tmpdir)
@@ -1302,6 +1338,54 @@ class RunnerTests(unittest.TestCase):
         self.assertEqual(summary.metrics["debug_agent"].__class__.__name__, "AgentMetrics")
         self.assertEqual(summary.metrics["debug_agent"].cost, 1.0)
         self.assertEqual(summary.config_overrides_applied["debug-agent.model"], "gpt-4o")
+
+    def test_run_single_test_cleans_transient_resources_before_ground_truth(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            events = []
+
+            def fake_agent(**kwargs):
+                events.append("agent")
+                return {"status": True}
+
+            def fake_cleanup():
+                events.append("cleanup")
+
+            def fake_ground_truth(config):
+                events.append("ground_truth")
+                return GroundTruthResult(test_name="svc_case", passed=True)
+
+            config = {
+                "ground-truth": {
+                    "checks": [
+                        {
+                            "name": "dummy",
+                            "cmd": "true",
+                            "expect": "",
+                        }
+                    ]
+                }
+            }
+
+            with patch("main.allStepsAtOnce", side_effect=fake_agent), patch(
+                "teardown.cleanup_transient_k8s_resources", side_effect=fake_cleanup
+            ), patch("debug_assistant_latest.executor.get_config_path", return_value=Path("dummy.json")), patch(
+                "debug_assistant_latest.executor.load_config_with_overrides", return_value=config
+            ), patch("debug_assistant_latest.executor.save_effective_config"), patch(
+                "debug_assistant_latest.executor.run_ground_truth_checks", side_effect=fake_ground_truth
+            ), patch(
+                "debug_assistant_latest.executor.save_ground_truth_result"
+            ):
+                result = executor.run_single_test(
+                    "svc_case",
+                    "allStepsAtOnce",
+                    {},
+                    Path(tmpdir),
+                    verbose=False,
+                )
+
+            self.assertTrue(result.success)
+            self.assertTrue(result.ground_truth_passed)
+            self.assertEqual(events, ["cleanup", "agent", "cleanup", "ground_truth"])
 
     def test_apply_repeat_overrides_forces_serial_backup_and_teardown(self):
         args = argparse.Namespace(
