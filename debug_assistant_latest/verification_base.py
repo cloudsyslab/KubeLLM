@@ -107,7 +107,7 @@ class VerificationAgentBase(Agent):
         try:
             prompt = self.prompt
             prompt += "\n" + TOOL_USAGE_RULES
-            prompt += get_case_specific_guidance(self.config)
+            prompt += get_case_specific_guidance(self.config, phase="verification")
             prompt += "\n\n=== CRITICAL: USE EXACT TOKENS ===\n"
             prompt += "You MUST conclude with EXACTLY one of these three tokens:\n"
             prompt += "1. <|VERIFIED|> if the issue has been completely resolved\n"

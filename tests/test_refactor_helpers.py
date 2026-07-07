@@ -70,6 +70,7 @@ from debug_assistant_latest import rag_server_config
 from debug_assistant_latest.better_shell import BetterShellTools
 from runtime_progress import BlockedCommandThresholdError, ProgressWriter
 from debug_assistant_latest.verification_base import parse_verification_status, print_verification_status
+from debug_assistant_latest.verification_agents import AgentVerification_v2
 
 
 class FakeEmbedder:
@@ -180,7 +181,7 @@ class ConfigMergeTests(unittest.TestCase):
 class RagServerConfigTests(unittest.TestCase):
     def test_resolve_client_base_url_defaults_to_shared_local_port(self):
         with patch.dict(os.environ, {}, clear=True):
-            self.assertEqual(rag_server_config.resolve_client_base_url(), "http://127.0.0.1:8000")
+            self.assertEqual(rag_server_config.resolve_client_base_url(), "http://127.0.0.1:18000")
 
     def test_resolve_client_base_url_uses_server_port_when_url_unset(self):
         with patch.dict(os.environ, {"RAG_SERVER_PORT": "8123"}, clear=True):
@@ -405,6 +406,12 @@ class AgentHelperTests(unittest.TestCase):
 
 
 class PromptHelperTests(unittest.TestCase):
+    def _load_troubleshooting_config(self, test_name):
+        case_dir = DEBUG_DIR / "troubleshooting" / test_name
+        config = json.loads((case_dir / "config_step.json").read_text(encoding="utf-8"))
+        config["test-directory"] = str(case_dir) + "/"
+        return config
+
     def test_get_tool_usage_rules_adds_windows_guidance(self):
         with patch("debug_assistant_latest.prompt_helpers.os.name", "nt"):
             rules = prompt_helpers.get_tool_usage_rules()
@@ -413,24 +420,55 @@ class PromptHelperTests(unittest.TestCase):
         self.assertIn("ownerReferences[0]", rules)
         self.assertIn("kubectl port-forward", rules)
 
-    def test_wrong_port_gets_deployment_guidance(self):
-        guidance = prompt_helpers.get_case_specific_guidance({"test-name": "wrong_port"})
+    def test_no_service_deployment_gets_verification_guidance(self):
+        guidance = prompt_helpers.get_case_specific_guidance(
+            self._load_troubleshooting_config("wrong_port"), phase="verification"
+        )
 
-        self.assertIn("wrong_port Guidance", guidance)
-        self.assertIn("Deployment", guidance)
-        self.assertIn("roll out", guidance)
-        self.assertIn("live Deployment pod template", guidance)
+        self.assertIn("intentionally has no Kubernetes Service", guidance)
+        self.assertIn("Absence of a Service is not a failure", guidance)
+        self.assertIn("old ReplicaSet pods in Terminating state are acceptable", guidance)
+        self.assertIn("current Deployment pod template", guidance)
 
-    def test_wrong_port_variant_gets_family_guidance(self):
-        guidance = prompt_helpers.get_case_specific_guidance({"test-name": "wrong_port_9090"})
+    def test_no_service_pod_variant_gets_no_service_guidance_only(self):
+        guidance = prompt_helpers.get_case_specific_guidance(
+            self._load_troubleshooting_config("wrong_port_9090"), phase="verification"
+        )
 
-        self.assertIn("wrong_port Variant Guidance", guidance)
-        self.assertIn("bare Pod with no Service", guidance)
-        self.assertIn("delete/recreate the Pod", guidance)
-        self.assertIn("<listen_port>", guidance)
+        self.assertIn("intentionally has no Kubernetes Service", guidance)
+        self.assertIn("Service endpoints", guidance)
+        self.assertNotIn("DEPLOYMENT ROLLOUT", guidance)
 
     def test_unrelated_case_gets_no_case_specific_guidance(self):
-        self.assertEqual(prompt_helpers.get_case_specific_guidance({"test-name": "port_mismatch"}), "")
+        config = {"test-name": "port_mismatch", "relevant-files": {"service": ["service.yaml"]}}
+
+        self.assertEqual(prompt_helpers.get_case_specific_guidance(config, phase="verification"), "")
+
+    def test_case_specific_guidance_is_verification_only(self):
+        config = self._load_troubleshooting_config("wrong_port")
+
+        self.assertEqual(prompt_helpers.get_case_specific_guidance(config), "")
+
+    def test_verification_prompt_includes_scenario_guidance(self):
+        config = self._load_troubleshooting_config("wrong_port")
+        agent = AgentVerification_v2("verification-agent", config)
+        captured = {}
+
+        agent.preparePrompt()
+
+        class FakeAgent:
+            def run(self, prompt):
+                captured["prompt"] = prompt
+                return types.SimpleNamespace(content="<|VERIFIED|>", metrics={}, model="fake")
+
+        agent.agent = FakeAgent()
+        agent.askQuestion()
+        prompt = captured["prompt"]
+
+        self.assertIn("configured access path for this scenario is reachable", prompt)
+        self.assertIn("Only if a Service manifest exists", prompt)
+        self.assertIn("Absence of a Service is not a failure", prompt)
+        self.assertIn("old ReplicaSet pods in Terminating state are acceptable", prompt)
 
 
 class BetterShellTests(unittest.TestCase):
