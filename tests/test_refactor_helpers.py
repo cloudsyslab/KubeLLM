@@ -68,6 +68,7 @@ import debug_assistant_latest.prompt_helpers as prompt_helpers
 from debug_assistant_latest import rag_api
 from debug_assistant_latest import rag_server_config
 from debug_assistant_latest.better_shell import BetterShellTools
+from debug_assistant_latest.api_agents import AgentAPI
 from runtime_progress import BlockedCommandThresholdError, ProgressWriter
 from debug_assistant_latest.verification_base import parse_verification_status, print_verification_status
 from debug_assistant_latest.verification_agents import AgentVerification_v2
@@ -420,6 +421,41 @@ class PromptHelperTests(unittest.TestCase):
         self.assertIn("ownerReferences[0]", rules)
         self.assertIn("kubectl port-forward", rules)
 
+    def test_get_tool_usage_rules_includes_generic_reachability_guidance(self):
+        with patch("debug_assistant_latest.prompt_helpers.os.name", "posix"):
+            rules = prompt_helpers.get_tool_usage_rules()
+
+        self.assertIn("kubectl port-forward", rules)
+        self.assertIn("background verification", rules)
+        self.assertIn("kubectl logs -f", rules)
+        self.assertIn("kubectl get -w", rules)
+        self.assertIn("if a Service exists", rules)
+        self.assertIn("kubectl exec", rules)
+
+    def test_api_prompt_includes_generic_tool_usage_rules_on_linux(self):
+        config = {
+            "api-agent": {},
+            "knowledge-prompt": {
+                "problem-desc": "pod cannot be reached",
+                "system-prompt": "Give specific commands.",
+            },
+            "test-directory": str(DEBUG_DIR / "troubleshooting" / "wrong_port"),
+            "relevant-files": {
+                "deployment": [],
+                "application": [],
+                "service": [],
+                "dockerfile": False,
+            },
+        }
+        agent = AgentAPI("api-agent", config)
+
+        with patch("debug_assistant_latest.prompt_helpers.os.name", "posix"):
+            agent.preparePrompt()
+
+        self.assertIn("Do not use `kubectl port-forward`", agent.prompt)
+        self.assertIn("if a Service exists", agent.prompt)
+        self.assertIn("kubectl exec", agent.prompt)
+
     def test_no_service_deployment_gets_verification_guidance(self):
         guidance = prompt_helpers.get_case_specific_guidance(
             self._load_troubleshooting_config("wrong_port"), phase="verification"
@@ -527,11 +563,51 @@ class BetterShellTests(unittest.TestCase):
         self.assertIn("kubectl exec", output)
         self.assertIn("kubectl get", output)
 
+    def test_run_shell_command_blocks_port_forward_for_debug_phase_on_linux(self):
+        tool = BetterShellTools(phase="debug")
+        command = "kubectl port-forward pod/kube-wrong-port 8765:8765"
+
+        with patch("debug_assistant_latest.better_shell.os.name", "posix"), patch(
+            "subprocess.run"
+        ) as run_mock:
+            output = tool.run_shell_command(command)
+
+        self.assertIn("Error:", output)
+        self.assertIn("kubectl port-forward", output)
+        self.assertIn("kubectl exec", output)
+        run_mock.assert_not_called()
+
+    def test_run_shell_command_blocks_background_verification_for_verification_phase_on_linux(self):
+        tool = BetterShellTools(phase="verification")
+        command = "kubectl port-forward pod/kube-wrong-port 8765:8765 & sleep 1; curl -s http://localhost:8765/"
+
+        with patch("debug_assistant_latest.better_shell.os.name", "posix"), patch(
+            "subprocess.run"
+        ) as run_mock:
+            output = tool.run_shell_command(command)
+
+        self.assertIn("Error:", output)
+        self.assertIn("kubectl port-forward", output)
+        run_mock.assert_not_called()
+
+    def test_run_shell_command_allows_default_linux_tool_behavior_for_same_string(self):
+        tool = BetterShellTools()
+        fake_result = types.SimpleNamespace(stdout="ok\n", stderr="", returncode=0)
+        command = "kubectl port-forward pod/kube-wrong-port 8765:8765"
+
+        with patch("debug_assistant_latest.better_shell.os.name", "posix"), patch(
+            "subprocess.run", return_value=fake_result
+        ) as run_mock:
+            output = tool.run_shell_command(command)
+
+        self.assertEqual(output, "ok\n")
+        run_mock.assert_called_once()
+
     def test_run_shell_command_raises_after_repeated_blocked_commands(self):
         tool = BetterShellTools(phase="debug", blocked_threshold=3)
         command = "kubectl port-forward pod/kube-wrong-port 8765:8765"
 
-        with patch("debug_assistant_latest.better_shell.os.name", "nt"):
+        with patch("debug_assistant_latest.better_shell.os.name", "posix"):
             self.assertIn("Error:", tool.run_shell_command(command))
             self.assertIn("Error:", tool.run_shell_command(command))
             with self.assertRaises(BlockedCommandThresholdError):
@@ -542,7 +618,7 @@ class BetterShellTests(unittest.TestCase):
         blocked = "kubectl port-forward pod/kube-wrong-port 8765:8765"
         fake_result = types.SimpleNamespace(stdout="ok\n", stderr="", returncode=0)
 
-        with patch("debug_assistant_latest.better_shell.os.name", "nt"), patch(
+        with patch("debug_assistant_latest.better_shell.os.name", "posix"), patch(
             "subprocess.run", return_value=fake_result
         ):
             self.assertIn("Error:", tool.run_shell_command(blocked))
