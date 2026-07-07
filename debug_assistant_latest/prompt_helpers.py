@@ -10,6 +10,9 @@ BASE_TOOL_USAGE_RULES = (
     "- If you need the result of a previous tool call, use the provided output rather than re-invoking it.\n"
     "- Keep the tool call as simple as possible to avoid errors.\n"
     "- Do not run long-lived or background commands such as `kubectl port-forward`, `Start-Process`, or `kubectl logs -f`; prefer single-shot commands that exit on their own.\n"
+    "- Do not use `kubectl port-forward`, background verification, `kubectl logs -f`, or `kubectl get -w`.\n"
+    "- For reachability checks, use the access path defined by the scenario: if a Service exists, verify via Service/endpoints/service-routed access; if no Service exists, use bounded direct checks such as `kubectl exec` with an in-container one-shot HTTP request.\n"
+    "- Prefer one-shot application checks such as `kubectl exec <pod> -- python3 -c \"import urllib.request; print(urllib.request.urlopen('http://127.0.0.1:<port>/').getcode())\"` when Python is available in the container.\n"
 )
 
 WINDOWS_RUNTIME_GUIDANCE = (

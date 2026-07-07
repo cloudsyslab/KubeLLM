@@ -29,6 +29,24 @@ except ImportError:
 
 
 COMMAND_TIMEOUT_S = 120
+AGENT_BLOCK_RULES = (
+    (
+        re.compile(r"\bkubectl\s+port-forward\b", re.IGNORECASE),
+        "`kubectl port-forward` is long-lived and not allowed for debug or verification. Use `kubectl exec`, `kubectl get`, `kubectl describe`, `kubectl wait`, `kubectl rollout status`, or Service-based checks when a Service is part of the case.",
+    ),
+    (
+        re.compile(r"\bkubectl\s+logs\b.*(?:^|\s)-f(?:\s|$)", re.IGNORECASE),
+        "`kubectl logs -f` is long-lived and not allowed for debug or verification. Use a one-shot `kubectl logs <pod>` command instead.",
+    ),
+    (
+        re.compile(r"\bkubectl\s+get\b.*(?:^|\s)(?:-w|--watch)(?:\s|$)", re.IGNORECASE),
+        "Watch mode is long-lived and not allowed for debug or verification. Use `kubectl wait` or repeated one-shot `kubectl get` commands instead.",
+    ),
+    (
+        re.compile(r"&\s*(?:echo\b.*;\s*)?sleep\b.*\b(?:curl|wget|Invoke-WebRequest|iwr)\b", re.IGNORECASE),
+        "Background verification with sleep and HTTP checks is not allowed. Use a single one-shot `kubectl exec`, Service-based check, or bounded readiness command instead.",
+    ),
+)
 WINDOWS_BLOCK_RULES = (
     (
         re.compile(r"\bkubectl\s+port-forward\b", re.IGNORECASE),
@@ -66,6 +84,15 @@ RUN_SHELL_COMMAND_PARAMETERS = {
     },
     "required": ["command"],
 }
+
+
+def _safe_log(level: str, message: str, *args) -> None:
+    try:
+        getattr(logger, level)(message, *args)
+    except NotImplementedError:
+        # Tests mock os.name to simulate Windows on Linux; Rich's logger may
+        # try to instantiate pathlib.WindowsPath in that state.
+        pass
 
 
 class BetterShellTools(Toolkit):
@@ -114,6 +141,14 @@ class BetterShellTools(Toolkit):
                 blocked_count=self._consecutive_blocked,
             )
         self._consecutive_blocked = 0
+
+    def _maybe_block_agent_command(self, args: str) -> Optional[str]:
+        if self.phase not in {"debug", "verification"}:
+            return None
+        for pattern, message in AGENT_BLOCK_RULES:
+            if pattern.search(args):
+                return message
+        return None
 
     def _maybe_block_windows_command(self, args: str) -> Optional[str]:
         if os.name != "nt":
@@ -180,10 +215,12 @@ class BetterShellTools(Toolkit):
                 command=repr(raw_command),
                 reason=message,
             )
-            logger.warning("Failed to normalize shell command payload: %s", raw_command)
+            _safe_log("warning", "Failed to normalize shell command payload: %s", raw_command)
             return f"Error: {message}"
 
-        blocked_reason = self._maybe_block_windows_command(normalized_command)
+        blocked_reason = self._maybe_block_agent_command(normalized_command)
+        if not blocked_reason:
+            blocked_reason = self._maybe_block_windows_command(normalized_command)
         if blocked_reason:
             self._consecutive_blocked += 1
             self._write_progress(
@@ -192,7 +229,7 @@ class BetterShellTools(Toolkit):
                 blocked_count=self._consecutive_blocked,
                 reason=blocked_reason,
             )
-            logger.warning("Blocked shell command: %s", normalized_command)
+            _safe_log("warning", "Blocked shell command: %s", normalized_command)
 
             if self.blocked_threshold and self._consecutive_blocked >= self.blocked_threshold:
                 threshold_message = (
@@ -227,7 +264,7 @@ class BetterShellTools(Toolkit):
             cwd=str(run_kwargs.get("cwd") or os.getcwd()),
             timeout_s=COMMAND_TIMEOUT_S,
         )
-        logger.info("Running shell command: %s", normalized_command)
+        _safe_log("info", "Running shell command: %s", normalized_command)
 
         try:
             if os.name == "nt":
@@ -249,7 +286,7 @@ class BetterShellTools(Toolkit):
                 timeout_s=COMMAND_TIMEOUT_S,
                 reason=message,
             )
-            logger.warning("Failed to run shell command: %s", message)
+            _safe_log("warning", "Failed to run shell command: %s", message)
             return f"Error: {message}"
         except Exception as exc:
             elapsed_s = round(time.perf_counter() - start, 3)
@@ -260,11 +297,11 @@ class BetterShellTools(Toolkit):
                 elapsed_s=elapsed_s,
                 reason=message,
             )
-            logger.warning("Failed to run shell command: %s", message)
+            _safe_log("warning", "Failed to run shell command: %s", message)
             return f"Error: {message}"
 
         elapsed_s = round(time.perf_counter() - start, 3)
-        logger.debug("Return code: %s", result.returncode)
+        _safe_log("debug", "Return code: %s", result.returncode)
 
         if result.returncode != 0:
             error_text = result.stderr.strip() or result.stdout.strip() or f"Command exited with code {result.returncode}"
