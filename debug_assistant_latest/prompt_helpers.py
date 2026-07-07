@@ -1,4 +1,6 @@
 import os
+import re
+from pathlib import Path
 
 RELEVANT_FILE_TYPES = ["deployment", "application", "service", "dockerfile"]
 BASE_TOOL_USAGE_RULES = (
@@ -34,29 +36,88 @@ def get_tool_usage_rules():
 TOOL_USAGE_RULES = get_tool_usage_rules()
 
 
-def get_case_specific_guidance(config):
-    test_name = config.get("test-name", "")
-    if test_name != "wrong_port" and not test_name.startswith("wrong_port_"):
+def get_case_specific_guidance(config, *, phase=None):
+    if phase != "verification":
         return ""
 
-    if test_name == "wrong_port":
-        return (
-            "### wrong_port Guidance\n"
-            "- This scenario uses a Deployment with no Service. Do not use `minikube service`, `kubectl port-forward`, or background verification commands.\n"
-            "- Inspect the manifest and `server.py` to find the Deployment name, declared `containerPort`, and actual server listen port.\n"
-            "- Align the manifest `containerPort` and Dockerfile `EXPOSE` value with the server listen port, then rebuild the image and reapply the manifest.\n"
-            "- Preferred verification path: wait for the Deployment to roll out, confirm the live Deployment pod template has the corrected `containerPort`, then use a one-shot `kubectl exec <pod_name> -- python3 -c \"import urllib.request; print(urllib.request.urlopen('http://localhost:<listen_port>/').getcode())\"` check.\n"
-            "- Once all three are true, stop debugging and report success: the Deployment is available, `containerPort` matches the server listen port, and the in-pod HTTP check returns `200`.\n"
+    guidance = []
+
+    if _scenario_has_no_service(config):
+        guidance.append(
+            "### SCENARIO-SPECIFIC VERIFICATION GUIDANCE\n"
+            "- This scenario intentionally has no Kubernetes Service. Absence of a Service is not a failure.\n"
+            "- Do not verify this scenario via `minikube service`, external URL, Service existence, or Service endpoints.\n"
+            "- Verify the configured direct-access success criteria instead: resource readiness, expected container port, and in-pod/local HTTP response on the intended port.\n"
         )
 
-    return (
-        "### wrong_port Variant Guidance\n"
-        "- This scenario is a bare Pod with no Service. Do not use `minikube service`, `kubectl port-forward`, or background verification commands.\n"
-        "- Inspect the manifest and `server.py` to find the Pod name, declared `containerPort`, and actual server listen port.\n"
-        "- Align the manifest `containerPort` and Dockerfile `EXPOSE` value with the server listen port, then rebuild the image and delete/recreate the Pod from the manifest because bare Pod port fields are not updated in place.\n"
-        "- Preferred verification path: wait for the Pod to become Ready, confirm the live Pod spec has the corrected `containerPort`, then use a one-shot `kubectl exec <pod_name> -- python3 -c \"import urllib.request; print(urllib.request.urlopen('http://localhost:<listen_port>/').getcode())\"` check.\n"
-        "- Once all three are true, stop debugging and report success: the Pod is Ready, `containerPort` matches the server listen port, and the in-pod HTTP check returns `200`.\n"
-    )
+    if _primary_manifest_is_deployment(config):
+        guidance.append(
+            "### DEPLOYMENT ROLLOUT VERIFICATION GUIDANCE\n"
+            "- For Deployment rollouts, old ReplicaSet pods in Terminating state are acceptable after rollout.\n"
+            "- Do not fail verification solely because an old ReplicaSet pod is Terminating.\n"
+            "- Verify `kubectl rollout status`, the current Deployment pod template, and a responding selected current pod.\n"
+        )
+
+    return "\n".join(guidance)
+
+
+def _scenario_has_no_service(config):
+    relevant_files = config.get("relevant-files") or {}
+    return relevant_files.get("service") == []
+
+
+def _primary_manifest_is_deployment(config):
+    for path in _manifest_paths(config):
+        try:
+            content = path.read_text(encoding="utf-8")
+        except OSError:
+            continue
+        if re.search(r"(?m)^\s*kind:\s*Deployment\s*$", content):
+            return True
+    return False
+
+
+def _manifest_paths(config):
+    test_dir = _test_directory(config)
+    names = []
+
+    yaml_file_name = config.get("yaml-file-name")
+    if yaml_file_name:
+        names.append(yaml_file_name)
+
+    relevant_files = config.get("relevant-files") or {}
+    deployment_files = relevant_files.get("deployment") or []
+    if isinstance(deployment_files, str):
+        deployment_files = [deployment_files]
+    names.extend(deployment_files)
+
+    paths = []
+    seen = set()
+    for name in names:
+        path = Path(name)
+        if not path.is_absolute():
+            path = test_dir / path
+        resolved = path.resolve()
+        if resolved in seen:
+            continue
+        seen.add(resolved)
+        paths.append(resolved)
+    return paths
+
+
+def _test_directory(config):
+    test_dir = config.get("test-directory")
+    if test_dir:
+        path = Path(test_dir)
+        if path.is_absolute():
+            return path
+        return Path(__file__).resolve().parent.parent / path
+
+    test_name = config.get("test-name")
+    if test_name:
+        return Path(__file__).resolve().parent / "troubleshooting" / test_name
+
+    return Path.cwd()
 
 
 def append_relevant_files(config, prompt, file_types=None):

@@ -64,7 +64,7 @@ python3 debug_assistant_latest/runner.py wrong_port --debug-model gpt-4o
 python3 debug_assistant_latest/runner.py wrong_port --repeat 10 --stall-limit-s 900
 python3 debug_assistant_latest/runner.py wrong_port --repeat 10 --output-dir /tmp/kubellm_runs
 python3 debug_assistant_latest/runner.py wrong_port --minikube-profile minikube
-python3 debug_assistant_latest/runner.py wrong_port --rag-api-url http://127.0.0.1:8000
+python3 debug_assistant_latest/runner.py wrong_port --rag-api-url http://127.0.0.1:18000
 ```
 
 Use `--rag-api-url` only when the RAG API is not on the default loopback URL (for example another host on the network).
