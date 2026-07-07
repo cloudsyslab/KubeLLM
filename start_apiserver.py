@@ -47,7 +47,7 @@ def _probe_existing_server(base_url: str) -> Optional[dict]:
 def main() -> int:
     parser = argparse.ArgumentParser(description="Start the KubeLLM FastAPI RAG server.")
     parser.add_argument("--host", help="Bind host override. Defaults to RAG_SERVER_HOST or 127.0.0.1.")
-    parser.add_argument("--port", type=int, help="Bind port override. Defaults to RAG_SERVER_PORT or 8000.")
+    parser.add_argument("--port", type=int, help="Bind port override. Defaults to RAG_SERVER_PORT or 18000.")
     parser.add_argument("--reload", action="store_true", help="Enable uvicorn reload mode for local development.")
     args = parser.parse_args()
 

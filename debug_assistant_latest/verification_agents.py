@@ -21,7 +21,7 @@ class AgentVerification_v2(VerificationAgentBase):
         "You are a verification agent tasked with verifying whether the described Kubernetes issue has been fixed.",
         "Run diagnostic commands to check the current state of the cluster.",
         "Always verify that the pods are running",
-        "Since this Kubernetes cluster is running on Minikube, use the minikube service command to access services when appropriate."
+        "Since this Kubernetes cluster is running on Minikube, use the minikube service command to access services when appropriate.",
         "Do not use live feed flags when checking the logs such as 'kubectl logs -f'",
         "If kubectl logs fails, wait 5-10 seconds and try again up to 3 times",
         "If logs are still unavailable after retries, you can still verify based on pod status and output of specific diagnostic command that will be provided to you",
@@ -54,7 +54,7 @@ class AgentVerification_v2(VerificationAgentBase):
             2. Always start verification using `kubectl` (never guess pod/service names).
             3. Use exact resource names extracted from the YAML manifests — do not invent them.
             4. If a command fails or a resource does not exist, clearly state that and do not proceed as if it succeeded.
-            5. Only declare the issue resolved if all relevant pods are Running/Ready and the service (if applicable) is reachable from outside the cluster.
+            5. Only declare the issue resolved if all relevant pods are Running/Ready and the configured access path for this scenario is reachable.
 
             ### RELEVANT MANIFESTS (use these to find exact names)
             """
@@ -75,7 +75,7 @@ class AgentVerification_v2(VerificationAgentBase):
             1. Run `kubectl get pods` → confirm all expected pods exist and are in Running state with 1/1 (or expected) ready containers.
             2. For each expected pod, run `kubectl describe pod <pod-name>` and check Events for errors (CrashLoopBackOff, ImagePullBackOff, OOM, etc.).
             3. If relevant service YAML exists, run `kubectl get service <service-name>` → confirm expected Service exists and has ClusterIP assigned.
-            4. If a Service is running:
+            4. Only if a Service manifest exists and the Service is running:
                - Run: `minikube -p {minikube_profile} service <service-name> --url`
                - Take the URL(s) returned and test with `curl -v <url>`
             5. If Ingress exists, get the ingress address and test the hostname/path with curl.

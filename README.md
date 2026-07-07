@@ -8,7 +8,7 @@ KubeLLM is an LLM-based multi-agent framework that manages your kubernetes clust
 
 ### Execution environment
 - Develop and run tests from your machine; use Docker, Kubernetes (for example Minikube), pgvector, and the RAG API as described below.
-- The runner and the FastAPI RAG server default to the same URL on loopback: `http://127.0.0.1:8000`.
+- The runner and the FastAPI RAG server default to the same URL on loopback: `http://127.0.0.1:18000`.
 - Set `RAG_API_URL` or `--rag-api-url` when the RAG API runs on another host.
 
 ---
@@ -93,11 +93,11 @@ bash start_apiserver.sh
 RAG API URL precedence:
 - `python3 debug_assistant_latest/runner.py ... --rag-api-url <url>`
 - `RAG_API_URL` from the shell or `.env`
-- default `http://127.0.0.1:${RAG_SERVER_PORT:-8000}`
+- default `http://127.0.0.1:${RAG_SERVER_PORT:-18000}`
 
 Server bind defaults:
 - `RAG_SERVER_HOST=127.0.0.1`
-- `RAG_SERVER_PORT=8000`
+- `RAG_SERVER_PORT=18000`
 
 Set `RAG_SERVER_HOST=0.0.0.0` only when you intentionally want remote clients to reach the API server. If you do that from another machine, also set `RAG_API_URL` (or `--rag-api-url`) to the externally reachable URL.
 
