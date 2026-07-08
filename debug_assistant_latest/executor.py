@@ -346,7 +346,13 @@ def run_single_test_in_process(
         # Import here to avoid circular imports in worker process
         from main import allStepsAtOnce, singleAgentApproach, stepByStep
         from config_merge import load_config_with_overrides, save_effective_config
-        from teardown import backup_environment, cleanup_transient_k8s_resources, teardown_environment
+        from teardown import (
+            backup_environment,
+            cleanup_test_pods,
+            cleanup_transient_fixture_files,
+            cleanup_transient_k8s_resources,
+            teardown_environment,
+        )
 
         config_path = get_config_path(test_name)
         config = load_config_with_overrides(config_path, overrides)
@@ -455,6 +461,27 @@ def run_single_test_in_process(
                 f.write(f"\n\n[WARNING] Teardown failed for {test_name}: {teardown_err}\n")
                 f.write(traceback.format_exc())
 
+    if test_started:
+        try:
+            cleanup_test_pods()
+        except Exception as pod_cleanup_err:
+            with open(stderr_log, "a", encoding="utf-8") as f:
+                f.write(f"\n\n[WARNING] Post-test pod cleanup failed for {test_name}: {pod_cleanup_err}\n")
+                f.write(traceback.format_exc())
+
+    if test_started:
+        try:
+            removed_fixture_files = cleanup_transient_fixture_files(test_name)
+            if removed_fixture_files:
+                with open(stderr_log, "a", encoding="utf-8") as f:
+                    f.write("\n\n[CLEANUP] Removed transient fixture files:\n")
+                    for path in removed_fixture_files:
+                        f.write(f"  {path}\n")
+        except Exception as cleanup_err:
+            with open(stderr_log, "a", encoding="utf-8") as f:
+                f.write(f"\n\n[WARNING] Transient fixture cleanup failed for {test_name}: {cleanup_err}\n")
+                f.write(traceback.format_exc())
+
     duration = time.perf_counter() - start_time
     finished_at = datetime.now().isoformat()
 
@@ -532,7 +559,13 @@ def run_single_test(
 
     try:
         from main import allStepsAtOnce, singleAgentApproach, stepByStep
-        from teardown import backup_environment, cleanup_transient_k8s_resources, teardown_environment
+        from teardown import (
+            backup_environment,
+            cleanup_test_pods,
+            cleanup_transient_fixture_files,
+            cleanup_transient_k8s_resources,
+            teardown_environment,
+        )
 
         config_path = get_config_path(test_name)
         config = load_config_with_overrides(config_path, overrides)
@@ -682,6 +715,37 @@ def run_single_test(
             if verbose:
                 print(warning_msg, file=sys.stderr)
             # Also log to per-test stderr.log
+            with open(stderr_log, "a", encoding="utf-8") as f:
+                f.write(f"\n\n{warning_msg}\n")
+                f.write(traceback.format_exc())
+
+    if test_started:
+        try:
+            if verbose:
+                print(f"[CLEANUP] Deleting remaining test pods")
+            cleanup_test_pods()
+        except Exception as pod_cleanup_err:
+            warning_msg = f"[WARNING] Post-test pod cleanup failed for {test_name}: {pod_cleanup_err}"
+            if verbose:
+                print(warning_msg, file=sys.stderr)
+            with open(stderr_log, "a", encoding="utf-8") as f:
+                f.write(f"\n\n{warning_msg}\n")
+                f.write(traceback.format_exc())
+
+    if test_started:
+        try:
+            removed_fixture_files = cleanup_transient_fixture_files(test_name)
+            if removed_fixture_files:
+                if verbose:
+                    print(f"[CLEANUP] Removed {len(removed_fixture_files)} transient fixture file(s)")
+                with open(stderr_log, "a", encoding="utf-8") as f:
+                    f.write("\n\n[CLEANUP] Removed transient fixture files:\n")
+                    for path in removed_fixture_files:
+                        f.write(f"  {path}\n")
+        except Exception as cleanup_err:
+            warning_msg = f"[WARNING] Transient fixture cleanup failed for {test_name}: {cleanup_err}"
+            if verbose:
+                print(warning_msg, file=sys.stderr)
             with open(stderr_log, "a", encoding="utf-8") as f:
                 f.write(f"\n\n{warning_msg}\n")
                 f.write(traceback.format_exc())
