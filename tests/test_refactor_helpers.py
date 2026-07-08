@@ -1394,7 +1394,18 @@ class TeardownTests(unittest.TestCase):
 
         def fake_run(*args, **kwargs):
             recorded_calls.append((args, kwargs))
-            return None
+            completed = subprocess.CompletedProcess(args[0], 0, stdout="", stderr="")
+            if args and args[0] == ["kubectl", "get", "pods", "-n", "default", "-o", "name"]:
+                completed.stdout = "\n".join(
+                    [
+                        "pod/curl-test2",
+                        "pod/curl-check2",
+                        "pod/net-test",
+                        "pod/svc-test",
+                        "pod/kube-wrong-port",
+                    ]
+                )
+            return completed
 
         with patch("debug_assistant_latest.teardown.subprocess.run", side_effect=fake_run):
             teardown.cleanup_transient_k8s_resources()
@@ -1424,6 +1435,64 @@ class TeardownTests(unittest.TestCase):
             ["kubectl", "delete", "service", "curlcheck", "-n", "default", "--ignore-not-found=true"],
             commands,
         )
+        self.assertIn(
+            ["kubectl", "delete", "pod", "curl-test2", "-n", "default", "--ignore-not-found=true"],
+            commands,
+        )
+        self.assertIn(
+            ["kubectl", "delete", "pod", "curl-check2", "-n", "default", "--ignore-not-found=true"],
+            commands,
+        )
+        self.assertIn(
+            ["kubectl", "delete", "pod", "net-test", "-n", "default", "--ignore-not-found=true"],
+            commands,
+        )
+        self.assertIn(
+            ["kubectl", "delete", "pod", "svc-test", "-n", "default", "--ignore-not-found=true"],
+            commands,
+        )
+        self.assertNotIn(
+            ["kubectl", "delete", "pod", "kube-wrong-port", "-n", "default", "--ignore-not-found=true"],
+            commands,
+        )
+
+    def test_cleanup_test_pods_deletes_all_pods_in_namespace(self):
+        recorded_calls = []
+
+        def fake_run(*args, **kwargs):
+            recorded_calls.append((args, kwargs))
+            return subprocess.CompletedProcess(args[0], 0, stdout="", stderr="")
+
+        with patch("debug_assistant_latest.teardown.subprocess.run", side_effect=fake_run):
+            teardown.cleanup_test_pods("default")
+
+        commands = [call[0][0] for call in recorded_calls]
+        self.assertEqual(
+            commands,
+            [["kubectl", "delete", "pods", "--all", "-n", "default", "--ignore-not-found=true"]],
+        )
+
+    def test_cleanup_transient_fixture_files_removes_case_bak_files(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            test_root = Path(tmpdir)
+            case_dir = test_root / "wrong_port"
+            case_dir.mkdir()
+            bak_file = case_dir / "wrong_port.yaml.bak"
+            live_file = case_dir / "wrong_port.yaml"
+            nested_dir = case_dir / "nested"
+            nested_dir.mkdir()
+            nested_bak = nested_dir / "nested.yaml.bak"
+            bak_file.write_text("backup\n")
+            live_file.write_text("live\n")
+            nested_bak.write_text("nested\n")
+
+            with patch.object(teardown, "TROUBLESHOOTING_DIR", test_root):
+                removed = teardown.cleanup_transient_fixture_files("wrong_port")
+
+            self.assertEqual(removed, [bak_file])
+            self.assertFalse(bak_file.exists())
+            self.assertTrue(live_file.exists())
+            self.assertTrue(nested_bak.exists())
 
 
 class RunnerTests(unittest.TestCase):
@@ -1464,6 +1533,9 @@ class RunnerTests(unittest.TestCase):
             def fake_cleanup():
                 events.append("cleanup")
 
+            def fake_pod_cleanup():
+                events.append("pod_cleanup")
+
             def fake_ground_truth(config):
                 events.append("ground_truth")
                 return GroundTruthResult(test_name="svc_case", passed=True)
@@ -1482,6 +1554,8 @@ class RunnerTests(unittest.TestCase):
 
             with patch("main.allStepsAtOnce", side_effect=fake_agent), patch(
                 "teardown.cleanup_transient_k8s_resources", side_effect=fake_cleanup
+            ), patch(
+                "teardown.cleanup_test_pods", side_effect=fake_pod_cleanup
             ), patch("debug_assistant_latest.executor.get_config_path", return_value=Path("dummy.json")), patch(
                 "debug_assistant_latest.executor.load_config_with_overrides", return_value=config
             ), patch("debug_assistant_latest.executor.save_effective_config"), patch(
@@ -1499,7 +1573,7 @@ class RunnerTests(unittest.TestCase):
 
             self.assertTrue(result.success)
             self.assertTrue(result.ground_truth_passed)
-            self.assertEqual(events, ["cleanup", "agent", "cleanup", "ground_truth"])
+            self.assertEqual(events, ["cleanup", "agent", "cleanup", "ground_truth", "pod_cleanup"])
 
     def test_apply_repeat_overrides_forces_serial_backup_and_teardown(self):
         args = argparse.Namespace(

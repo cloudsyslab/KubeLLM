@@ -1,4 +1,5 @@
 import os
+import re
 import shutil
 import subprocess
 from pathlib import Path
@@ -176,6 +177,21 @@ TRANSIENT_K8S_RESOURCES = [
     ("service", "curlcheck"),
 ]
 
+TRANSIENT_K8S_POD_NAME_PATTERNS = [
+    re.compile(pattern)
+    for pattern in [
+        r"^curl-test[0-9]*$",
+        r"^curl-check[0-9]*$",
+        r"^curlcheck[0-9]*$",
+        r"^curl-verify[0-9]*$",
+        r"^test-curl[0-9]*$",
+        r"^svc-test[0-9]*$",
+        r"^net-test[0-9]*$",
+    ]
+]
+
+TRANSIENT_FIXTURE_GLOBS = ["*.bak"]
+
 
 def list_teardown_tests():
     return list(TEARDOWN_CONFIG.keys())
@@ -264,6 +280,48 @@ def cleanup_transient_k8s_resources(namespace: str = "default") -> None:
             ["kubectl", "delete", kind, name, "-n", namespace, "--ignore-not-found=true"],
             check=False,
         )
+
+    result = subprocess.run(
+        ["kubectl", "get", "pods", "-n", namespace, "-o", "name"],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if not result or result.returncode != 0:
+        return
+
+    for line in result.stdout.splitlines():
+        pod_name = line.removeprefix("pod/").strip()
+        if not pod_name:
+            continue
+        if any(pattern.match(pod_name) for pattern in TRANSIENT_K8S_POD_NAME_PATTERNS):
+            subprocess.run(
+                ["kubectl", "delete", "pod", pod_name, "-n", namespace, "--ignore-not-found=true"],
+                check=False,
+            )
+
+
+def cleanup_test_pods(namespace: str = "default") -> None:
+    """Remove all pods after a test has completed verification."""
+    subprocess.run(
+        ["kubectl", "delete", "pods", "--all", "-n", namespace, "--ignore-not-found=true"],
+        check=False,
+    )
+
+
+def cleanup_transient_fixture_files(test_env_name: str) -> list[Path]:
+    """Remove allowlisted transient files from a single fixture directory."""
+    test_dir = _get_test_dir(test_env_name)
+    if not test_dir.exists():
+        return []
+
+    removed = []
+    for pattern in TRANSIENT_FIXTURE_GLOBS:
+        for path in sorted(test_dir.glob(pattern)):
+            if path.is_file():
+                path.unlink()
+                removed.append(path)
+    return removed
 
 
 def teardown_environment(test_env_name: str) -> None:
