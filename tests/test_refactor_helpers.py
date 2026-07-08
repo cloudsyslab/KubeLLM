@@ -456,6 +456,32 @@ class PromptHelperTests(unittest.TestCase):
         self.assertIn("if a Service exists", agent.prompt)
         self.assertIn("kubectl exec", agent.prompt)
 
+    def test_api_prompt_includes_global_durable_fix_guidance_without_ground_truth_leakage(self):
+        config = {
+            "api-agent": {},
+            "knowledge-prompt": {
+                "problem-desc": "pod cannot be reached",
+                "system-prompt": "Give specific commands.",
+            },
+            "test-directory": str(DEBUG_DIR / "troubleshooting" / "wrong_port"),
+            "relevant-files": {
+                "deployment": [],
+                "application": [],
+                "service": [],
+                "dockerfile": False,
+            },
+        }
+        agent = AgentAPI("api-agent", config)
+
+        agent.preparePrompt()
+
+        self.assertIn("Prefer durable fixes", agent.prompt)
+        self.assertIn("running container", agent.prompt)
+        self.assertIn("source-of-truth configuration", agent.prompt)
+        self.assertIn("Do not skip a visible source/config mismatch", agent.prompt)
+        self.assertNotIn("ground-truth", agent.prompt)
+        self.assertNotIn("port_aligned", agent.prompt)
+
     def test_no_service_deployment_gets_verification_guidance(self):
         guidance = prompt_helpers.get_case_specific_guidance(
             self._load_troubleshooting_config("wrong_port"), phase="verification"
