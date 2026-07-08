@@ -6,7 +6,7 @@ from rag_api import (
     initialize_assistant,
     start_new_run,
 )
-from prompt_helpers import get_tool_usage_rules
+from prompt_helpers import get_durable_fix_guidance, get_tool_usage_rules
 from utils import traverseRelevantFiles
 
 
@@ -50,6 +50,7 @@ class AgentAPI(Agent):
                 + " "
                 + self.config["knowledge-prompt"]["system-prompt"]
             )
+            self.prompt += " " + get_durable_fix_guidance()
             self.prompt += " " + get_tool_usage_rules()
 
             for relevantFileType in ["deployment", "application", "service", "dockerfile"]:

@@ -15,6 +15,13 @@ BASE_TOOL_USAGE_RULES = (
     "- Prefer one-shot application checks such as `kubectl exec <pod> -- python3 -c \"import urllib.request; print(urllib.request.urlopen('http://127.0.0.1:<port>/').getcode())\"` when Python is available in the container.\n"
 )
 
+DURABLE_FIX_GUIDANCE = (
+    "### Durable Fix Guidance\n"
+    "- Prefer durable fixes to source files, manifests, Dockerfiles, or other declared configuration over editing files inside a running container. Treat running-container edits as temporary diagnostics unless the user explicitly asks for an ephemeral repair.\n"
+    "- When visible application source and Kubernetes manifests disagree, update the source-of-truth configuration so they are consistent, then reapply or recreate the affected workload so the live cluster reflects the corrected configuration.\n"
+    "- Do not skip a visible source/config mismatch solely because a quick localhost reachability check succeeds.\n"
+)
+
 WINDOWS_RUNTIME_GUIDANCE = (
     "### Windows Runtime Rules\n"
     "- This run is on Windows. Use PowerShell-compatible commands and Windows file paths.\n"
@@ -34,6 +41,10 @@ def get_runtime_execution_guidance():
 
 def get_tool_usage_rules():
     return BASE_TOOL_USAGE_RULES + get_runtime_execution_guidance()
+
+
+def get_durable_fix_guidance():
+    return DURABLE_FIX_GUIDANCE
 
 
 TOOL_USAGE_RULES = get_tool_usage_rules()
