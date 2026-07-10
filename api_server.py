@@ -6,7 +6,7 @@ from dotenv import load_dotenv
 load_dotenv(Path(__file__).resolve().parent / ".env", override=True)
 
 from datetime import datetime, timezone
-from typing import Annotated, List, Optional
+from typing import Annotated, Any, Dict, List, Optional
 
 from fastapi import Body, FastAPI, File, Form, HTTPException, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
@@ -39,6 +39,76 @@ app.add_middleware(
 )
 
 session_state = SessionState()
+
+
+TOKEN_METRIC_KEYS = ("input_tokens", "output_tokens", "total_tokens")
+
+
+def _sum_metric_value(values: Any) -> int:
+    if values is None:
+        return 0
+    if isinstance(values, (int, float)):
+        return int(values)
+    if isinstance(values, dict):
+        return 0
+    try:
+        return sum(_sum_metric_value(value) for value in values)
+    except TypeError:
+        return 0
+
+
+def _sum_metric_values(metrics: dict, key: str) -> int:
+    return _sum_metric_value(metrics.get(key))
+
+
+def _extract_metrics_from_messages(response: Any) -> Dict[str, int]:
+    totals = {key: 0 for key in TOKEN_METRIC_KEYS}
+    for message in getattr(response, "messages", None) or []:
+        if getattr(message, "role", None) != "assistant":
+            continue
+        message_metrics = getattr(message, "metrics", None) or {}
+        if not isinstance(message_metrics, dict):
+            continue
+        for key in TOKEN_METRIC_KEYS:
+            totals[key] += _sum_metric_values(message_metrics, key)
+    return totals
+
+
+def _snapshot_model_metrics(agent: Any) -> Dict[str, int]:
+    model = getattr(agent, "model", None)
+    metrics = getattr(model, "metrics", None) or {}
+    if not isinstance(metrics, dict):
+        return {key: 0 for key in TOKEN_METRIC_KEYS}
+    return {key: _sum_metric_values(metrics, key) for key in TOKEN_METRIC_KEYS}
+
+
+def _model_metrics_delta(before: Dict[str, int], after: Dict[str, int]) -> Dict[str, int]:
+    return {
+        key: max(0, after.get(key, 0) - before.get(key, 0))
+        for key in TOKEN_METRIC_KEYS
+    }
+
+
+def _extract_response_metrics(response: Any, fallback_metrics: Optional[Dict[str, int]] = None) -> dict:
+    metrics = getattr(response, "metrics", None) or {}
+    extracted = {
+        key: _sum_metric_values(metrics, key) if isinstance(metrics, dict) else 0
+        for key in TOKEN_METRIC_KEYS
+    }
+    if extracted["total_tokens"] == 0:
+        message_metrics = _extract_metrics_from_messages(response)
+        for key in TOKEN_METRIC_KEYS:
+            extracted[key] = max(extracted[key], message_metrics[key])
+    if extracted["total_tokens"] == 0 and fallback_metrics:
+        for key in TOKEN_METRIC_KEYS:
+            extracted[key] = max(extracted[key], int(fallback_metrics.get(key, 0) or 0))
+
+    return {
+        "model": str(getattr(response, "model", None) or session_state.llm_model or ""),
+        "input_tokens": extracted["input_tokens"],
+        "output_tokens": extracted["output_tokens"],
+        "total_tokens": extracted["total_tokens"],
+    }
 
 
 @app.exception_handler(Exception)
@@ -137,9 +207,15 @@ async def ask_question(prompt: str = Form(...)):
 
     try:
         session_state.messages.append({"role": "user", "content": prompt})
+        metrics_before = _snapshot_model_metrics(session_state.rag_assistant)
         response = session_state.rag_assistant.run(prompt)
+        metrics_after = _snapshot_model_metrics(session_state.rag_assistant)
+        fallback_metrics = _model_metrics_delta(metrics_before, metrics_after)
         session_state.messages.append({"role": "assistant", "content": response.content})
-        return {"response": response.content}
+        return {
+            "response": response.content,
+            "metrics": _extract_response_metrics(response, fallback_metrics=fallback_metrics),
+        }
     except Exception as exc:
         raise HTTPException(status_code=500, detail=f"Could not answer question: {exc}") from exc
 

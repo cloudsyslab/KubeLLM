@@ -200,13 +200,22 @@ class LegacyMainReturnShapeTests(unittest.TestCase):
     def test_all_steps_at_once_returns_dict_shape(self):
         class FakeAPI:
             def __init__(self, agent_type, config):
-                self.response = {"answer": "fix it"}
+                self.agentProperties = config["api-agent"]
+                self.response = "fix it"
 
             def setupAgent(self):
                 return None
 
             def askQuestion(self):
-                return None
+                return {
+                    "test_case": "wrong_port",
+                    "model": "gpt-4o",
+                    "agent_type": "api",
+                    "input_tokens": 2,
+                    "output_tokens": 1,
+                    "total_tokens": 3,
+                    "task_status": 1,
+                }
 
         class FakeDebug:
             def __init__(self, agent_type, config):
@@ -257,28 +266,40 @@ class LegacyMainReturnShapeTests(unittest.TestCase):
             legacy_main, "setUpEnvironment"
         ), patch.object(legacy_main, "printFinishMessage"), patch.object(
             legacy_main, "store_metrics_entry"
-        ), patch.object(legacy_main, "AgentAPI", FakeAPI), patch.object(
+        ) as store_mock, patch.object(legacy_main, "AgentAPI", FakeAPI), patch.object(
             legacy_main, "AgentDebug", FakeDebug
         ), patch.object(
             legacy_main, "AgentVerification_v2", FakeVerification
         ):
             result = legacy_main.allStepsAtOnce("ignored.json")
 
-        self.assertEqual(set(result.keys()), {"status", "debug_metrics", "verification_metrics"})
+        stored_agent_types = [call.args[1]["agent_type"] for call in store_mock.call_args_list]
+        self.assertEqual(set(result.keys()), {"status", "api_metrics", "debug_metrics", "verification_metrics"})
         self.assertTrue(result["status"])
+        self.assertIsInstance(result["api_metrics"], dict)
         self.assertIsInstance(result["debug_metrics"], dict)
         self.assertIsInstance(result["verification_metrics"], dict)
+        self.assertIn("api", stored_agent_types)
 
     def test_all_steps_at_once_short_circuit_debug_still_runs_verification(self):
         class FakeAPI:
             def __init__(self, agent_type, config):
-                self.response = {"answer": "fix it"}
+                self.agentProperties = config["api-agent"]
+                self.response = "fix it"
 
             def setupAgent(self):
                 return None
 
             def askQuestion(self):
-                return None
+                return {
+                    "test_case": "wrong_port",
+                    "model": "gpt-4o",
+                    "agent_type": "api",
+                    "input_tokens": 0,
+                    "output_tokens": 0,
+                    "total_tokens": 0,
+                    "task_status": 1,
+                }
 
         class FakeDebug:
             def __init__(self, agent_type, config):
@@ -346,13 +367,22 @@ class LegacyMainReturnShapeTests(unittest.TestCase):
     def test_step_by_step_returns_dict_shape(self):
         class FakeAPI:
             def __init__(self, agent_type, config):
-                self.response = {"answer": "fix it"}
+                self.agentProperties = config["api-agent"]
+                self.response = "fix it"
 
             def setupAgent(self):
                 return None
 
             def askQuestion(self):
-                return None
+                return {
+                    "test_case": "wrong_port",
+                    "model": "gpt-4o",
+                    "agent_type": "api",
+                    "input_tokens": 2,
+                    "output_tokens": 1,
+                    "total_tokens": 3,
+                    "task_status": 1,
+                }
 
         class FakeDebug:
             def __init__(self, agent_type, config):
@@ -406,17 +436,20 @@ class LegacyMainReturnShapeTests(unittest.TestCase):
             legacy_main, "setUpEnvironment"
         ), patch.object(legacy_main, "printFinishMessage"), patch.object(
             legacy_main, "store_metrics_entry"
-        ), patch.object(legacy_main, "AgentAPI", FakeAPI), patch.object(
+        ) as store_mock, patch.object(legacy_main, "AgentAPI", FakeAPI), patch.object(
             legacy_main, "AgentDebugStepByStep", FakeDebug
         ), patch.object(legacy_main, "AgentVerification_v2", FakeVerification):
             result = legacy_main.stepByStep("ignored.json")
 
-        self.assertEqual(set(result.keys()), {"status", "debug_metrics", "verification_metrics"})
+        stored_agent_types = [call.args[1]["agent_type"] for call in store_mock.call_args_list]
+        self.assertEqual(set(result.keys()), {"status", "api_metrics", "debug_metrics", "verification_metrics"})
         self.assertTrue(result["status"])
+        self.assertEqual(result["api_metrics"]["total_tokens"], 3)
         self.assertIsNotNone(result["verification_metrics"])
         self.assertEqual(result["debug_metrics"]["total_tokens"], 5)
         self.assertEqual(result["verification_metrics"]["total_tokens"], 2)
         self.assertEqual(len(FakeVerification.instances), 1)
+        self.assertIn("api", stored_agent_types)
 
     def test_single_agent_returns_dict_shape(self):
         class FakeSingleAgent:

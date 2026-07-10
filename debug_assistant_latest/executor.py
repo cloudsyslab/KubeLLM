@@ -167,8 +167,12 @@ def _extract_execution_result(
     if isinstance(result, dict):
         success = result.get("status") is True
         metrics: Dict[str, Any] = {}
+        api_metrics = result.get("api_metrics")
         debug_metrics = result.get("debug_metrics")
         verification_metrics = result.get("verification_metrics")
+
+        if isinstance(api_metrics, dict):
+            metrics["api"] = api_metrics
 
         debug_self_report = None
         if isinstance(debug_metrics, dict):
