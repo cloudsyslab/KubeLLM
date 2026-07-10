@@ -169,9 +169,11 @@ class AggregateReport:
     total_duration_s: float = 0.0
     wall_clock_s: float = 0.0
     total_cost: float = 0.0
+    total_api_cost: float = 0.0
     total_debug_cost: float = 0.0
     total_verification_cost: float = 0.0
     total_tokens: int = 0
+    total_api_tokens: int = 0
     tests: List[Dict] = field(default_factory=list)
     failed_tests: List[str] = field(default_factory=list)
     error_tests: List[str] = field(default_factory=list)
@@ -217,15 +219,20 @@ def generate_aggregate_report(
     total_duration = sum(s.duration_s for s in summaries)
 
     total_cost = 0.0
+    api_cost = 0.0
     debug_cost = 0.0
     verification_cost = 0.0
     total_tokens = 0
+    api_tokens = 0
 
     for s in summaries:
         for agent_name, m in normalize_metrics_map(s.metrics).items():
             total_cost += m.cost
             total_tokens += m.total_tokens
-            if "debug" in agent_name:
+            if agent_name == "api" or "api" in agent_name:
+                api_cost += m.cost
+                api_tokens += m.total_tokens
+            elif "debug" in agent_name:
                 debug_cost += m.cost
             elif "verification" in agent_name:
                 verification_cost += m.cost
@@ -265,9 +272,11 @@ def generate_aggregate_report(
         total_duration_s=round(total_duration, 2),
         wall_clock_s=round(wall_clock_s, 2),
         total_cost=round(total_cost, 4),
+        total_api_cost=round(api_cost, 4),
         total_debug_cost=round(debug_cost, 4),
         total_verification_cost=round(verification_cost, 4),
         total_tokens=total_tokens,
+        total_api_tokens=api_tokens,
         tests=tests,
         failed_tests=failed_tests,
         error_tests=error_tests,
@@ -346,7 +355,11 @@ def print_console_summary(report: AggregateReport, output_dir: Path) -> None:
     print(f"Duration: {report.total_duration_s}s (wall: {report.wall_clock_s}s)")
 
     if report.total_cost > 0:
-        print(f"Cost: ${report.total_cost:.4f} (debug: ${report.total_debug_cost:.4f}, verification: ${report.total_verification_cost:.4f})")
+        print(
+            f"Cost: ${report.total_cost:.4f} "
+            f"(api: ${report.total_api_cost:.4f}, debug: ${report.total_debug_cost:.4f}, "
+            f"verification: ${report.total_verification_cost:.4f})"
+        )
 
     if report.failed_tests:
         print()

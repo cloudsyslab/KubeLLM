@@ -22,6 +22,14 @@ DURABLE_FIX_GUIDANCE = (
     "- Do not skip a visible source/config mismatch solely because a quick localhost reachability check succeeds.\n"
 )
 
+MINIKUBE_IMAGE_GUIDANCE = (
+    "### Minikube Image Guidance\n"
+    "- For minikube-backed clusters, if rebuilding an application image is necessary, recommend building or loading the image into the active minikube profile rather than pushing to a remote registry.\n"
+    "- Prefer `PROFILE=${MINIKUBE_PROFILE:-$(kubectl config current-context)}` followed by `minikube -p \"$PROFILE\" image build -t <image>:<tag> -f <Dockerfile> <context>`.\n"
+    "- Do not recommend `docker push` or switching a Deployment to a new unpublished image tag unless registry credentials and pull access are explicitly available.\n"
+    "- Prefer manifest-only fixes when the application source and image contents do not need to change.\n"
+)
+
 WINDOWS_RUNTIME_GUIDANCE = (
     "### Windows Runtime Rules\n"
     "- This run is on Windows. Use PowerShell-compatible commands and Windows file paths.\n"
@@ -45,6 +53,10 @@ def get_tool_usage_rules():
 
 def get_durable_fix_guidance():
     return DURABLE_FIX_GUIDANCE
+
+
+def get_minikube_image_guidance():
+    return MINIKUBE_IMAGE_GUIDANCE
 
 
 TOOL_USAGE_RULES = get_tool_usage_rules()

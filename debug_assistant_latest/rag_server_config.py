@@ -9,7 +9,7 @@ SCRIPT_DIR = Path(__file__).resolve().parent
 REPO_ROOT = SCRIPT_DIR.parent
 load_dotenv(REPO_ROOT / ".env", override=True)
 
-RAG_API_VERSION = "2026-03-24"
+RAG_API_VERSION = "2026-07-10"
 RAG_API_URL_ENV = "RAG_API_URL"
 RAG_SERVER_HOST_ENV = "RAG_SERVER_HOST"
 RAG_SERVER_PORT_ENV = "RAG_SERVER_PORT"
@@ -22,6 +22,7 @@ SERVER_SIGNATURE_FILES = (
     REPO_ROOT / "assistant.py",
     REPO_ROOT / "api_server_support.py",
     REPO_ROOT / "runtime_config.py",
+    Path(__file__).resolve(),
 )
 
 
@@ -74,12 +75,17 @@ def compute_repo_signature(files: Optional[Iterable[Path]] = None) -> str:
     return digest.hexdigest()
 
 
+SERVER_REPO_SIGNATURE = compute_repo_signature()
+
+
 def build_server_info(*, module_path: Optional[Path] = None, server_started_at: Optional[str] = None) -> dict:
     resolved_module_path = module_path.resolve() if module_path else None
     return {
         "service": "kubellm-rag-api",
         "api_version": RAG_API_VERSION,
-        "repo_signature": compute_repo_signature(),
+        # Report the code loaded by this process, not the files currently on disk.
+        # This lets clients reject a server that was started before a code change.
+        "repo_signature": SERVER_REPO_SIGNATURE,
         "server_bind_host": get_server_bind_host(),
         "server_port": get_server_port(),
         "default_client_url": get_default_client_base_url(),

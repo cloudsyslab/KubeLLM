@@ -6,7 +6,7 @@ from rag_api import (
     initialize_assistant,
     start_new_run,
 )
-from prompt_helpers import get_durable_fix_guidance, get_tool_usage_rules
+from prompt_helpers import get_durable_fix_guidance, get_minikube_image_guidance, get_tool_usage_rules
 from utils import traverseRelevantFiles
 
 
@@ -51,6 +51,7 @@ class AgentAPI(Agent):
                 + self.config["knowledge-prompt"]["system-prompt"]
             )
             self.prompt += " " + get_durable_fix_guidance()
+            self.prompt += " " + get_minikube_image_guidance()
             self.prompt += " " + get_tool_usage_rules()
 
             for relevantFileType in ["deployment", "application", "service", "dockerfile"]:
@@ -62,6 +63,22 @@ class AgentAPI(Agent):
     def askQuestion(self):
         """Ask the formatted prepared question to the knowledge agent."""
         try:
-            self.response = ask_question(self.prompt)
+            payload = ask_question(self.prompt)
+            if isinstance(payload, dict):
+                self.response = payload.get("response", "")
+                raw_metrics = payload.get("metrics") or {}
+            else:
+                self.response = payload
+                raw_metrics = {}
+
+            return {
+                "test_case": self.config["test-name"],
+                "model": raw_metrics.get("model") or self.agentProperties.get("model", ""),
+                "agent_type": "api",
+                "input_tokens": int(raw_metrics.get("input_tokens") or 0),
+                "output_tokens": int(raw_metrics.get("output_tokens") or 0),
+                "total_tokens": int(raw_metrics.get("total_tokens") or 0),
+                "task_status": 1,
+            }
         except Exception as e:
             raise RuntimeError(f"Error asking question to knowledge agent: {e}") from e
