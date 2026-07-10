@@ -482,6 +482,31 @@ class PromptHelperTests(unittest.TestCase):
         self.assertNotIn("ground-truth", agent.prompt)
         self.assertNotIn("port_aligned", agent.prompt)
 
+    def test_api_prompt_includes_profile_generic_minikube_image_guidance(self):
+        config = {
+            "api-agent": {},
+            "knowledge-prompt": {
+                "problem-desc": "pod cannot be reached",
+                "system-prompt": "Give specific commands.",
+            },
+            "test-directory": str(DEBUG_DIR / "troubleshooting" / "wrong_port"),
+            "relevant-files": {
+                "deployment": [],
+                "application": [],
+                "service": [],
+                "dockerfile": False,
+            },
+        }
+        agent = AgentAPI("api-agent", config)
+
+        agent.preparePrompt()
+
+        self.assertIn("Minikube Image Guidance", agent.prompt)
+        self.assertIn("MINIKUBE_PROFILE", agent.prompt)
+        self.assertIn('minikube -p "$PROFILE" image build', agent.prompt)
+        self.assertIn("Do not recommend `docker push`", agent.prompt)
+        self.assertNotIn("plama", agent.prompt)
+
     def test_no_service_deployment_gets_verification_guidance(self):
         guidance = prompt_helpers.get_case_specific_guidance(
             self._load_troubleshooting_config("wrong_port"), phase="verification"
@@ -531,6 +556,65 @@ class PromptHelperTests(unittest.TestCase):
         self.assertIn("Only if a Service manifest exists", prompt)
         self.assertIn("Absence of a Service is not a failure", prompt)
         self.assertIn("old ReplicaSet pods in Terminating state are acceptable", prompt)
+
+
+class AgentAPIMetricsTests(unittest.TestCase):
+    def test_ask_question_returns_api_metrics_and_preserves_response_text(self):
+        config = {
+            "test-name": "wrong_port",
+            "api-agent": {"model": "gpt-4o"},
+        }
+        agent = AgentAPI("api-agent", config)
+        agent.prompt = "diagnose"
+
+        with patch(
+            "debug_assistant_latest.api_agents.ask_question",
+            return_value={
+                "response": "fix the manifest",
+                "metrics": {
+                    "model": "gpt-4o-mini",
+                    "input_tokens": 12,
+                    "output_tokens": 7,
+                    "total_tokens": 19,
+                },
+            },
+        ):
+            metrics = agent.askQuestion()
+
+        self.assertEqual(agent.response, "fix the manifest")
+        self.assertEqual(
+            metrics,
+            {
+                "test_case": "wrong_port",
+                "model": "gpt-4o-mini",
+                "agent_type": "api",
+                "input_tokens": 12,
+                "output_tokens": 7,
+                "total_tokens": 19,
+                "task_status": 1,
+            },
+        )
+
+    def test_ask_question_defaults_missing_usage_to_zero(self):
+        config = {
+            "test-name": "wrong_port",
+            "api-agent": {"model": "gpt-4o"},
+        }
+        agent = AgentAPI("api-agent", config)
+        agent.prompt = "diagnose"
+
+        with patch(
+            "debug_assistant_latest.api_agents.ask_question",
+            return_value={"response": "fix the manifest"},
+        ):
+            metrics = agent.askQuestion()
+
+        self.assertEqual(agent.response, "fix the manifest")
+        self.assertEqual(metrics["model"], "gpt-4o")
+        self.assertEqual(metrics["input_tokens"], 0)
+        self.assertEqual(metrics["output_tokens"], 0)
+        self.assertEqual(metrics["total_tokens"], 0)
+        self.assertEqual(metrics["agent_type"], "api")
 
 
 class BetterShellTests(unittest.TestCase):
@@ -1100,12 +1184,13 @@ class MainMetricsLineageTests(unittest.TestCase):
         def run_obs(_rt, phase, action):
             if phase == "api":
                 action()
-                return {}
+                return {"model": "m-api", "input_tokens": 1, "output_tokens": 2, "total_tokens": 3}
             if phase == "debug":
                 return {"input_tokens": 0, "output_tokens": 0, "total_tokens": 0}
             raise AssertionError(phase)
 
         mock_api = MagicMock()
+        mock_api.agentProperties = {"model": "m-api"}
         with patch.object(main_mod, "store_metrics_entry", side_effect=capture), patch.object(
             main_mod, "_load_runtime_config", return_value=config
         ), patch.object(main_mod, "setUpEnvironment"), patch.object(
@@ -1119,10 +1204,12 @@ class MainMetricsLineageTests(unittest.TestCase):
             dbg_cls.return_value = dbg
             main_mod.allStepsAtOnce(configFile="dummy.json", runtime_context=rc)
 
-        self.assertEqual(len(captured), 1)
-        m0 = captured[0][0]
-        self.assertEqual(m0.get("run_uuid"), "uu-1")
-        self.assertEqual(m0.get("run_id"), "rid-1")
+        self.assertEqual(len(captured), 2)
+        by_agent = {metrics["agent_type"]: metrics for metrics, _ in captured}
+        self.assertEqual(by_agent["api"].get("run_uuid"), "uu-1")
+        self.assertEqual(by_agent["api"].get("run_id"), "rid-1")
+        self.assertEqual(by_agent["debug"].get("run_uuid"), "uu-1")
+        self.assertEqual(by_agent["debug"].get("run_id"), "rid-1")
 
 
 class VerificationTemperatureLintTests(unittest.TestCase):
@@ -1145,6 +1232,7 @@ class ExecutionResultExtractionTests(unittest.TestCase):
     def test_extract_execution_verification_unknown_yields_verified_none(self):
         payload = {
             "status": None,
+            "api_metrics": {"task_status": 1, "total_tokens": 5},
             "debug_metrics": {"task_status": 1},
             "verification_metrics": {"task_status": 0, "total_tokens": 10},
         }
@@ -1152,6 +1240,7 @@ class ExecutionResultExtractionTests(unittest.TestCase):
         self.assertFalse(success)
         self.assertIsNone(verified)
         self.assertTrue(debug_self_report)
+        self.assertIn("api", metrics)
         self.assertIn("verification", metrics)
 
     def test_extract_execution_verification_true_false_preserved(self):
@@ -1195,7 +1284,10 @@ class ReportTests(unittest.TestCase):
                 verified=True,
                 ground_truth_passed=True,
                 duration_s=10,
-                metrics={"debug_agent": AgentMetrics(total_tokens=100, cost=1.25)},
+                metrics={
+                    "api": AgentMetrics(total_tokens=25, cost=0.25),
+                    "debug_agent": AgentMetrics(total_tokens=100, cost=1.25),
+                },
             ),
             TestSummary(
                 test_name="wrong_interface",
@@ -1216,8 +1308,10 @@ class ReportTests(unittest.TestCase):
         self.assertEqual(aggregate.failed, 1)
         self.assertEqual(aggregate.ground_truth_passed, 1)
         self.assertEqual(aggregate.tests_with_ground_truth, 2)
-        self.assertEqual(aggregate.total_tokens, 150)
-        self.assertEqual(aggregate.total_cost, 2.0)
+        self.assertEqual(aggregate.total_tokens, 175)
+        self.assertEqual(aggregate.total_api_tokens, 25)
+        self.assertEqual(aggregate.total_cost, 2.25)
+        self.assertEqual(aggregate.total_api_cost, 0.25)
         self.assertEqual(aggregate.ground_truth_failed_tests, ["wrong_interface"])
 
     def test_generate_aggregate_report_counts_configured_gt_even_if_not_run(self):
@@ -1256,6 +1350,17 @@ class ReportTests(unittest.TestCase):
                 status="PASS",
                 verified=True,
                 metrics={
+                    "api": {
+                        "test_case": "wrong_port",
+                        "model": "gpt-4o",
+                        "agent_type": "api",
+                        "input_tokens": 10,
+                        "output_tokens": 15,
+                        "total_tokens": 25,
+                        "task_status": True,
+                        "duration_s": 2.0,
+                        "cost": 0.25,
+                    },
                     "debug_agent": {
                         "test_case": "wrong_port",
                         "model": "gpt-4o",
@@ -1292,8 +1397,10 @@ class ReportTests(unittest.TestCase):
 
         aggregate = generate_aggregate_report(summaries, run_config={}, run_id="run-dict")
 
-        self.assertEqual(aggregate.total_tokens, 150)
-        self.assertEqual(aggregate.total_cost, 2.0)
+        self.assertEqual(aggregate.total_tokens, 175)
+        self.assertEqual(aggregate.total_api_tokens, 25)
+        self.assertEqual(aggregate.total_cost, 2.25)
+        self.assertEqual(aggregate.total_api_cost, 0.25)
         self.assertEqual(aggregate.total_debug_cost, 1.25)
         self.assertEqual(aggregate.total_verification_cost, 0.75)
 
@@ -1912,8 +2019,14 @@ class ApiServerRouteTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         body = response.json()
         self.assertEqual(body["api_version"], rag_server_config.RAG_API_VERSION)
-        self.assertEqual(body["repo_signature"], rag_server_config.compute_repo_signature())
+        self.assertEqual(body["repo_signature"], rag_server_config.SERVER_REPO_SIGNATURE)
         self.assertTrue(body["module_path"].endswith("api_server.py"))
+
+    def test_server_info_uses_startup_signature(self):
+        with patch.object(rag_server_config, "SERVER_REPO_SIGNATURE", "signature-at-startup"):
+            info = rag_server_config.build_server_info(module_path=REPO_ROOT / "api_server.py")
+
+        self.assertEqual(info["repo_signature"], "signature-at-startup")
 
     def test_ask_route_returns_structured_json_error(self):
         client = TestClient(api_server.app)
@@ -1923,6 +2036,119 @@ class ApiServerRouteTests(unittest.TestCase):
 
         self.assertEqual(response.status_code, 500)
         self.assertEqual(response.json()["detail"], "Could not answer question: boom")
+
+    def test_ask_route_returns_response_metrics(self):
+        api_server.session_state.rag_assistant = types.SimpleNamespace(
+            run=MagicMock(
+                return_value=types.SimpleNamespace(
+                    content="answer",
+                    model="gpt-4o",
+                    metrics={
+                        "input_tokens": [10, 2],
+                        "output_tokens": [3],
+                        "total_tokens": [15],
+                    },
+                )
+            )
+        )
+        api_server.session_state.llm_model = "gpt-4o"
+
+        response = asyncio.run(api_server.ask_question(prompt="hello"))
+        self.assertEqual(
+            response,
+            {
+                "response": "answer",
+                "metrics": {
+                    "model": "gpt-4o",
+                    "input_tokens": 12,
+                    "output_tokens": 3,
+                    "total_tokens": 15,
+                },
+            },
+        )
+
+    def test_ask_route_falls_back_to_message_metrics(self):
+        api_server.session_state.rag_assistant = types.SimpleNamespace(
+            run=MagicMock(
+                return_value=types.SimpleNamespace(
+                    content="answer",
+                    model="gpt-4o",
+                    metrics={},
+                    messages=[
+                        types.SimpleNamespace(role="user", metrics={"input_tokens": 999}),
+                        types.SimpleNamespace(
+                            role="assistant",
+                            metrics={
+                                "input_tokens": 20,
+                                "output_tokens": 4,
+                                "total_tokens": 24,
+                            },
+                        ),
+                    ],
+                )
+            )
+        )
+        api_server.session_state.llm_model = "gpt-4o"
+
+        response = asyncio.run(api_server.ask_question(prompt="hello"))
+
+        self.assertEqual(
+            response["metrics"],
+            {
+                "model": "gpt-4o",
+                "input_tokens": 20,
+                "output_tokens": 4,
+                "total_tokens": 24,
+            },
+        )
+
+    def test_ask_route_falls_back_to_model_metrics_delta(self):
+        model = types.SimpleNamespace(
+            metrics={
+                "input_tokens": 100,
+                "output_tokens": 10,
+                "total_tokens": 110,
+            }
+        )
+
+        def run(_prompt):
+            model.metrics["input_tokens"] = 130
+            model.metrics["output_tokens"] = 17
+            model.metrics["total_tokens"] = 147
+            return types.SimpleNamespace(content="answer", model="gpt-4o", metrics={})
+
+        api_server.session_state.rag_assistant = types.SimpleNamespace(model=model, run=MagicMock(side_effect=run))
+        api_server.session_state.llm_model = "gpt-4o"
+
+        response = asyncio.run(api_server.ask_question(prompt="hello"))
+
+        self.assertEqual(
+            response["metrics"],
+            {
+                "model": "gpt-4o",
+                "input_tokens": 30,
+                "output_tokens": 7,
+                "total_tokens": 37,
+            },
+        )
+
+    def test_ask_route_defaults_missing_usage_to_zero(self):
+        api_server.session_state.rag_assistant = types.SimpleNamespace(
+            run=MagicMock(return_value=types.SimpleNamespace(content="answer", model="gpt-4o"))
+        )
+        api_server.session_state.llm_model = "gpt-4o"
+
+        response = asyncio.run(api_server.ask_question(prompt="hello"))
+
+        self.assertEqual(
+            response["metrics"],
+            {
+                "model": "gpt-4o",
+                "input_tokens": 0,
+                "output_tokens": 0,
+                "total_tokens": 0,
+            },
+        )
 
     def test_clear_knowledge_base_is_idempotent_when_table_missing(self):
         client = TestClient(api_server.app)

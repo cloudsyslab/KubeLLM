@@ -123,6 +123,30 @@ def _finalize_metrics(metrics: dict, duration_s: float) -> dict:
     return metrics
 
 
+def _run_api_phase(
+    config: dict,
+    runtime_context: Optional[Dict[str, Any]],
+    api_agent,
+) -> dict:
+    api_start_time = time.perf_counter()
+    api_metrics = _run_observed_phase(runtime_context, "api", api_agent.askQuestion)
+    api_end_time = time.perf_counter()
+    api_metrics = _normalize_metrics(
+        config,
+        api_metrics,
+        "api",
+        model=api_agent.agentProperties.get("model") if api_agent.agentProperties else None,
+        task_status=1,
+    )
+    _finalize_metrics(api_metrics, api_end_time - api_start_time)
+    store_metrics_entry(
+        db_path,
+        _metrics_with_lineage(api_metrics, runtime_context),
+        api_metrics.get("task_status"),
+    )
+    return api_metrics
+
+
 def _write_progress(runtime_context: Optional[Dict[str, Any]], event: str, **fields: Any) -> None:
     if not runtime_context:
         return
@@ -250,7 +274,7 @@ def allStepsAtOnce(
     debugAgent.setupAgent()
 
     #Run the LLMs as needed
-    _run_observed_phase(runtime_context, "api", apiAgent.askQuestion)
+    api_metrics = _run_api_phase(config, runtime_context, apiAgent)
     debugAgent.agentAPIResponse = apiAgent.response
     debug_start_time = time.perf_counter()
     debug_metrics = _run_observed_phase(runtime_context, "debug", debugAgent.askQuestion)
@@ -274,6 +298,7 @@ def allStepsAtOnce(
         printFinishMessage()
         return {
             "status": False,
+            "api_metrics": api_metrics,
             "debug_metrics": debug_metrics,
             "verification_metrics": None,
         }
@@ -287,6 +312,7 @@ def allStepsAtOnce(
 
     return {
         "status": verification_status,
+        "api_metrics": api_metrics,
         "debug_metrics": debug_metrics,
         "verification_metrics": verification_metrics,
     }
@@ -327,7 +353,7 @@ def stepByStep(
     debugAgent.setupAgent()
 
     #Run the LLMs as needed
-    _run_observed_phase(runtime_context, "api", apiAgent.askQuestion)
+    api_metrics = _run_api_phase(config, runtime_context, apiAgent)
     debugAgent.agentAPIResponse = apiAgent.response
     debugAgent.formProblemSolvingSteps()
     debug_start_time = time.perf_counter()
@@ -351,6 +377,7 @@ def stepByStep(
         printFinishMessage()
         return {
             "status": False,
+            "api_metrics": api_metrics,
             "debug_metrics": debug_metrics,
             "verification_metrics": None,
         }
@@ -364,6 +391,7 @@ def stepByStep(
 
     return {
         "status": verification_status,
+        "api_metrics": api_metrics,
         "debug_metrics": debug_metrics,
         "verification_metrics": verification_metrics,
     }
@@ -474,4 +502,3 @@ if __name__ == "__main__":
 
 
     
-
