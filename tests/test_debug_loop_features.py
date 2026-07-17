@@ -507,10 +507,9 @@ class LegacyMainReturnShapeTests(unittest.TestCase):
 
         self.assertEqual(set(result.keys()), {"status", "debug_metrics", "verification_metrics"})
         self.assertTrue(result["status"])
-        self.assertIsNotNone(result["verification_metrics"])
+        self.assertIsNone(result["verification_metrics"])
         self.assertEqual(result["debug_metrics"]["total_tokens"], 11)
-        self.assertEqual(result["verification_metrics"]["total_tokens"], 3)
-        self.assertEqual(len(FakeVerification.instances), 1)
+        self.assertEqual(len(FakeVerification.instances), 0)
 
 
 class PreflightTests(unittest.TestCase):

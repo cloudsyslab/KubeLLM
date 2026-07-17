@@ -441,28 +441,20 @@ def singleAgentApproach(
     )
     _finalize_metrics(debug_metrics, debug_end_time - debug_start_time)
 
-    if getattr(agent, "_last_timeout", False):
-        store_metrics_entry(
-            db_path,
-            _metrics_with_lineage(debug_metrics, runtime_context),
-            debug_metrics.get("task_status"),
-        )
-        printFinishMessage()
-        return {
-            "status": False,
-            "debug_metrics": debug_metrics,
-            "verification_metrics": None,
-        }
-
-    verification_out = _run_verification_phase_after_debug(config, runtime_context, agent, debug_metrics)
-    assert verification_out is not None
-    verification_metrics, verification_status = verification_out
+    # singleAgent experiments deliberately contain only the combined remediation
+    # agent. Deterministic ground-truth checks still run in the executor.
+    timed_out = getattr(agent, "_last_timeout", False)
+    store_metrics_entry(
+        db_path,
+        _metrics_with_lineage(debug_metrics, runtime_context),
+        debug_metrics.get("task_status"),
+    )
     printFinishMessage()
 
     return {
-        "status": verification_status,
+        "status": False if timed_out else agent.debugStatus,
         "debug_metrics": debug_metrics,
-        "verification_metrics": verification_metrics,
+        "verification_metrics": None,
     }
 
 

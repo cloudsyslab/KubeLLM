@@ -16,6 +16,8 @@ from prompt_helpers import (
     classify_status_from_response,
     extract_metrics,
     get_case_specific_guidance,
+    get_durable_fix_guidance,
+    get_minikube_image_guidance,
 )
 from timeout_helpers import timeout, withTimeout
 
@@ -305,6 +307,11 @@ class SingleAgent(Agent):
             self.prompt += "Do not use commands that would open an editor like 'kubectl edit'"
             self.prompt += "You will run the commands as Instructed! Please feel free to change it if necessary and if it makes sense to! You will solve the issue and run the commands!"
             self.prompt += "DO NOT BY ANY MEANS USE kubectl edit"
+            # Keep operational guardrails aligned with the default knowledge/debug flow
+            # so technique comparisons do not depend on different safety guidance.
+            self.prompt += "\n" + TOOL_USAGE_RULES
+            self.prompt += "\n" + get_durable_fix_guidance()
+            self.prompt += "\n" + get_minikube_image_guidance()
             self.prompt += get_case_specific_guidance(self.config)
         except Exception as e:
             raise RuntimeError(f"Error creating debug agent prompt: {e}") from e
