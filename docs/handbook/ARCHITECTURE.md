@@ -140,7 +140,9 @@ The knowledge-agent response feeds one of three strategies in `main.py`:
 
 - `allStepsAtOnce`: `AgentDebug` receives the full knowledge-agent answer and executes actions with shell and file tools.
 - `stepByStep`: `AgentDebugStepByStep` extracts fenced bash blocks from the knowledge response and executes them one step at a time.
-- `singleAgent`: `SingleAgent` skips the RAG HTTP hop and builds a single phidata agent with an embedded website knowledge base.
+- `singleAgent`: `SingleAgent` skips the RAG HTTP hop and builds a single phidata agent with an embedded website knowledge base. It receives the same shared tool-use, durable-fix, and Minikube image guardrails as the default knowledge/debug flow so results can be compared fairly.
+
+`singleAgent` deliberately skips LLM verification so its experiment contains one remediation agent; configured deterministic ground-truth checks still run in the executor.
 
 All of these rely on `BetterShellTools` so the agent can issue shell commands and modify files. The debug agents classify their own outcome using explicit response tokens such as `<|SOLVED|>`, `<|FAILED|>`, and `<|ERROR|>`.
 

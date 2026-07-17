@@ -2422,6 +2422,34 @@ class RagApiTests(unittest.TestCase):
 
 
 class SingleAgentTests(unittest.TestCase):
+    def test_prepare_prompt_includes_shared_operational_guardrails(self):
+        from debug_assistant_latest.debug_agents import SingleAgent
+
+        config = {
+            "debug-agent": {"instructions": [], "guidelines": []},
+            "debug-prompt": {"additional-directions": "Reapply changed manifests."},
+            "test-directory": str(DEBUG_DIR / "troubleshooting" / "wrong_port"),
+            "yaml-file-name": "wrong_port.yaml",
+            "relevant-files": {
+                "deployment": [],
+                "application": [],
+                "service": [],
+                "dockerfile": False,
+            },
+            "ground-truth": {"checks": [{"name": "port_aligned"}]},
+        }
+
+        agent = SingleAgent("single-agent", config)
+        agent.prompt = "The pod cannot be reached. "
+        agent.preparePrompt()
+
+        self.assertIn("Do not use `kubectl port-forward`", agent.prompt)
+        self.assertIn("Prefer durable fixes", agent.prompt)
+        self.assertIn("Minikube Image Guidance", agent.prompt)
+        self.assertIn("Reapply changed manifests.", agent.prompt)
+        self.assertNotIn("ground-truth", agent.prompt)
+        self.assertNotIn("port_aligned", agent.prompt)
+
     def test_prepare_agent_uses_configured_model_and_embedder_settings(self):
         from debug_assistant_latest.debug_agents import SingleAgent
 
