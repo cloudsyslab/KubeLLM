@@ -311,9 +311,7 @@ def run_single_test_in_process(
     technique: str,
     overrides: dict,
     output_dir: Path,
-    backup_before_run: bool = False,
     teardown_after_run: bool = False,
-    forced_backup_warning: bool = False,
     run_uuid: str = "",
     run_id: str = "",
     environment_context: Optional[Dict[str, Any]] = None,
@@ -328,11 +326,6 @@ def run_single_test_in_process(
 
     stdout_log = log_dir / "stdout.log"
     stderr_log = log_dir / "stderr.log"
-
-    # Log forced backup warning to per-test stderr.log
-    if forced_backup_warning:
-        with open(stderr_log, "a", encoding="utf-8") as f:
-            f.write("[WARNING] --teardown-after-run requires backup; auto-enabling --backup-before-run\n")
 
     started_at = datetime.now().isoformat()
     start_time = time.perf_counter()
@@ -351,9 +344,7 @@ def run_single_test_in_process(
         from main import allStepsAtOnce, singleAgentApproach, stepByStep
         from config_merge import load_config_with_overrides, save_effective_config
         from teardown import (
-            backup_environment,
             cleanup_test_pods,
-            cleanup_transient_fixture_files,
             cleanup_transient_k8s_resources,
             teardown_environment,
         )
@@ -364,20 +355,10 @@ def run_single_test_in_process(
 
         cleanup_transient_k8s_resources()
 
-        # Opt-in backup before run (fail fast if backup fails)
-        if backup_before_run:
-            try:
-                backup_environment(test_name)
-            except Exception as backup_err:
-                error = f"Backup failed: {backup_err}"
-                with open(stderr_log, "a", encoding="utf-8") as f:
-                    f.write(f"BACKUP FAILED:\n{traceback.format_exc()}")
-                raise  # Abort test - don't proceed without backup
-
         # Save effective config for audit trail
         save_effective_config(config, log_dir / "config_effective.json")
 
-        # Mark test as started (backup succeeded, about to run test)
+        # Mark test as started (about to run test)
         test_started = True
 
         from provenance import build_environment_context
@@ -473,19 +454,6 @@ def run_single_test_in_process(
                 f.write(f"\n\n[WARNING] Post-test pod cleanup failed for {test_name}: {pod_cleanup_err}\n")
                 f.write(traceback.format_exc())
 
-    if test_started:
-        try:
-            removed_fixture_files = cleanup_transient_fixture_files(test_name)
-            if removed_fixture_files:
-                with open(stderr_log, "a", encoding="utf-8") as f:
-                    f.write("\n\n[CLEANUP] Removed transient fixture files:\n")
-                    for path in removed_fixture_files:
-                        f.write(f"  {path}\n")
-        except Exception as cleanup_err:
-            with open(stderr_log, "a", encoding="utf-8") as f:
-                f.write(f"\n\n[WARNING] Transient fixture cleanup failed for {test_name}: {cleanup_err}\n")
-                f.write(traceback.format_exc())
-
     duration = time.perf_counter() - start_time
     finished_at = datetime.now().isoformat()
 
@@ -512,9 +480,7 @@ def run_single_test(
     overrides: dict,
     output_dir: Path,
     verbose: bool = True,
-    backup_before_run: bool = False,
     teardown_after_run: bool = False,
-    forced_backup_warning: bool = False,
     runtime_context: Optional[Dict[str, Any]] = None,
 ) -> TestResult:
     """
@@ -527,11 +493,6 @@ def run_single_test(
 
     stdout_log = log_dir / "stdout.log"
     stderr_log = log_dir / "stderr.log"
-
-    # Log forced backup warning to per-test stderr.log
-    if forced_backup_warning:
-        with open(stderr_log, "a", encoding="utf-8") as f:
-            f.write("[WARNING] --teardown-after-run requires backup; auto-enabling --backup-before-run\n")
 
     started_at = datetime.now().isoformat()
     start_time = time.perf_counter()
@@ -564,9 +525,7 @@ def run_single_test(
     try:
         from main import allStepsAtOnce, singleAgentApproach, stepByStep
         from teardown import (
-            backup_environment,
             cleanup_test_pods,
-            cleanup_transient_fixture_files,
             cleanup_transient_k8s_resources,
             teardown_environment,
         )
@@ -577,20 +536,6 @@ def run_single_test(
 
         cleanup_transient_k8s_resources()
 
-        # Opt-in backup before run (fail fast if backup fails)
-        if backup_before_run:
-            if verbose:
-                print(f"[BACKUP] Creating backup for {test_name}")
-            try:
-                backup_environment(test_name)
-            except Exception as backup_err:
-                error = f"Backup failed: {backup_err}"
-                if verbose:
-                    print(f"[ERROR] Backup failed for {test_name}: {backup_err}")
-                with open(stderr_log, "a", encoding="utf-8") as f:
-                    f.write(f"BACKUP FAILED:\n{traceback.format_exc()}")
-                raise  # Abort test - don't proceed without backup
-
         # Save effective config for audit trail
         save_effective_config(config, log_dir / "config_effective.json")
         if progress_writer:
@@ -600,7 +545,7 @@ def run_single_test(
                 path=str(log_dir / "config_effective.json"),
             )
 
-        # Mark test as started (backup succeeded, about to run test)
+        # Mark test as started (about to run test)
         test_started = True
 
         # For single test, we tee output to both console and file
@@ -736,24 +681,6 @@ def run_single_test(
                 f.write(f"\n\n{warning_msg}\n")
                 f.write(traceback.format_exc())
 
-    if test_started:
-        try:
-            removed_fixture_files = cleanup_transient_fixture_files(test_name)
-            if removed_fixture_files:
-                if verbose:
-                    print(f"[CLEANUP] Removed {len(removed_fixture_files)} transient fixture file(s)")
-                with open(stderr_log, "a", encoding="utf-8") as f:
-                    f.write("\n\n[CLEANUP] Removed transient fixture files:\n")
-                    for path in removed_fixture_files:
-                        f.write(f"  {path}\n")
-        except Exception as cleanup_err:
-            warning_msg = f"[WARNING] Transient fixture cleanup failed for {test_name}: {cleanup_err}"
-            if verbose:
-                print(warning_msg, file=sys.stderr)
-            with open(stderr_log, "a", encoding="utf-8") as f:
-                f.write(f"\n\n{warning_msg}\n")
-                f.write(traceback.format_exc())
-
     duration = time.perf_counter() - start_time
     finished_at = datetime.now().isoformat()
 
@@ -824,15 +751,7 @@ def cmd_run_single(args, test_name: str):
 
     overrides = build_overrides_from_args(args)
     technique = args.technique
-    backup_before_run = args.backup_before_run
     teardown_after_run = args.teardown_after_run
-    forced_backup_warning = False
-
-    # Enforce backup when teardown is enabled (prevent file loss)
-    if teardown_after_run and not backup_before_run:
-        backup_before_run = True
-        forced_backup_warning = True
-        print("[WARNING] --teardown-after-run requires backup; auto-enabling --backup-before-run")
 
     # Save run config
     run_config = {
@@ -842,7 +761,6 @@ def cmd_run_single(args, test_name: str):
         "jobs": 1,
         "run_id": run_id,
         "run_uuid": run_uuid,
-        "backup_before_run": backup_before_run,
         "teardown_after_run": teardown_after_run,
         "rag_api_url": rag_api_url,
     }
@@ -900,9 +818,7 @@ def cmd_run_single(args, test_name: str):
                 overrides,
                 output_dir,
                 verbose=True,
-                backup_before_run=backup_before_run,
                 teardown_after_run=teardown_after_run,
-                forced_backup_warning=forced_backup_warning,
                 runtime_context={
                     "progress_writer": progress_writer,
                     "blocked_threshold": 3,
@@ -991,15 +907,7 @@ def cmd_run_many(args):
     overrides = build_overrides_from_args(args)
     technique = args.technique
     jobs = args.jobs
-    backup_before_run = args.backup_before_run
     teardown_after_run = args.teardown_after_run
-    forced_backup_warning = False
-
-    # Enforce backup when teardown is enabled (prevent file loss)
-    if teardown_after_run and not backup_before_run:
-        backup_before_run = True
-        forced_backup_warning = True
-        print("[WARNING] --teardown-after-run requires backup; auto-enabling --backup-before-run")
 
     # Save run config
     run_config = {
@@ -1010,7 +918,6 @@ def cmd_run_many(args):
         "jobs": jobs,
         "run_id": run_id,
         "run_uuid": run_uuid,
-        "backup_before_run": backup_before_run,
         "teardown_after_run": teardown_after_run,
         "rag_api_url": rag_api_url,
     }
@@ -1036,9 +943,7 @@ def cmd_run_many(args):
         overrides,
         output_dir,
         jobs,
-        backup_before_run=backup_before_run,
         teardown_after_run=teardown_after_run,
-        forced_backup_warning=forced_backup_warning,
         run_uuid=run_uuid,
         run_id=run_id,
         environment_context=env_ctx,

@@ -45,6 +45,7 @@ from debug_assistant_latest.cli import (
     _build_repeat_payload,
     _run_repeat_queue,
     _verification_temperature_issues,
+    main as cli_main,
 )
 from debug_assistant_latest.executor import (
     TestResult,
@@ -57,6 +58,7 @@ from debug_assistant_latest.executor import (
 )
 from debug_assistant_latest import executor
 from debug_assistant_latest import teardown
+from debug_assistant_latest.test_discovery import list_test_cases
 import assistant
 import api_server
 from api_server_support import SessionState, knowledge_table_name
@@ -1446,63 +1448,85 @@ class ReportTests(unittest.TestCase):
 
 
 class TeardownTests(unittest.TestCase):
-    def test_backup_environment_creates_expected_backup_file(self):
+    def test_all_runnable_fixture_baselines_match_working_fixtures(self):
+        for test_name in list_test_cases():
+            fixture_dir = teardown.TROUBLESHOOTING_DIR / test_name
+            baseline_dir = teardown.FIXTURE_BASELINES_DIR / test_name
+            self.assertTrue(baseline_dir.is_dir(), test_name)
+            fixture_files = sorted(
+                path.relative_to(fixture_dir)
+                for path in fixture_dir.rglob("*")
+                if path.is_file() and "__pycache__" not in path.parts
+            )
+            baseline_files = sorted(
+                path.relative_to(baseline_dir)
+                for path in baseline_dir.rglob("*")
+                if path.is_file() and "__pycache__" not in path.parts
+            )
+            self.assertEqual(baseline_files, fixture_files, test_name)
+            for relative_path in fixture_files:
+                self.assertEqual(
+                    (baseline_dir / relative_path).read_bytes(),
+                    (fixture_dir / relative_path).read_bytes(),
+                    f"{test_name}/{relative_path}",
+                )
+
+    def test_restore_fixture_baseline_replaces_modified_and_new_paths(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             test_root = Path(tmpdir)
             case_dir = test_root / "wrong_port"
+            baseline_root = Path(tmpdir) / "baselines"
+            baseline_dir = baseline_root / "wrong_port"
+            baseline_dir.mkdir(parents=True)
+            (baseline_dir / "config_step.json").write_text('{"baseline": true}\n')
+            (baseline_dir / "nested").mkdir()
+            (baseline_dir / "nested" / "server.py").write_text("baseline\n")
             case_dir.mkdir()
-            (case_dir / "wrong_port.yaml").write_text("kind: Deployment\n")
+            (case_dir / "config_step.json").write_text("modified\n")
+            (case_dir / "created.txt").write_text("created\n")
+            (case_dir / "created_dir").mkdir()
+            (case_dir / "created_dir" / "child.txt").write_text("created\n")
 
-            with patch.object(teardown, "TROUBLESHOOTING_DIR", test_root), patch.dict(
-                teardown.TEARDOWN_CONFIG,
-                {"wrong_port": {"docker_images": [], "restore_files": ["yaml"], "k8s_manifests": []}},
-                clear=False,
-            ):
-                teardown.backup_environment("wrong_port")
-
-            self.assertTrue((case_dir / "backup_yaml.yaml").exists())
-
-    def test_backup_environment_aborts_when_fixture_tree_is_dirty(self):
-        with tempfile.TemporaryDirectory() as tmpdir:
-            test_root = Path(tmpdir)
-            case_dir = test_root / "wrong_port"
-            case_dir.mkdir()
-            (case_dir / "wrong_port.yaml").write_text("kind: Deployment\n")
-
-            dirty_paths = [
-                "M debug_assistant_latest/troubleshooting/wrong_port/wrong_port.yaml"
-            ]
             with patch.object(teardown, "TROUBLESHOOTING_DIR", test_root), patch.object(
-                teardown, "_fixture_tree_dirty_paths", return_value=dirty_paths
+                teardown, "FIXTURE_BASELINES_DIR", baseline_root
             ), patch.dict(
                 teardown.TEARDOWN_CONFIG,
-                {"wrong_port": {"docker_images": [], "restore_files": ["yaml"], "k8s_manifests": []}},
+                {"wrong_port": {"docker_images": [], "k8s_manifests": []}},
                 clear=False,
             ):
-                with self.assertRaisesRegex(RuntimeError, "Fixture tree is not clean"):
-                    teardown.backup_environment("wrong_port")
+                teardown.restore_fixture_baseline("wrong_port")
 
-            self.assertFalse((case_dir / "backup_yaml.yaml").exists())
+            self.assertEqual((case_dir / "config_step.json").read_text(), '{"baseline": true}\n')
+            self.assertEqual((case_dir / "nested" / "server.py").read_text(), "baseline\n")
+            self.assertFalse((case_dir / "created.txt").exists())
+            self.assertFalse((case_dir / "created_dir").exists())
 
-    def test_fixture_tree_dirty_paths_ignores_untracked_files(self):
+    def test_restore_fixture_baseline_requires_baseline(self):
         with tempfile.TemporaryDirectory() as tmpdir:
-            repo_root = Path(tmpdir)
-            test_root = repo_root / "debug_assistant_latest" / "troubleshooting"
-            test_root.mkdir(parents=True)
-            subprocess.run(["git", "init"], cwd=repo_root, check=True, capture_output=True)
-            (test_root / "new_case").mkdir()
-            (test_root / "new_case" / "config_step.json").write_text("{}\n")
+            test_root = Path(tmpdir)
+            case_dir = test_root / "wrong_port"
+            case_dir.mkdir()
 
-            with patch.object(teardown, "TROUBLESHOOTING_DIR", test_root):
-                self.assertEqual(teardown._fixture_tree_dirty_paths(), [])
+            with patch.object(teardown, "TROUBLESHOOTING_DIR", test_root), patch.object(
+                teardown, "FIXTURE_BASELINES_DIR", Path(tmpdir) / "missing"
+            ), patch.dict(
+                teardown.TEARDOWN_CONFIG,
+                {"wrong_port": {"docker_images": [], "k8s_manifests": []}},
+                clear=False,
+            ):
+                with self.assertRaisesRegex(FileNotFoundError, "Fixture baseline not found"):
+                    teardown.restore_fixture_baseline("wrong_port")
 
-    def test_teardown_environment_restores_backup_and_deletes_manifest(self):
+    def test_teardown_environment_restores_baseline_and_deletes_manifest(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             test_root = Path(tmpdir)
             case_dir = test_root / "wrong_port"
             case_dir.mkdir()
             (case_dir / "wrong_port.yaml").write_text("broken\n")
-            (case_dir / "backup_yaml.yaml").write_text("restored\n")
+            baseline_root = Path(tmpdir) / "baselines"
+            baseline_dir = baseline_root / "wrong_port"
+            baseline_dir.mkdir(parents=True)
+            (baseline_dir / "wrong_port.yaml").write_text("restored\n")
 
             recorded_calls = []
 
@@ -1510,11 +1534,13 @@ class TeardownTests(unittest.TestCase):
                 recorded_calls.append((args, kwargs))
                 return None
 
-            with patch.object(teardown, "TROUBLESHOOTING_DIR", test_root), patch(
+            with patch.object(teardown, "TROUBLESHOOTING_DIR", test_root), patch.object(
+                teardown, "FIXTURE_BASELINES_DIR", baseline_root
+            ), patch(
                 "debug_assistant_latest.teardown.subprocess.run", side_effect=fake_run
             ), patch.dict(
                 teardown.TEARDOWN_CONFIG,
-                {"wrong_port": {"docker_images": [], "restore_files": ["yaml"], "k8s_manifests": ["{name}.yaml"]}},
+                {"wrong_port": {"docker_images": [], "k8s_manifests": ["{name}.yaml"]}},
                 clear=False,
             ):
                 teardown.teardown_environment("wrong_port")
@@ -1605,30 +1631,14 @@ class TeardownTests(unittest.TestCase):
             [["kubectl", "delete", "pods", "--all", "-n", "default", "--ignore-not-found=true"]],
         )
 
-    def test_cleanup_transient_fixture_files_removes_case_bak_files(self):
-        with tempfile.TemporaryDirectory() as tmpdir:
-            test_root = Path(tmpdir)
-            case_dir = test_root / "wrong_port"
-            case_dir.mkdir()
-            bak_file = case_dir / "wrong_port.yaml.bak"
-            live_file = case_dir / "wrong_port.yaml"
-            nested_dir = case_dir / "nested"
-            nested_dir.mkdir()
-            nested_bak = nested_dir / "nested.yaml.bak"
-            bak_file.write_text("backup\n")
-            live_file.write_text("live\n")
-            nested_bak.write_text("nested\n")
-
-            with patch.object(teardown, "TROUBLESHOOTING_DIR", test_root):
-                removed = teardown.cleanup_transient_fixture_files("wrong_port")
-
-            self.assertEqual(removed, [bak_file])
-            self.assertFalse(bak_file.exists())
-            self.assertTrue(live_file.exists())
-            self.assertTrue(nested_bak.exists())
-
-
 class RunnerTests(unittest.TestCase):
+    def test_removed_backup_flag_is_rejected(self):
+        with patch.object(sys, "argv", ["runner.py", "--backup-before-run"]):
+            with self.assertRaises(SystemExit) as error:
+                cli_main()
+
+        self.assertEqual(error.exception.code, 2)
+
     def test_result_to_summary_preserves_ground_truth_flag(self):
         result = TestResult(
             test_name="wrong_port",
@@ -1708,12 +1718,11 @@ class RunnerTests(unittest.TestCase):
             self.assertTrue(result.ground_truth_passed)
             self.assertEqual(events, ["cleanup", "agent", "cleanup", "ground_truth", "pod_cleanup"])
 
-    def test_apply_repeat_overrides_forces_serial_backup_and_teardown(self):
+    def test_apply_repeat_overrides_forces_serial_teardown(self):
         args = argparse.Namespace(
             repeat=3,
             jobs=4,
             teardown_after_run=False,
-            backup_before_run=False,
         )
 
         repeat_active = _apply_repeat_overrides(args)
@@ -1721,7 +1730,6 @@ class RunnerTests(unittest.TestCase):
         self.assertTrue(repeat_active)
         self.assertEqual(args.jobs, 1)
         self.assertTrue(args.teardown_after_run)
-        self.assertTrue(args.backup_before_run)
 
     def test_build_repeat_payload_serializes_paths_and_sets_test_case(self):
         args = argparse.Namespace(
@@ -1730,7 +1738,6 @@ class RunnerTests(unittest.TestCase):
             repeat=2,
             jobs=1,
             teardown_after_run=True,
-            backup_before_run=True,
         )
 
         payload = _build_repeat_payload(args, "single", 2, "run-123", Path("/tmp/runs"))
@@ -1749,7 +1756,6 @@ class RunnerTests(unittest.TestCase):
                 repeat=2,
                 jobs=1,
                 teardown_after_run=True,
-                backup_before_run=True,
                 stall_limit_s=5,
                 output_dir=tmp_base / "runs",
                 test_case="wrong_port",
@@ -1805,7 +1811,6 @@ class RunnerTests(unittest.TestCase):
                 repeat=1,
                 jobs=1,
                 teardown_after_run=True,
-                backup_before_run=True,
                 stall_limit_s=5,
                 output_dir=tmp_base / "runs",
                 test_case="wrong_port",
@@ -1873,7 +1878,6 @@ class RunnerTests(unittest.TestCase):
                 embedder=None,
                 embedder_provider=None,
                 technique="allStepsAtOnce",
-                backup_before_run=False,
                 teardown_after_run=False,
                 minikube_profile=None,
                 rag_api_url=None,
@@ -1927,7 +1931,6 @@ class RunnerTests(unittest.TestCase):
                 embedder=None,
                 embedder_provider=None,
                 technique="allStepsAtOnce",
-                backup_before_run=False,
                 teardown_after_run=False,
                 minikube_profile="test-profile",
                 rag_api_url=None,
@@ -2553,6 +2556,34 @@ class ApiServerSupportTests(unittest.TestCase):
         loaded_documents = fake_kb.load_documents.call_args.args[0]
         self.assertEqual(len(loaded_documents), 1)
         self.assertEqual(loaded_documents[0].content, "doc")
+        self.assertTrue(fake_kb.load_documents.call_args.kwargs["upsert"])
+
+    def test_load_knowledge_document_repeated_loads_use_upsert(self):
+        from phi.document import Document
+
+        fake_kb = MagicMock()
+        resolved_embedder = runtime_config.ResolvedEmbedder(
+            config=runtime_config.EmbedderConfig(model="text-embedding-3-small", provider="openai"),
+            embedder=MagicMock(),
+        )
+
+        with patch("api_server_support.build_resolved_embedder", return_value=resolved_embedder), patch(
+            "api_server_support.scrape_url_to_document",
+            return_value=Document(content="doc", meta_data={"source": "https://example.com"}),
+        ), patch("phi.agent.AgentKnowledge", return_value=fake_kb), patch(
+            "phi.vectordb.pgvector.PgVector", return_value="vector_db"
+        ):
+            for _ in range(2):
+                api_server_support.load_knowledge_document(
+                    "https://example.com",
+                    "local_rag_documents_text-embedding-3-small",
+                    "text-embedding-3-small",
+                    "postgresql://example",
+                    embeddings_provider="openai",
+                )
+
+        self.assertEqual(fake_kb.load_documents.call_count, 2)
+        self.assertTrue(all(call.kwargs["upsert"] for call in fake_kb.load_documents.call_args_list))
 
     def test_load_knowledge_document_surfaces_provider_preflight_error(self):
         with patch(

@@ -1,4 +1,3 @@
-import os
 import re
 import shutil
 import subprocess
@@ -6,6 +5,7 @@ from pathlib import Path
 
 SCRIPT_DIR = Path(__file__).resolve().parent
 TROUBLESHOOTING_DIR = SCRIPT_DIR / "troubleshooting"
+FIXTURE_BASELINES_DIR = SCRIPT_DIR / "fixture_baselines"
 
 if not TROUBLESHOOTING_DIR.exists():
     raise FileNotFoundError(
@@ -17,152 +17,122 @@ if not TROUBLESHOOTING_DIR.exists():
 TEARDOWN_CONFIG = {
     "correct_app": {
         "docker_images": [],
-        "restore_files": [],
         "k8s_manifests": ["correct_app.yaml", "app_service.yaml"],
     },
     "no_pod_ip": {
         "docker_images": [],
-        "restore_files": [],
         "k8s_manifests": ["correct_app.yaml", "app_service.yaml"],
     },
     "wrong_interface": {
         "docker_images": ["kube-wrong-interface-app"],
-        "restore_files": ["yaml", "server.py", "Dockerfile", "app_service.yaml"],
         "k8s_manifests": ["{name}.yaml", "app_service.yaml"],
     },
     "wrong_interface_bind_address": {
         "docker_images": ["kube-wrong-interface-bind-address-app"],
-        "restore_files": ["yaml", "server.py", "Dockerfile", "app_service.yaml"],
         "k8s_manifests": ["{name}.yaml", "app_service.yaml"],
     },
     "wrong_interface_env_host": {
         "docker_images": ["kube-wrong-interface-env-host-app"],
-        "restore_files": ["yaml", "server.py", "Dockerfile", "app_service.yaml"],
         "k8s_manifests": ["{name}.yaml", "app_service.yaml"],
     },
     "wrong_interface_container_args": {
         "docker_images": ["kube-wrong-interface-container-args-app"],
-        "restore_files": ["yaml", "server.py", "Dockerfile", "app_service.yaml"],
         "k8s_manifests": ["{name}.yaml", "app_service.yaml"],
     },
     "wrong_port": {
         "docker_images": ["kube-wrong-port-app", "marioutsa/kube-wrong-port-app"],
-        "restore_files": ["yaml", "server.py", "Dockerfile"],
         "k8s_manifests": ["{name}.yaml"],
     },
     "wrong_port_9090": {
         "docker_images": ["kube-wrong-port-9090-app"],
-        "restore_files": ["yaml", "server.py", "Dockerfile"],
         "k8s_manifests": ["{name}.yaml"],
     },
     "wrong_port_5000": {
         "docker_images": ["kube-wrong-port-5000-app"],
-        "restore_files": ["yaml", "server.py", "Dockerfile"],
         "k8s_manifests": ["{name}.yaml"],
     },
     "wrong_port_7001": {
         "docker_images": ["kube-wrong-port-7001-app"],
-        "restore_files": ["yaml", "server.py", "Dockerfile"],
         "k8s_manifests": ["{name}.yaml"],
     },
     "readiness_failure": {
         "docker_images": [],
-        "restore_files": ["yaml"],
         "k8s_manifests": ["{name}.yaml"],
     },
     "liveness_probe": {
         "docker_images": [],
-        "restore_files": ["yaml", "server.py", "Dockerfile"],
         "k8s_manifests": ["{name}.yaml"],
     },
     "missing_dependency": {
         "docker_images": [],
-        "restore_files": ["yaml", "server.py", "Dockerfile"],
         "k8s_manifests": ["{name}.yaml"],
     },
     "port_mismatch": {
         "docker_images": ["kube-port-mismatch-app"],
-        "restore_files": ["yaml", "server.py", "Dockerfile", "app_service.yaml"],
         "k8s_manifests": ["{name}.yaml", "app_service.yaml"],
     },
     "incorrect_selector": {
         "docker_images": ["kube-incorrect-selector-app"],
-        "restore_files": ["yaml", "server.py", "Dockerfile", "app_service.yaml"],
         "k8s_manifests": ["{name}.yaml", "app_service.yaml"],
     },
     "environment_variable": {
         "docker_images": ["kube-env-missing-app"],
-        "restore_files": ["yaml", "server.py", "Dockerfile"],
         "k8s_manifests": ["{name}.yaml"],
     },
     "environment_variable_wrong_name": {
         "docker_images": ["kube-env-wrong-name-app"],
-        "restore_files": ["yaml", "server.py", "Dockerfile"],
         "k8s_manifests": ["{name}.yaml"],
     },
     "port_mismatch_wrong_interface": {
         "docker_images": ["kube-port-mismatch-wrong-interface-app"],
-        "restore_files": ["yaml", "server.py", "Dockerfile", "app_service.yaml"],
         "k8s_manifests": ["{name}.yaml", "app_service.yaml"],
     },
     "readiness_missing_dependency": {
         "docker_images": ["kube-readiness-missing-dependency-app"],
-        "restore_files": ["yaml", "server.py", "Dockerfile"],
         "k8s_manifests": ["{name}.yaml"],
     },
     "readiness_missing_dependency_transitive": {
         "docker_images": ["kube-readiness-transitive-dependency-app"],
-        "restore_files": ["yaml", "server.py", "Dockerfile", "helper_config.py"],
         "k8s_manifests": ["{name}.yaml"],
     },
     "selector_env_variable": {
         "docker_images": ["kube-selector-env-app"],
-        "restore_files": ["yaml", "server.py", "Dockerfile", "app_service.yaml"],
         "k8s_manifests": ["{name}.yaml", "app_service.yaml"],
     },
     "selector_env_variable_label_and_secret": {
         "docker_images": ["kube-selector-env-secret-app"],
-        "restore_files": ["yaml", "server.py", "Dockerfile", "app_service.yaml"],
         "k8s_manifests": ["{name}.yaml", "app_service.yaml"],
     },
     "resource_limits_oom": {
         "docker_images": ["kube-resource-limits-oom-app"],
-        "restore_files": ["yaml", "server.py", "Dockerfile"],
         "k8s_manifests": ["{name}.yaml"],
     },
     "resource_limits_cpu_starvation": {
         "docker_images": ["kube-resource-limits-cpu-starvation-app"],
-        "restore_files": ["yaml", "server.py", "Dockerfile"],
         "k8s_manifests": ["{name}.yaml"],
     },
     "volume_mount": {
         "docker_images": ["marioutsa/kube-volume-mount-app"],
-        "restore_files": ["yaml", "server.py", "Dockerfile"],
         "k8s_manifests": ["{name}.yaml"],
     },
     "incorrect_selector_missing_label": {
         "docker_images": ["kube-selector-missing-label-app"],
-        "restore_files": ["yaml", "server.py", "Dockerfile", "app_service.yaml"],
         "k8s_manifests": ["{name}.yaml", "app_service.yaml"],
     },
     "liveness_probe_wrong_path": {
         "docker_images": ["kube-liveness-wrong-path-app"],
-        "restore_files": ["yaml", "server.py", "Dockerfile"],
         "k8s_manifests": ["{name}.yaml"],
     },
     "missing_dependency_requirements": {
         "docker_images": ["kube-missing-dependency-requirements-app"],
-        "restore_files": ["yaml", "server.py", "Dockerfile", "requirements.txt"],
         "k8s_manifests": ["{name}.yaml"],
     },
     "port_mismatch_named_target": {
         "docker_images": ["kube-port-mismatch-named-target-app"],
-        "restore_files": ["yaml", "server.py", "Dockerfile", "app_service.yaml"],
         "k8s_manifests": ["{name}.yaml", "app_service.yaml"],
     },
     "readiness_failure_slow_start": {
         "docker_images": ["kube-readiness-slow-start-app"],
-        "restore_files": ["yaml", "server.py", "Dockerfile"],
         "k8s_manifests": ["{name}.yaml"],
     },
 }
@@ -190,9 +160,6 @@ TRANSIENT_K8S_POD_NAME_PATTERNS = [
     ]
 ]
 
-TRANSIENT_FIXTURE_GLOBS = ["*.bak"]
-
-
 def list_teardown_tests():
     return list(TEARDOWN_CONFIG.keys())
 
@@ -201,76 +168,19 @@ def _get_test_dir(test_env_name: str) -> Path:
     return TROUBLESHOOTING_DIR / test_env_name
 
 
-def _resolve_restore_paths(test_dir: Path, test_env_name: str, file_type: str):
-    if file_type == "yaml":
-        return test_dir / f"{test_env_name}.yaml", test_dir / "backup_yaml.yaml"
-    if file_type == "app_service.yaml":
-        return test_dir / "app_service.yaml", test_dir / "backup_app_service.yaml"
-    if file_type == "server.py":
-        return test_dir / "server.py", test_dir / "backup_server.py"
-    if file_type == "Dockerfile":
-        return test_dir / "Dockerfile", test_dir / "backup_Dockerfile"
-    return test_dir / file_type, test_dir / f"backup_{file_type.replace('.', '_')}"
+def restore_fixture_baseline(test_env_name: str) -> None:
+    """Replace one working fixture with its committed, immutable baseline."""
+    if test_env_name not in TEARDOWN_CONFIG:
+        raise ValueError(f"Unknown test case: {test_env_name}")
 
-
-def _fixture_tree_dirty_paths() -> list[str]:
-    repo_root = TROUBLESHOOTING_DIR.parent.parent
-    try:
-        fixture_path = TROUBLESHOOTING_DIR.relative_to(repo_root)
-    except ValueError:
-        fixture_path = TROUBLESHOOTING_DIR
-
-    try:
-        result = subprocess.run(
-            [
-                "git",
-                "status",
-                "--porcelain",
-                "--untracked-files=no",
-                "--",
-                str(fixture_path),
-            ],
-            cwd=repo_root,
-            capture_output=True,
-            text=True,
-            check=False,
-        )
-    except (FileNotFoundError, OSError):
-        return []
-
-    if result.returncode != 0:
-        # Non-git test roots should not make teardown helpers unusable.
-        return []
-
-    return [line.strip() for line in result.stdout.splitlines() if line.strip()]
-
-
-def assert_fixture_tree_clean() -> None:
-    dirty_paths = _fixture_tree_dirty_paths()
-    if not dirty_paths:
-        return
-
-    sample = "\n".join(f"  {path}" for path in dirty_paths[:20])
-    extra = "" if len(dirty_paths) <= 20 else f"\n  ... and {len(dirty_paths) - 20} more"
-    raise RuntimeError(
-        "Fixture tree is not clean; aborting before backup to avoid preserving corrupted files.\n"
-        "Clean or inspect these changes first:\n"
-        f"{sample}{extra}"
-    )
-
-
-def backup_environment(test_env_name: str) -> None:
-    config = TEARDOWN_CONFIG.get(test_env_name)
-    if not config:
-        return
-
-    assert_fixture_tree_clean()
+    baseline_dir = FIXTURE_BASELINES_DIR / test_env_name
+    if not baseline_dir.is_dir():
+        raise FileNotFoundError(f"Fixture baseline not found for {test_env_name}: {baseline_dir}")
 
     test_dir = _get_test_dir(test_env_name)
-    for file_type in config["restore_files"]:
-        src, backup = _resolve_restore_paths(test_dir, test_env_name, file_type)
-        if src.exists():
-            shutil.copyfile(src, backup)
+    if test_dir.exists():
+        shutil.rmtree(test_dir)
+    shutil.copytree(baseline_dir, test_dir)
 
 
 def cleanup_transient_k8s_resources(namespace: str = "default") -> None:
@@ -309,27 +219,10 @@ def cleanup_test_pods(namespace: str = "default") -> None:
     )
 
 
-def cleanup_transient_fixture_files(test_env_name: str) -> list[Path]:
-    """Remove allowlisted transient files from a single fixture directory."""
-    test_dir = _get_test_dir(test_env_name)
-    if not test_dir.exists():
-        return []
-
-    removed = []
-    for pattern in TRANSIENT_FIXTURE_GLOBS:
-        for path in sorted(test_dir.glob(pattern)):
-            if path.is_file():
-                path.unlink()
-                removed.append(path)
-    return removed
-
-
 def teardown_environment(test_env_name: str) -> None:
     config = TEARDOWN_CONFIG.get(test_env_name)
     if not config:
         raise ValueError(f"Unknown test case: {test_env_name}")
-
-    test_dir = _get_test_dir(test_env_name)
 
     cleanup_transient_k8s_resources()
 
@@ -346,13 +239,6 @@ def teardown_environment(test_env_name: str) -> None:
         # Remove image
         subprocess.run(["docker", "rmi", "-f", image], check=False)
 
-    for file_type in config["restore_files"]:
-        dst, backup = _resolve_restore_paths(test_dir, test_env_name, file_type)
-        if dst.exists():
-            os.remove(dst)
-        if backup.exists():
-            shutil.copyfile(backup, dst)
-
     for manifest in config["k8s_manifests"]:
         manifest_path = TROUBLESHOOTING_DIR / test_env_name / manifest.format(name=test_env_name)
         subprocess.run(
@@ -360,7 +246,12 @@ def teardown_environment(test_env_name: str) -> None:
             check=False,
         )
 
+    # Some legacy teardown entries only clean cluster resources and have no
+    # runnable fixture directory. Full restoration applies when a committed
+    # baseline exists for the case.
+    if (FIXTURE_BASELINES_DIR / test_env_name).is_dir():
+        restore_fixture_baseline(test_env_name)
 
-# Backward-compatible aliases while callers migrate.
-backupEnviornment = backup_environment
+
+# Backward-compatible alias while callers migrate.
 tearDownEnviornment = teardown_environment
