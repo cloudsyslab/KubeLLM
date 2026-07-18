@@ -158,9 +158,9 @@ Point the runner at a non-default API server:
 python3 debug_assistant_latest/runner.py wrong_port --rag-api-url http://other-host:8000
 ```
 
-Run with automatic backup and teardown:
+Run with automatic teardown and fixture restoration:
 ```bash
-python3 debug_assistant_latest/runner.py wrong_port --backup-before-run --teardown-after-run
+python3 debug_assistant_latest/runner.py wrong_port --teardown-after-run
 ```
 
 #### View Results

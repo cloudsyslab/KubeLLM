@@ -148,5 +148,11 @@ def load_knowledge_document(
             embedder=embedder,
         )
     )
-    kb.load_documents(_prepare_documents_for_embedding(scrape_url_to_document(url)))
+    # Document IDs are derived from their content.  A URL can be loaded more than
+    # once by retries or separate benchmark cases, so use pgvector upserts rather
+    # than failing on an existing ID.
+    kb.load_documents(
+        _prepare_documents_for_embedding(scrape_url_to_document(url)),
+        upsert=True,
+    )
     return active_table_name

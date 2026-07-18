@@ -18,9 +18,9 @@ Use `python3` on Unix/macOS; on Windows, `python` is fine if that is your launch
 
 4. **TEARDOWN** — Full cluster cleanup after **every** benchmark run (success or failure), the same way an operator would before the next run or before walking away.  
    - Default (runner did not tear down): `python3 debug_assistant_latest/teardownenv.py <test_name>`  
-   - If you started the run with `--backup-before-run --teardown-after-run`, the runner already ran teardown for that scenario; skip only if you are sure teardown completed (check console for `[TEARDOWN]` / errors).  
+   - If the runner completed teardown for that scenario, it restored the fixture directory from its committed baseline; skip only if you are sure teardown completed (check console for `[TEARDOWN]` / errors).
    - `python3 debug_assistant_latest/teardownenv.py all` clears every configured scenario; use only when you intend that breadth.  
-   Artifacts under `<RUN_DIR>/` stay on disk for diagnosis; teardown targets the cluster, images, and fixture restore rules in `TEARDOWN_CONFIG` (see [Operations](../handbook/operations.md)).  
+   Artifacts under `<RUN_DIR>/` stay on disk for diagnosis; teardown targets the cluster, images, and restores the complete fixture directory from its committed baseline (see [Operations](../handbook/operations.md)).
    If you still need live `kubectl` output for a failure, capture it **before** this step.
 
 5. **DIAGNOSE** — `python3 debug_assistant_latest/runner.py --diagnose-last`  
