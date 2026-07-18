@@ -21,7 +21,6 @@ for test_case in "${remaining_cases[@]}"; do
     --debug-model gpt-5-nano \
     --verification-model gpt-5-nano \
     --minikube-profile plama \
-    --backup-before-run \
     --teardown-after-run; then
     failed_cases+=("${test_case}")
     echo "=== ${test_case} failed; continuing with remaining cases ===" >&2

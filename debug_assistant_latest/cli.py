@@ -190,10 +190,6 @@ def _apply_repeat_overrides(args):
         print("[WARNING] --repeat forces --teardown-after-run")
         args.teardown_after_run = True
 
-    if not args.backup_before_run:
-        print("[WARNING] --repeat forces --backup-before-run (required by teardown)")
-        args.backup_before_run = True
-
     return True
 
 
@@ -228,7 +224,6 @@ def _repeat_iteration_worker(result_queue, payload):
         "minikube_profile": None,
         "rag_api_url": None,
         "skip_preflight": False,
-        "backup_before_run": True,
         "teardown_after_run": True,
         "jobs": 1,
         "dry_run": False,
@@ -597,19 +592,7 @@ Examples:
         help="Verbose output",
     )
 
-    # Backup/teardown hooks (on by default for benchmark integrity)
-    parser.add_argument(
-        "--backup-before-run",
-        action="store_true",
-        default=True,
-        help="Create backup of test files before running (default: on)",
-    )
-    parser.add_argument(
-        "--no-backup-before-run",
-        dest="backup_before_run",
-        action="store_false",
-        help="Disable backup of test files before running",
-    )
+    # Teardown restores fixtures from committed full-directory baselines.
     parser.add_argument(
         "--teardown-after-run",
         action="store_true",

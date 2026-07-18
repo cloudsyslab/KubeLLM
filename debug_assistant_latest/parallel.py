@@ -27,9 +27,7 @@ def _worker_wrapper(
     technique: str,
     overrides: dict,
     output_dir: Path,
-    backup_before_run: bool,
     teardown_after_run: bool,
-    forced_backup_warning: bool,
     run_uuid: str,
     run_id: str,
     environment_context: Optional[Dict[str, Any]],
@@ -46,9 +44,7 @@ def _worker_wrapper(
             technique,
             overrides,
             output_dir,
-            backup_before_run,
             teardown_after_run,
-            forced_backup_warning,
             run_uuid=run_uuid,
             run_id=run_id,
             environment_context=environment_context,
@@ -64,9 +60,7 @@ def run_tests_parallel(
     overrides: dict,
     output_dir: Path,
     max_workers: int = 1,
-    backup_before_run: bool = False,
     teardown_after_run: bool = False,
-    forced_backup_warning: bool = False,
     run_uuid: str = "",
     run_id: str = "",
     environment_context: Optional[Dict[str, Any]] = None,
@@ -85,9 +79,7 @@ def run_tests_parallel(
         overrides: Config overrides to apply
         output_dir: Base output directory for this run
         max_workers: Maximum number of parallel workers
-        backup_before_run: Create backup of test files before running
         teardown_after_run: Run teardown after test completes
-        forced_backup_warning: If True, log warning about auto-enabled backup
 
     Returns:
         List of TestResult objects
@@ -110,9 +102,7 @@ def run_tests_parallel(
                 overrides,
                 output_dir,
                 verbose=True,
-                backup_before_run=backup_before_run,
                 teardown_after_run=teardown_after_run,
-                forced_backup_warning=forced_backup_warning,
                 runtime_context=seq_runtime_context,
             )
             results.append(result)
@@ -144,9 +134,7 @@ def run_tests_parallel(
                         technique,
                         overrides,
                         output_dir,
-                        backup_before_run,
                         teardown_after_run,
-                        forced_backup_warning,
                         run_uuid,
                         run_id,
                         environment_context,
