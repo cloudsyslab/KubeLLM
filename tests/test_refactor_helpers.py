@@ -349,6 +349,15 @@ class RuntimeConfigTests(unittest.TestCase):
         self.assertEqual(runtime_config.DB_URL, runtime_config.DB_URL_PSYCOPG2)
         self.assertTrue(runtime_config.DB_URL.startswith("postgresql+psycopg2://"))
 
+    def test_resolve_db_url_uses_workspace_override(self):
+        override = "postgresql+psycopg2://ai:ai@localhost:5533/ai"
+        with patch.dict(os.environ, {runtime_config.DB_URL_ENV: override}):
+            self.assertEqual(runtime_config.resolve_db_url(), override)
+
+    def test_resolve_db_url_uses_default_for_empty_override(self):
+        with patch.dict(os.environ, {runtime_config.DB_URL_ENV: "  "}):
+            self.assertEqual(runtime_config.resolve_db_url(), runtime_config.DEFAULT_DB_URL_PSYCOPG2)
+
 
 class TimeoutHelperTests(unittest.TestCase):
     def test_timeout_unblocks_caller_on_windows(self):

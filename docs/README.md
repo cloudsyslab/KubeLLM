@@ -8,6 +8,7 @@ Progressive disclosure: start here, then open linked docs for depth. **Agents:**
 2. **[agents/agent-loop.md](agents/agent-loop.md)** — Autonomous iteration loop (preflight → run → read `summary.json` → diagnose → fix → pytest → re-run), runner flags, failure patterns, output layout. **Primary agent runbook.**
 3. **[handbook/ARCHITECTURE.md](handbook/ARCHITECTURE.md)** — System purpose, stack, component map, execution flow, file responsibilities.
 4. **[handbook/operations.md](handbook/operations.md)** — Preflight, runner usage, results, teardown, orchestrator scripts. Complements the root [README.md](../README.md).
+5. **[handbook/LAB_STATE.md](handbook/LAB_STATE.md)** — Dated local-lab state, reviewed session decisions, service ownership, verification evidence, and remaining readiness blockers.
 
 ## Reference and history
 
@@ -15,6 +16,7 @@ Progressive disclosure: start here, then open linked docs for depth. **Agents:**
 |-----|----------|---------|
 | [history/2026-03-26-agentic-loop-development-update.md](history/2026-03-26-agentic-loop-development-update.md) | Maintainers | What shipped in the agentic-loop sprint (Phases 1–5), validation notes, follow-ons |
 | [history/sprint-agentic-loop-plan.md](history/sprint-agentic-loop-plan.md) | Maintainers | Original phased plan (archived; normalized from legacy `sprint.md`) |
+| [handbook/LAB_STATE.md](handbook/LAB_STATE.md) | Operators and maintainers | Why the canonical lab uses isolated RAG/pgvector services and which readiness blockers remain |
 | [../CHANGELOG.md](../CHANGELOG.md) | Everyone | Dated release-style notes; older refactor narrative merged in |
 | [archive/Runbook.md](archive/Runbook.md) | Operators | Short pointer to [handbook/operations.md](handbook/operations.md) |
 
