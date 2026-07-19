@@ -8,10 +8,23 @@ from dotenv import load_dotenv
 
 REPO_ROOT = Path(__file__).resolve().parent
 ENV_PATH = REPO_ROOT / ".env"
+
+# Prefer repo .env over pre-existing shell/user values. This keeps provider,
+# RAG, and database configuration on the same precedence rule.
+load_dotenv(ENV_PATH, override=True)
+
 # The local environment installs psycopg2-binary via requirements.txt, so keep
 # every runtime path on the same SQLAlchemy driver instead of mixing psycopg
 # and psycopg2 URLs across modules.
-DB_URL_PSYCOPG2 = "postgresql+psycopg2://ai:ai@localhost:5532/ai"
+DB_URL_ENV = "KUBELLM_DB_URL"
+DEFAULT_DB_URL_PSYCOPG2 = "postgresql+psycopg2://ai:ai@localhost:5532/ai"
+
+
+def resolve_db_url() -> str:
+    return os.getenv(DB_URL_ENV, "").strip() or DEFAULT_DB_URL_PSYCOPG2
+
+
+DB_URL_PSYCOPG2 = resolve_db_url()
 DB_URL = DB_URL_PSYCOPG2
 
 OPENAI_PROVIDER = "openai"
@@ -41,10 +54,6 @@ OLLAMA_EMBEDDER_DIMENSIONS = {
     "nomic-embed-text": 768,
 }
 SUPPORTED_EMBEDDER_PROVIDERS = {OPENAI_PROVIDER, OLLAMA_PROVIDER}
-
-# Prefer repo .env over a pre-existing OPENAI_API_KEY from the OS/shell (Windows user env
-# often shadows .env when override=False, causing confusing quota errors after key rotation).
-load_dotenv(ENV_PATH, override=True)
 
 
 @dataclass(frozen=True)

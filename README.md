@@ -59,7 +59,8 @@ For Ollama-only configs, `OPENAI_API_KEY` is not required unless you explicitly 
 You also need:
 - Docker available on the machine running tests
 - A working Kubernetes environment (for example Minikube) when running cluster-backed tests
-- PostgreSQL/pgvector running locally on port `5532`
+- PostgreSQL/pgvector reachable through `KUBELLM_DB_URL` (default:
+  `postgresql+psycopg2://ai:ai@localhost:5532/ai`)
 - The RAG API server running and reachable by the client code
 
 Provider-specific prerequisites:
@@ -78,6 +79,12 @@ docker run -d \
   -p 5532:5432 \
   --name pgvector \
   phidata/pgvector:16
+```
+
+To use an isolated pgvector instance on another port, set its SQLAlchemy URL
+in the repo-level `.env` file:
+```bash
+KUBELLM_DB_URL=postgresql+psycopg2://ai:ai@localhost:5533/ai
 ```
 
 Start the RAG API server:
