@@ -1,0 +1,47 @@
+
+Running:
+ - run_shell_command(command=kubectl get pods -o wide)
+
+
+Running:
+ - run_shell_command(command=kubectl describe pod kube-incorrect-selector)
+
+
+Running:
+ - run_shell_command(command=kubectl get services -A)
+
+
+Running:
+ - run_shell_command(command=kubectl describe service app-service)
+
+### Verification results
+
+Evidence collected using kubectl (no live log streaming):
+
+- Pods
+  - kubectl get pods
+    - kube-incorrect-selector   1/1     Running   0          76s   10.244.2.60   minikube
+- Pod details
+  - kubectl describe pod kube-incorrect-selector
+    - Status: Running
+    - Container kube-incorrect-selector: Ready: True, Port: 8765/TCP
+    - Labels: app=kube-incorrect-selector
+    - Events: Normal Scheduled, Pulled, Created, Started (no errors)
+- Services
+  - kubectl get services -A
+    - default app-service NodePort 10.97.242.72:8000 -> 31309/TCP
+- Service details
+  - kubectl describe service app-service
+    - Selector: app=incorrect-selector
+    - Endpoints:  (empty)
+
+Observations and conclusion:
+
+- The pod kube-incorrect-selector is Running and Ready (1/1).
+- The service app-service exists and is reachable at NodePort 31309 (port 8000 on the service).
+- Crucially, the service app-service selects app=incorrect-selector, but the pod is labeled app=kube-incorrect-selector. This label mismatch means the Service has no endpoints pointing to the pod.
+- Endpoints for app-service are empty, which explains why no endpoints are listed when describing the service.
+
+Therefore, the original problem is NOT fixed. The root cause is a label selector mismatch between the Service and the Pod.
+
+Verdict: <|FAILED|>

@@ -1,0 +1,70 @@
+
+Running:
+ - run_shell_command(command=kubectl get pods -A)
+
+
+Running:
+ - run_shell_command(command=kubectl describe pod kube-selector-missing-label -n default)
+
+
+Running:
+ - run_shell_command(command=kubectl get service -n default)
+
+
+Running:
+ - run_shell_command(command=kubectl describe service selector-missing-label-service -n default)
+
+- Verification steps and findings:
+
+1) kubectl get pods -A
+- Default namespace: kube-selector-missing-label is present and Running (1/1 ready)
+- Other system pods in kube-system are Running
+Evidence excerpt:
+- default  kube-selector-missing-label  1/1  Running  0  2m31s
+
+2) kubectl describe pod kube-selector-missing-label -n default
+- Status: Running
+- Labels on pod: tier=frontend
+- Container kube-selector-missing-label is Running and Ready
+- Port exposed: 8765/TCP
+Evidence excerpt:
+- Status:           Running
+- Labels:           tier=frontend
+- Containers: kube-selector-missing-label (Ready: True, Port: 8765/TCP)
+
+3) kubectl get service -n default
+- selector-missing-label-service exists with ClusterIP 10.107.95.79
+- Ports: 8000/TCP
+Evidence excerpt:
+- selector-missing-label-service   ClusterIP   10.107.95.79   8000/TCP   2m37s
+
+4) kubectl describe service selector-missing-label-service -n default
+- Selector: app=kube-selector-missing-label
+- Endpoints: (empty)
+Evidence excerpt:
+- Selector:                 app=kube-selector-missing-label
+- Endpoints:                
+
+- Analysis:
+- The pod has label tier=frontend, not app=kube-selector-missing-label.
+- The service selector requires app=kube-selector-missing-label, but no pod in default namespace matches that label.
+- Endpoints remain empty, meaning there are no endpoints for the service to route to.
+- Therefore, despite the pod being Running, the service has no endpoints and is not routable to the application as configured.
+
+5) Conclusion based on verification rules:
+- The issue is NOT fixed. The service selector does not match the pod labels, resulting in no endpoints and inaccessibility through the service.
+
+Remediation suggestion (based strictly on exact manifests):
+- Option A: Update the Pod label to include app=kube-selector-missing-label (in /home/hugov/.../incorrect_selector_missing_label/incorrect_selector_missing_label.yaml), e.g. add:
+  labels:
+    tier: frontend
+    app: kube-selector-missing-label
+- Option B: Align the Service selector with the existing pod label, e.g. change the service to:
+  selector:
+    tier: frontend
+- After applying one of these changes, re-run:
+  - kubectl get service selector-missing-label-service -n default
+  - kubectl describe service selector-missing-label-service -n default
+  - kubectl get endpoints for the service (endpoints should show the pod IP 10.244.2.117 if labels match)
+
+Final result: <|FAILED|>

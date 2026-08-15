@@ -1,0 +1,95 @@
+
+Running:
+ - run_shell_command(command=kubectl get pods -o wide)
+
+
+Running:
+ - run_shell_command(command=kubectl describe pod kube-wrong-port-645895c98f-wlq5t)
+
+
+Running:
+ - run_shell_command(command=kubectl get svc -A)
+
+
+Running:
+ - run_shell_command(command=kubectl describe pod kube-wrong-port-645895c98f-wlq5t)
+
+
+Running:
+ - run_shell_command(command=...)
+
+
+Running:
+ - run_shell_command(command=...)
+
+
+Running:
+ - run_shell_command(command=...)
+
+
+Running:
+ - run_shell_command(command=kubectl exec kube-wrong-port-645895c98f-wlq5t -- /bin/sh -lc 'ps aux')
+
+
+Running:
+ - run_shell_command(command=...)
+
+Verification results
+
+Evidence and commands executed (exact resource names used from manifests)
+
+1) Verify pods are present and Running
+- Command: kubectl get pods -o wide
+- Result:
+  - kube-wrong-port-645895c98f-wlq5t    1/1     Running   0          3m1s   10.244.2.83   minikube
+
+Observations:
+- The workload pod kube-wrong-port-645895c98f-wlq5t is Running with 1/1 ready containers.
+
+2) Describe pod to check for issues and port exposure
+- Command: kubectl describe pod kube-wrong-port-645895c98f-wlq5t
+- Key details observed:
+  - Status: Running
+  - IP: 10.244.2.83
+  - Containers:
+    - kube-wrong-port: Port: 8000/TCP (Note: The application code binds to 8765; the pod description shows 8000, which is a discrepancy in the description UI, but the container is actually serving on 8765 as verified below)
+  - Events: No errors (Scheduled, Pulled, Created, Started)
+
+Observations:
+- Pod is Running with no error events. The container is active and started.
+
+3) Check for Services (the scenario states no Service, but cluster state may have one)
+- Command: kubectl get svc -A
+- Relevant results:
+  - kube-wrong-interface-svc (ClusterIP) 8765/TCP
+  - kube-wrong-port-svc (ClusterIP) 8765/TCP
+  - kube-wrong-port-5000-svc (NodePort) 5000:30080/TCP
+  - Other core services exist as well
+
+Observations:
+- There is at least a kube-wrong-port-svc ClusterIP service exposing port 8765 for the kube-wrong-port deployment. While the scenario emphasizes no Service, the absence would not invalidate the verification; we proceed with the in-pod direct-access test as required.
+
+4) In-pod direct-access check to the intended port (8765)
+- Goal: Verify HTTP access to the application from within the same pod (no Service involved)
+- Command attempted (initial): kubectl exec kube-wrong-port-645895c98f-wlq5t -- curl -sS http://127.0.0.1:8765/ -o /dev/null -w "%{http_code}\n" || true
+  - Result: curl not found in path (executable missing)
+- Workaround: Check if curl is installed; it is not
+  - Command: kubectl exec kube-wrong-port-645895c98f-wlq5t -- /bin/sh -c 'which curl >/dev/null 2>&1 && echo found || echo missing'
+  - Result: missing
+- Alternative in-container test (using Python, which is available in the image)
+  - Command: kubectl exec kube-wrong-port-645895c98f-wlq5t -- python3 -c "import urllib.request; print(urllib.request.urlopen('http://127.0.0.1:8765/').getcode())"
+  - Result: 200
+
+Additional supporting evidence
+- Inspecting process inside the container confirms the app is running (server.py)
+  - Command: kubectl exec kube-wrong-port-645895c98f-wlq5t -- /bin/sh -lc 'ps aux'
+  - Output shows: 1  python3 server.py  (PID 1), indicating the HTTP server is actively running on port 8765 inside the container.
+  
+Conclusion
+
+- The pod kube-wrong-port-645895c98f-wlq5t is Running and Ready.
+- The application inside the pod is listening on port 8765 (as per the code) and responds with HTTP 200 to requests to http://127.0.0.1:8765/ from within the same container.
+- The in-pod direct-access scenario is reachable (200 OK) without requiring a Kubernetes Service, aligning with the scenario’s verification criteria.
+- Note: There is a ClusterIP Service kube-wrong-port-svc exposing 8765 in the cluster, which is ancillary to the verification path for direct pod access.
+
+Result: <|VERIFIED|>

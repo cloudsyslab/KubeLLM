@@ -1,0 +1,70 @@
+
+Running:
+ - run_shell_command(command=kubectl get pods --all-namespaces -o wide)
+
+
+Running:
+ - run_shell_command(command=kubectl describe pod kube-wrong-interface-env-host -n default)
+
+
+Running:
+ - run_shell_command(command=kubectl get service -n default -o wide)
+
+
+Running:
+ - run_shell_command(command=minikube -p minikube service wrong-interface-env-host-service --url)
+
+
+Running:
+ - run_shell_command(command=curl -sS -o /dev/null -w "%{http_code}\n" http://192.168.94.2:31212)
+
+
+Running:
+ - run_shell_command(command=...)
+
+
+Running:
+ - run_shell_command(command=...)
+
+
+Running:
+ - run_shell_command(command=...)
+
+
+Running:
+ - run_shell_command(command=curl -sS -o /dev/null -w "%{http_code}\n" http://192.168.99.100:31212)
+
+Verification results
+
+- Pod status
+  - Pod kube-wrong-interface-env-host in namespace default is Running (1/1 Ready). IP: 10.244.2.109. Evidence: kubectl get pods output showing Running and 1/1 Ready.
+
+- Pod details (environment and binding)
+  - kubectl describe pod kube-wrong-interface-env-host -n default shows:
+    - Container APP_HOST environment value: 127.0.0.1
+    - Container port: 8765
+    - The manifest intended APP_HOST to be 0.0.0.0, but the actual pod environment is APP_HOST=127.0.0.1
+  - Evidence: describe output indicates APP_HOST: 127.0.0.1 and the server is binding to port 8765 inside the container.
+
+- Service
+  - Service wrong-interface-env-host-service exists in default with NodePort 31212 and port mapping 8000:31212/TCP, selector app=kube-wrong-interface-env-host. Evidence: kubectl get service shows the NodePort service and ports.
+
+- External access test (NodePort via minikube)
+  - minikube service wrong-interface-env-host-service --url returned http://192.168.94.2:31212
+  - curl from host to that URL:
+    - curl -sS -o /dev/null -w "%{http_code}\n" http://192.168.94.2:31212
+    - Result: Connection refused (host could not connect to 192.168.94.2:31212)
+  - Evidence: command outputs show the URL is returned, but the connection to the NodePort fails from the host.
+
+- Internal test from within the pod
+  - kubectl exec kube-wrong-interface-env-host -n default -- python3 -c "import urllib.request; print(urllib.request.urlopen('http://127.0.0.1:8765/').getcode())"
+  - Result: 200
+  - Evidence: inside-container test to 127.0.0.1:8765 returns HTTP 200, indicating the server is reachable inside the container when bound to 127.0.0.1.
+
+Assessment and conclusion
+
+- The pod is Running and the Service exists and exposes a NodePort, satisfying the basic readiness criteria.
+- However, external HTTP requests through the NodePort fail because the application is bound to 127.0.0.1 inside the container (APP_HOST=127.0.0.1) rather than 0.0.0.0. This prevents traffic from the Kubernetes network (and from outside the container) from reaching the application, even though the internal container can respond on localhost.
+- The root cause is the APP_HOST binding inside the container (127.0.0.1) despite the manifest intending 0.0.0.0, which prevents external access via Service/NodePort.
+
+Verdict: <|FAILED|>

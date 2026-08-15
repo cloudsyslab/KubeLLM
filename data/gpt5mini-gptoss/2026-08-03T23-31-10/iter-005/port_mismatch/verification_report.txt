@@ -1,0 +1,62 @@
+
+Running:
+ - run_shell_command(command=kubectl get pods)
+
+
+Running:
+ - run_shell_command(command=kubectl describe pod kube-port-mismatch)
+
+
+Running:
+ - run_shell_command(command=kubectl get service)
+
+
+Running:
+ - run_shell_command(command=kubectl describe service app-service)
+
+
+Running:
+ - run_shell_command(command=minikube -p minikube service app-service --url)
+
+
+Running:
+ - run_shell_command(command=curl -sS -I http://192.168.94.2:30551)
+
+Verification results
+
+- Pod status
+  - kubectl get pods
+    - kube-port-mismatch 1/1 Running
+- Pod detail for kube-port-mismatch
+  - kubectl describe pod kube-port-mismatch
+    - Status: Running
+    - Container kube-port-mismatch: port 8765/TCP, Ready: True
+    - Events show container started successfully
+- Service status
+  - kubectl get service
+    - app-service NodePort 8000:30551/TCP, ClusterIP 10.103.209.12
+  - kubectl describe service app-service
+    - Endpoints: 10.244.1.223:8765
+    - NodePort: 30551/TCP, Port: 8000/TCP, TargetPort: 8765
+- Service accessibility from Minikube
+  - minikube -p minikube service app-service --url
+    - http://192.168.94.2:30551
+- Reachability check
+  - curl -I http://192.168.94.2:30551
+    - HTTP/1.0 200 OK
+    - Server: SimpleHTTP/0.6 Python/3.8.10
+    - Content-Type: text/html; charset=utf-8
+    - Content-Length: 340
+
+Observations
+
+- The pod kube-port-mismatch is running with its container ready.
+- The app-service exists and correctly targets port 8765 on the pod (endpoints show 10.244.1.223:8765).
+- The service is exposed via NodePort 30551 and is reachable at http://192.168.94.2:30551.
+- The HTTP GET/HEAD response is 200 OK, confirming the application is serving requests as expected.
+
+Conclusion
+
+- The previous 502 Bad Gateway issue is not present in the current cluster state. The application is running, the service is correctly configured, and requests to the service URL receive a valid HTTP 200 response.
+
+ <|VERIFIED|>

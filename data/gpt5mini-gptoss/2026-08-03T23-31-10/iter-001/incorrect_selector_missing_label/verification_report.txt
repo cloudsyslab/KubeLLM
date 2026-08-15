@@ -1,0 +1,62 @@
+
+Running:
+ - run_shell_command(command=kubectl get pods -A)
+
+
+Running:
+ - run_shell_command(command=kubectl get services -A)
+
+
+Running:
+ - run_shell_command(command=kubectl describe pod kube-selector-missing-label -n default)
+
+
+Running:
+ - run_shell_command(command=kubectl get service selector-missing-label-service -o yaml -n default)
+
+
+Running:
+ - run_shell_command(command=minikube -p minikube service selector-missing-label-service --url)
+
+
+Running:
+ - run_shell_command(command=kubectl get endpoints -n default)
+
+
+Running:
+ - run_shell_command(command=...)
+
+Verification evidence:
+
+- kubectl get pods -A
+  - default kube-selector-missing-label is Running and Ready (1/1)
+
+- kubectl describe pod kube-selector-missing-label -n default
+  - Status: Running
+  - ContainersReady: True
+  - Events indicate the pod was scheduled, image pulled, container started successfully
+
+- kubectl get service selector-missing-label-service -n default -o yaml
+  - Service exists in default namespace
+  - Spec: selector: app: kube-selector-missing-label
+  - Ports: 8000/TCP, targetPort 8765
+  - ClusterIP: 10.111.234.173
+  - Status: loadBalancer: {} (no external balancer, as expected for ClusterIP)
+
+- minikube -p minikube service selector-missing-label-service --url
+  - Output: "* service default/selector-missing-label-service has no node port"
+  - Note: This is expected for a ClusterIP service; no URL is provided via minikube in this case
+
+- kubectl get endpoints -n default
+  - selector-missing-label-service has endpoints 10.244.0.178:8765
+
+- kubectl exec kube-selector-missing-label -n default -- python3 -c "import urllib.request; print(urllib.request.urlopen('http://127.0.0.1:8765/').getcode())"
+  - Output: 200
+
+Conclusion:
+- The pod is Running and Ready.
+- The Service selector matches the running pod, and an endpoint exists pointing to 10.244.0.178:8765.
+- An in-pod HTTP check to 127.0.0.1:8765 returned HTTP 200, confirming the application is reachable from within the pod.
+- The initial concern about “no endpoints for the application” is not observed; endpoints are present and the app responds.
+
+<|VERIFIED|>
