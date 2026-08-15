@@ -117,5 +117,5 @@ Debug-agent wall timeout was 1200s. No case exhausted that budget.
 
 - Results: `.local/test_runs/gpt5mini-museglimmer/2026-08-12T16-17-09/`
 - Packaged copy: `data/gpt5mini-museglimmer/`
-- Log: `logs/gpt5mini-museglimmer.log`
-- gpt-oss comparison: `.local/test_runs/gpt5mini-gptoss/BENCHMARK_SUMMARY.md`
+- Full runner log: `data/gpt5mini-museglimmer/gpt5mini-museglimmer.log`
+- gpt-oss comparison: `data/gpt5mini-gptoss/BENCHMARK_SUMMARY.md`
