@@ -113,4 +113,4 @@ Debug-agent wall timeout was raised to 1200s for this run (from 480s). Several h
 
 - Results: `.local/test_runs/gpt5mini-gptoss/2026-08-03T23-31-10/`
 - Packaged copy: `data/gpt5mini-gptoss/`
-- Log: `logs/gpt5mini-gptoss.log`
+- Full runner log: `data/gpt5mini-gptoss/gpt5mini-gptoss.log.part-*.log` (split at 90MB for GitHub; `cat data/gpt5mini-gptoss/gpt5mini-gptoss.log.part-*.log > gpt5mini-gptoss.log`)
