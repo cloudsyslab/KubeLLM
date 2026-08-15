@@ -1,0 +1,71 @@
+
+Running:
+ - run_shell_command(command=kubectl get pods)
+
+
+Running:
+ - run_shell_command(command=kubectl describe pod selector-env-app)
+
+
+Running:
+ - run_shell_command(command=kubectl get service)
+
+
+Running:
+ - run_shell_command(command=kubectl describe service selector-env-app-service)
+
+
+Running:
+ - run_shell_command(command=minikube -p minikube service selector-env-app-service --url)
+
+
+Running:
+ - run_shell_command(command=curl -sS -I http://192.168.94.2:31371)
+
+
+Running:
+ - run_shell_command(command=curl -sS http://192.168.94.2:31371/)
+
+Verification results
+
+- Pod existence and status
+  - Command: kubectl get pods
+  - Result: selector-env-app 1/1 Running 0 29s
+
+- Pod details and readiness
+  - Command: kubectl describe pod selector-env-app
+  - Key findings:
+    - Status: Running
+    - ContainersReady: True
+    - APP_MESSAGE environment variable (from container): Hello from selector_env_variable test!
+    - No crash indicators; container started and is running
+  - Events show normal lifecycle (Scheduled, Pulled, Created, Started)
+
+- Service and endpoints
+  - Command: kubectl describe service selector-env-app-service
+  - Key findings:
+    - Endpoints: 10.244.1.10:8080
+    - NodePort: 31371
+    - TargetPort: 8080 (container port)
+  - Command: kubectl get service
+  - Result: selector-env-app-service is a NodePort service with ClusterIP 10.102.171.113 and endpoints listed as above
+
+- Service access via Minikube
+  - Command: minikube -p minikube service selector-env-app-service --url
+  - Result: http://192.168.94.2:31371
+
+- End-to-end reachability test
+  - Command: curl -sS http://192.168.94.2:31371/
+  - Result: Hello from selector_env_variable test! (from env var)
+  - (Additional check: HEAD request to the URL returns 501, which is expected for HEAD on this server; GET works as above)
+
+Assessment
+- The pod selector-env-app is running and Ready.
+- The service selector-env-app-service has endpoints and is routable via the NodePort.
+- The application responds correctly at the defined path, confirming proper startup and runtime behavior.
+- There is no evidence of a crash or missing endpoints.
+
+Conclusion
+- The original problem (pod crash with KeyError and service had no endpoints) appears to be resolved in this cluster state.
+
+<|VERIFIED|>

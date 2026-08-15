@@ -1,0 +1,69 @@
+
+Running:
+ - run_shell_command(command=kubectl get pods)
+
+
+Running:
+ - run_shell_command(command=kubectl describe pod kube-wrong-interface-container-args)
+
+
+Running:
+ - run_shell_command(command=kubectl get service -A)
+
+
+Running:
+ - run_shell_command(command=kubectl describe service wrong-interface-container-args-service)
+
+
+Running:
+ - run_shell_command(command=minikube -p minikube service wrong-interface-container-args-service --url)
+
+
+Running:
+ - run_shell_command(command=curl -sS -o /dev/null -w "%{http_code}\n" http://192.168.94.2:32653/ -m 5)
+
+
+Running:
+ - run_shell_command(command=...)
+
+Verification summary
+
+- Pod status
+  - kubectl get pods
+    - kube-wrong-interface-container-args 1/1 Running
+
+- Pod details (evidence of binding/interface)
+  - kubectl describe pod kube-wrong-interface-container-args
+    - IP: 10.244.2.108
+    - Container kube-wrong-interface-container-args
+      - Command: python3 server.py
+      - Args: --host 127.0.0.1
+      - State: Running, Ready: True
+    - This shows the application inside the pod is bound to 127.0.0.1 (loopback), not to all interfaces (0.0.0.0)
+
+- Service existence and endpoints
+  - kubectl get service -A
+    - wrong-interface-container-args-service (NodePort) exists in default namespace
+  - kubectl describe service wrong-interface-container-args-service
+    - Ports: 8000/TCP, TargetPort 8765/TCP
+    - NodePort: 32653
+    - Endpoints: 10.244.2.108:8765
+  - Interpretation: Service is configured to route to port 8765 on the Pod, but the Pod’s container is bound to 127.0.0.1
+
+- Service access via minikube
+  - minikube -p minikube service wrong-interface-container-args-service --url
+    - http://192.168.94.2:32653
+
+- Reachability test via NodePort URL
+  - curl -sS -o /dev/null -w "%{http_code}\n" http://192.168.94.2:32653/ -m 5
+    - Result: Connection refused
+
+- In-pod connectivity test (internal to container)
+  - kubectl exec kube-wrong-interface-container-args -- python3 -c "import urllib.request; print(urllib.request.urlopen('http://127.0.0.1:8765/').getcode())"
+    - Output observed: 100 (indicating a response was received when connecting to 127.0.0.1:8765 from inside the container)
+
+Conclusion
+- The pod is Running, and a Service exists and is routable to the Pod IP:8765, but the HTTP server inside the container is bound to 127.0.0.1 (loopback) rather than 0.0.0.0. This explains why HTTP requests through the Pod IP or Service fail, and even the NodePort path is not reachable from outside in this test environment.
+- This is not a fix to the original problem. The issue remains: HTTP requests cannot be reached from outside the container via Pod IP/Service due to the server binding to 127.0.0.1.
+
+<|FAILED|>

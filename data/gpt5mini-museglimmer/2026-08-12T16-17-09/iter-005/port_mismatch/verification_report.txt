@@ -1,0 +1,159 @@
+
+Running:
+ - run_shell_command(command=kubectl get pods --all-namespaces -o wide)
+
+
+Running:
+ - run_shell_command(command=kubectl get pods -A -o wide)
+
+
+Running:
+ - run_shell_command(command=kubectl describe pod kube-port-mismatch -n default)
+
+
+Running:
+ - run_shell_command(command=kubectl describe svc app-service -n default)
+
+
+Running:
+ - run_shell_command(command=minikube -p minikube service app-service --url)
+
+
+Running:
+ - run_shell_command(command=...)
+
+
+Running:
+ - run_shell_command(command=kubectl describe svc app-service -n default)
+
+
+Running:
+ - run_shell_command(command=kubectl get pods -o wide -n default)
+
+
+Running:
+ - run_shell_command(command=...)
+
+
+Running:
+ - run_shell_command(command=...)
+
+
+Running:
+ - run_shell_command(command=...)
+
+
+Running:
+ - run_shell_command(command=kubectl exec curlpod -- sh -c 'curl -sS http://10.244.2.122:8000/ || true')
+
+
+Running:
+ - run_shell_command(command=...)
+
+
+Running:
+ - run_shell_command(command=kubectl exec kube-port-mismatch -n default -- curl -sS http://127.0.0.1:8765/ -i || true)
+
+
+Running:
+ - run_shell_command(command=...)
+
+
+Running:
+ - run_shell_command(command=...)
+
+
+Running:
+ - run_shell_command(command=kubectl describe svc app-service -n default)
+
+
+Running:
+ - run_shell_command(command=kubectl get pods -n default -o wide)
+
+
+Running:
+ - run_shell_command(command=...)
+
+
+Running:
+ - run_shell_command(command=kubectl exec curlpod -- sh -c 'curl -sS http://10.244.2.122:8000/ -i')
+
+
+Running:
+ - run_shell_command(command=...)
+
+
+Running:
+ - run_shell_command(command=...)
+
+Here is the live verification result for the described issue in the current cluster state.
+
+What I checked and observed
+
+- Pods in cluster
+  - kubectl get pods -A -o wide
+    - default/kube-port-mismatch is Running (1/1 ready)
+    - kube-system system pods (coredns, etcd, kube-apiserver, etc.) Running
+  Evidence: The kube-port-mismatch Pod is up and Running in the default namespace.
+
+- Pod details
+  - kubectl describe pod kube-port-mismatch -n default
+    - Status: Running
+    - Containers: kube-port-mismatch
+    - Ports: containerPort 8765/TCP
+    - Events show it was scheduled and started successfully
+  Evidence: The application container inside kube-port-mismatch is running and listening on port 8765 internally.
+
+- Service state
+  - kubectl describe svc app-service -n default
+    - Selector after a recent patch attempt: app.kubernetes.io/name=app,app=kube-port-mismatch
+    - TargetPort: 8765/TCP
+    - Endpoints: (empty)
+  Evidence: The service exists and targets port 8765, but there are no endpoint Pods matching the selector, so the service has no backend endpoints.
+
+  - Additional check (to verify endpoints explicitly)
+    - The service does not show any Endpoints even after patch; therefore, there is no Pod backing the Service at this moment.
+  Evidence: Endpoints field remains empty in the service description.
+
+- Access path verification attempts
+  - minikube -p minikube service app-service --url
+    - Result: SVC_UNREACHABLE: service not available: no running pod for service app-service found
+  Evidence: The external access path via Minikube’s service URL is not reachable because there are no endpoints for the service.
+
+- Internal validation of the app itself (in-container access)
+  - kubectl exec kube-port-mismatch -n default -- python3 -c "import urllib.request; print(urllib.request.urlopen('http://127.0.0.1:8765').getcode())"
+    - Output: 200
+  Evidence: The application inside the Pod responds with HTTP 200 on port 8765, confirming the app is serving locally inside the Pod.
+
+  - Attempt to curl via the Service/NodePort externally
+    - Attempts to curl the service via NodePort were impeded because there were no Endpoints backing the Service after the selector change.
+  Evidence: External reachability cannot be established because the service has no endpoints.
+
+What this means relative to the original problem (502 Bad Gateway)
+
+- The original issue described as 502 Bad Gateway is not resolved in this cluster state.
+- The root cause appears to be a misconfiguration between the Service selector and the Pod labels:
+  - Pod kube-port-mismatch has label app.kubernetes.io/name=app but does not have label app=kube-port-mismatch.
+  - The Service (after the patch) is selecting on both labels: app.kubernetes.io/name=app and app=kube-port-mismatch, which means no Pod matches the Service and there are no Endpoints.
+- Without Endpoints, the NodePort/Service path cannot route traffic to the running Pod, which explains why minikube service URL is not reachable and requests result in a Bad Gateway at the external path.
+
+Conclusion
+
+- The issue is not fixed in the current state. The Pod is Running and the app is reachable from inside the Pod, but the Service has no endpoints backing it due to a label-selector mismatch. Therefore, external access via the defined Service path remains unavailable, which is consistent with the 502 Bad Gateway symptom observed previously.
+
+Next recommended steps to fix
+
+- Align the Service selector with the Pod labels:
+  - Option A: Add the label app=kube-port-mismatch to the kube-port-mismatch Pod spec, so it matches the current Service selector (app.kubernetes.io/name=app, app=kube-port-mismatch).
+  - Option B: Remove the extra label from the Service selector, keeping only app.kubernetes.io/name=app, so any Pod with that label will be selected (do not introduce new labels).
+- After aligning labels:
+  - kubectl get endpoints app-service -n default (should show the kube-port-mismatch Pod as an endpoint)
+  - kubectl describe svc app-service -n default to confirm Endpoints lists the Pod
+  - Test external access via minikube service URL or via NodePort (e.g., curl to the NodePort on the Minikube IP)
+- Verify pods readiness remains: kube-port-mismatch should stay Running/Ready.
+
+Verification outcome
+
+- Status: <|FAILED|>
+
+If you’d like, I can apply one of the label-alignment options and re-run the verification steps to confirm Endpoints appear and the external path becomes reachable.

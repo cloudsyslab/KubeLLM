@@ -1,0 +1,49 @@
+
+Running:
+ - run_shell_command(command=kubectl get pods -o wide)
+
+
+Running:
+ - run_shell_command(command=kubectl describe pod resource-limits-oom-app)
+
+
+Running:
+ - run_shell_command(command=kubectl logs resource-limits-oom-app --previous)
+
+- Verification steps and results
+
+1) kubectl get pods -o wide
+- resource-limits-oom-app   0/1     CrashLoopBackOff   5 (104s ago)   5m8s   10.244.2.46   minikube
+
+Observation: The pod is not running; it is in CrashLoopBackOff.
+
+2) kubectl describe pod resource-limits-oom-app
+- State: Waiting
+  - Reason: CrashLoopBackOff
+- Last State: Terminated
+  - Reason: OOMKilled
+  - Exit Code: 137
+- Ready: False
+- Restart Count: 5
+- Limits: cpu: 200m, memory: 50Mi
+- Requests: cpu: 100m, memory: 32Mi
+- Events (selected):
+  - Normal Scheduled: Successfully assigned default/resource-limits-oom-app to minikube
+  - Normal Pulled / Created / Started: container app started
+  - Warning BackOff: Back-off restarting failed container app
+
+Observation: The container was terminated due to OOMKilled (OOM), consistent with memory pressure. The pod continues to crash and restart with BackOff.
+
+3) kubectl logs resource-limits-oom-app --previous
+- 2026-08-12 20:04:55,986 - INFO - Starting server and allocating memory...
+
+Observation: The previous container log shows the server startup message, indicating the crash occurs after startup due to memory pressure. No additional OOM message is present in the captured log, but the describe output confirms OOMKilled as the cause.
+
+4) Service/Ingress checks
+- No Service manifest is present for this scenario (the provided manifests describe a Pod named resource-limits-oom-app; there is no Service, and the scenario explicitly notes absence of a Service).
+- Therefore, no minikube service test is applicable.
+
+Conclusion
+- The issue is not resolved. The pod remains in CrashLoopBackOff due to OOMKilled, driven by a memory limit that is too low for the app’s startup allocation (limits: 50Mi; the app attempts to allocate a large in-app memory structure). All verifications show the pod is not Running/Ready.
+
+Verdict: <|FAILED|>

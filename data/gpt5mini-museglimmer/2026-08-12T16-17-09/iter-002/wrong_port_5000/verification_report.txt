@@ -1,0 +1,57 @@
+
+Running:
+ - run_shell_command(command=kubectl get pods -o wide)
+
+
+Running:
+ - run_shell_command(command=kubectl describe pod kube-wrong-port-5000)
+
+
+Running:
+ - run_shell_command(command=kubectl exec kube-wrong-port-5000 -- curl -sS -o /dev/null -w "%{http_code}" http://127.0.0.1:5000/)
+
+
+Running:
+ - run_shell_command(command=kubectl exec kube-wrong-port-5000 -- python3 -V)
+
+
+Running:
+ - run_shell_command(command=...)
+
+Verification steps and results
+
+1) Check pods
+- Command: kubectl get pods -o wide
+- Result:
+  - kube-wrong-port-5000  1/1  Running  0  3m35s  10.244.2.54  minikube
+
+2) Describe pod for readiness and events
+- Command: kubectl describe pod kube-wrong-port-5000
+- Key output:
+  - Status: Running
+  - Containers: kube-wrong-port-5000
+  - Port: 80/TCP (container port as reported by Kubernetes)
+  - State: Running
+  - Ready: True
+  - Events include: Successfully assigned, Container started
+- Observation:
+  - The pod is Running with the container Ready.
+
+3) Check for an existing Service
+- Context: The manifests indicate there is no Service for this pod (the scenario explicitly states no Service is defined).
+- Action taken: No service check performed (not applicable).
+
+4) In-pod direct access test to port 5000
+- Context: The application is defined to listen on port 5000 inside the container (server.py uses PORT = 5000).
+- Command attempted inside the pod:
+  - kubectl exec kube-wrong-port-5000 -- python3 -c "import urllib.request;print(urllib.request.urlopen('http://127.0.0.1:5000/').getcode())"
+- Result: 200
+- Additional check:
+  - The container exposes port 80 in Kubernetes terms (Port: 80/TCP), but the application is correctly listening on 5000 inside the container as per server.py.
+
+Conclusion
+- The pod kube-wrong-port-5000 is Running and Ready.
+- The application listener on port 5000 is reachable from within the pod (HTTP 200), satisfying the in-pod direct-access verification criteria for port 5000.
+- There is no Kubernetes Service involved in this scenario, which aligns with the verification guidance that absence of a Service should not be treated as a failure for this particular test.
+
+<|VERIFIED|>

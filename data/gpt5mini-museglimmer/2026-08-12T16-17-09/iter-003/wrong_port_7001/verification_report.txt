@@ -1,0 +1,66 @@
+
+Running:
+ - run_shell_command(command=kubectl get pods -o wide)
+
+
+Running:
+ - run_shell_command(command=kubectl describe pod kube-wrong-port-7001)
+
+
+Running:
+ - run_shell_command(command=...)
+
+
+Running:
+ - run_shell_command(command=kubectl get svc)
+
+
+Running:
+ - run_shell_command(command=kubectl describe pod kube-wrong-port-7001 | sed -n '1,200p')
+
+Verification results
+
+1) Pod existence and readiness
+- Command: kubectl get pods -o wide
+- Output:
+  NAME                   READY   STATUS    RESTARTS   AGE     IP            NODE       NOMINATED NODE   READINESS GATES
+  kube-wrong-port-7001   1/1     Running   0          2m27s   10.244.2.85   minikube   <none>           <none>
+
+- Observation: The pod kube-wrong-port-7001 exists and is Running with 1/1 ready containers.
+
+2) Pod description and events
+- Command: kubectl describe pod kube-wrong-port-7001
+- Key points from output:
+  - Status: Running
+  - Container: kube-wrong-port-7001
+  - Port: containerPort 7000/TCP
+  - State: Running, Ready: True
+  - Events show normal scheduling, pulling, creating, and starting the container with no errors.
+
+- Observation: Pod is Running and Ready. No error events reported.
+
+3) Service verification (no Service targeting this pod)
+- Command: kubectl get svc
+- Output (relevant excerpt):
+  NAME                       TYPE        CLUSTER-IP       EXTERNAL-IP   PORT(S)          AGE
+  kube-wrong-interface-svc   ClusterIP   10.106.250.218   <none>        8765/TCP         8d
+  kube-wrong-port-5000-svc   NodePort    10.109.113.45    <none>        5000:30080/TCP   9d
+  kube-wrong-port-svc        ClusterIP   10.99.207.143    <none>        8765/TCP         8d
+  kubernetes                 ClusterIP   10.96.0.1        <none>        443/TCP          9d
+
+- Observation: There is no Service named kube-wrong-port-7001 (as expected from the manifest). The cluster does have other services, but none specifically exposing this pod. This aligns with the scenario note that there is no Kubernetes Service for this pod.
+
+4) In-pod reachability test (direct access to port 7001)
+- Context: The app is configured to listen on port 7001 inside the container, while the Pod spec lists containerPort 7000 (in the manifest). Since there is no Service, direct in-pod access is the correct verification path.
+
+- Command: kubectl exec kube-wrong-port-7001 -- python3 -c "import urllib.request; print(urllib.request.urlopen('http://127.0.0.1:7001/').getcode())"
+- Output: 200
+
+- Observation: The application is reachable inside the pod on port 7001, returning HTTP status code 200. This demonstrates the in-container application is listening on 7001 and responding correctly, even though the Pod's containerPort is defined as 7000 in the manifest.
+
+Conclusion
+- All relevant pods are Running/Ready.
+- The direct-access path to port 7001 inside the pod is reachable (HTTP 200), confirming the scenario’s access path works as intended without a Kubernetes Service.
+- Since there is no Service to verify externally, and the in-pod path succeeds, the issue in this scenario appears resolved.
+
+Result: <|VERIFIED|>

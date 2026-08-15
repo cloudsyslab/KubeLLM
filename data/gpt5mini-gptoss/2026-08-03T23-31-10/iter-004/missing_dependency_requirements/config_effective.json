@@ -1,0 +1,96 @@
+{
+  "api-agent": {
+    "model": "gpt-5-mini",
+    "embedder": "text-embedding-3-small",
+    "embedder-provider": "openai",
+    "clear-knowledge": true,
+    "new-run": true,
+    "init-agent": true,
+    "knowledge": [
+      "https://learnk8s.io/troubleshooting-deployments"
+    ]
+  },
+  "debug-agent": {
+    "model": "oss-20b",
+    "instructions": [
+      "If all and only all commands fail to execute, declare that there was an error in trying to solve the issue, and end that statement with this token: <|ERROR|>.",
+      "You have solved this issue only when the original user-visible problem is fixed in the live cluster. Verify the relevant Kubernetes resources and application behavior with commands before declaring success; pod Running/Ready status alone is not sufficient unless the original problem is only pod startup.",
+      "After every step, check whether the original problem is fixed in the live cluster. If you changed manifests, images, or cluster configuration, apply the change and verify the live resource state reflects it before declaring success.",
+      "If you believe you have met the goal, declare that you have solved the user's issue, and end that statement with this token: <|SOLVED|>.",
+      "If the steps do not solve the issue, or if you need more information, declare that you cannot solve the issue, and end that statement with this token: <|FAILED|>.",
+      "Do not use live feed flags when checking the logs such as 'kubectl logs -f'",
+      "Do not use commands like vim or vi",
+      "Do not use commands that open up editors like 'kubectl edit'"
+    ],
+    "guidelines": [
+      "If a command invocation is successful but gives no stdout nor stderr, then that is because that invocation resulted in no output to stdout or stderr.",
+      "If a command contains a placeholder name surrounded in angle brackets such as <pod_name>, for example, then **do not** run that command as-is. First run a `kubectl get` command to find a real name to replace the placeholder name, then run the suggested command with the replaced name of the resource. For example, if you see `kubectl logs <pod_name> -n example_namespace`, first run `kubectl get pods -n example_namespace` and use the name of the first pod you see.",
+      "Do not use live feed flags when checking the logs such as 'kubectl logs -f'",
+      "If you do not conclude on an answer or a code then try again please.",
+      "Do not use commands like vim or vi",
+      "Do not use commands that open up editors like 'kubectl edit'"
+    ]
+  },
+  "verification-agent": {
+    "model": "gpt-5-nano",
+    "temperature": 1
+  },
+  "knowledge-prompt": {
+    "problem-desc": "The pod crashes on startup with ModuleNotFoundError for a Python package that is already listed in requirements.txt.",
+    "system-prompt": "Give specific commands to fix this issue. If modifying file contents is necessary, use the sed command to achieve this. If providing a file path, make sure to keep the full file path. Suggest only the essential steps needed to solve the issue. Be frugal.",
+    "additional-directions": ""
+  },
+  "debug-prompt": {
+    "additional-directions": "If any deployment files are modified, reapply the deployment to the cluster. If a Pod field is immutable, delete and recreate the Pod from the corrected manifest."
+  },
+  "relevant-files": {
+    "deployment": [
+      "missing_dependency_requirements.yaml"
+    ],
+    "application": [
+      "server.py"
+    ],
+    "service": [],
+    "dockerfile": true
+  },
+  "setup-commands": [
+    "bash -lc 'PROFILE=${MINIKUBE_PROFILE:-minikube}; CTX=$(kubectl config current-context 2>/dev/null || true); if command -v minikube >/dev/null 2>&1 && [ \"$CTX\" = \"$PROFILE\" ] && minikube -p \"$PROFILE\" status --format \"{{.Host}}\" 2>/dev/null | grep -qi running; then minikube -p \"$PROFILE\" image build -t kube-missing-dependency-requirements-app:latest -f Dockerfile debug_assistant_latest/troubleshooting/missing_dependency_requirements; else docker build -t kube-missing-dependency-requirements-app:latest -f debug_assistant_latest/troubleshooting/missing_dependency_requirements/Dockerfile debug_assistant_latest/troubleshooting/missing_dependency_requirements; fi'",
+    "kubectl apply -f debug_assistant_latest/troubleshooting/missing_dependency_requirements/missing_dependency_requirements.yaml"
+  ],
+  "test-name": "missing_dependency_requirements",
+  "test-directory": "/home/hugov/KubeLLM-Minh/debug_assistant_latest/troubleshooting/missing_dependency_requirements/",
+  "yaml-file-name": "missing_dependency_requirements.yaml",
+  "ground-truth": {
+    "description": "Verify requirements are installed and the app starts",
+    "timeout_seconds": 90,
+    "checks": [
+      {
+        "name": "pod_ready",
+        "cmd": "kubectl get pod kube-missing-dependency-requirements -o jsonpath='{.status.conditions[?(@.type==\"Ready\")].status}'",
+        "expect": "True",
+        "poll_interval_s": 3,
+        "max_attempts": 20,
+        "description": "Pod is Ready"
+      },
+      {
+        "name": "python_dependency_available",
+        "cmd": "kubectl exec kube-missing-dependency-requirements -- python3 -c \"import yaml; print('ok')\"",
+        "expect": "ok",
+        "depends_on": [
+          "pod_ready"
+        ],
+        "description": "Python dependency from requirements.txt is importable in the running container"
+      },
+      {
+        "name": "app_responds",
+        "cmd": "kubectl exec kube-missing-dependency-requirements -- python3 -c \"import urllib.request; print(urllib.request.urlopen('http://127.0.0.1:8765', timeout=3).status)\"",
+        "expect": "200",
+        "depends_on": [
+          "python_dependency_available"
+        ],
+        "description": "Application responds"
+      }
+    ]
+  },
+  "minikube-profile": "minikube"
+}

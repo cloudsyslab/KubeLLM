@@ -1,0 +1,109 @@
+
+Running:
+ - run_shell_command(command=kubectl get pods -A -o wide --show-labels)
+
+
+Running:
+ - run_shell_command(command=kubectl describe pod resource-limits-cpu-starvation-app -n default)
+
+
+Running:
+ - run_shell_command(command=kubectl logs resource-limits-cpu-starvation-app -n default --tail=200)
+
+
+Running:
+ - run_shell_command(command=...)
+
+
+Running:
+ - run_shell_command(command=kubectl describe pod resource-limits-cpu-starvation-app -n default)
+
+
+Running:
+ - run_shell_command(command=...)
+
+
+Running:
+ - run_shell_command(command=...)
+
+
+Running:
+ - run_shell_command(command=...)
+
+
+Running:
+ - run_shell_command(command=kubectl get deployment -n default resource-limits-cpu-starvation-app -o jsonpath='{.kind}')
+
+
+Running:
+ - run_shell_command(command=...)
+
+
+Running:
+ - run_shell_command(command=...)
+
+
+Running:
+ - run_shell_command(command=...)
+
+
+Running:
+ - run_shell_command(command=...)
+
+
+Running:
+ - run_shell_command(command=...)
+
+## Verification result: NOT FIXED
+
+Summary: The pod resource-limits-cpu-starvation-app is running but remains not Ready due to Readiness Probe failures. The CPU starvation/readiness interaction appears unchanged; the scenario still exhibits readiness probe timeouts.
+
+Evidence and commands run
+
+1) Pods in the cluster
+- Command: kubectl get pods -A -o wide --show-labels
+- Result (excerpt):
+  - default/resource-limits-cpu-starvation-app 1/1 Running 0 2m37s 10.244.2.74 minikube  app=resource-limits-cpu-starvation-app
+  - kube-system/* other system pods Running
+- Observation: The target pod exists and is in Running state with 1/1 ready container according to this snapshot.
+
+2) Pod details (readiness and events)
+- Command: kubectl describe pod resource-limits-cpu-starvation-app -n default
+- Key observations from the Events and status:
+  - Readiness: http-get http://:8080/healthz delay=2s timeout=1s period=3s
+  - Current Ready status: False
+  - ContainersReady: False
+  - Events include multiple readiness probe failures:
+    - Warning Unhealthy 2m22s (x6) Readiness probe failed: Get "http://10.244.2.74:8080/healthz": dial tcp 10.244.2.74:8080: connect: connection refused
+    - Warning Unhealthy 90s (x16) (x2m18s) Readiness probe failed: Get "http://10.244.2.74:8080/healthz": context deadline exceeded (Client.Timeout exceeded while awaiting headers)
+- Interpretation: Readiness probe is failing due to connectivity/timeouts to the healthz endpoint, indicating the pod is not Ready despite the Running state.
+
+3) Pod status quick check (readiness status field)
+- Command: kubectl get pod resource-limits-cpu-starvation-app -n default -o jsonpath='{.status.containerStatuses[0].ready}'
+- Result: true
+- Interpretation: In this snapshot, the containerStatuses.ready flag reported as true, which can be inconsistent with the pod-level Ready/ContainersReady flags shown in describe. The authoritative indicator for readiness in this context is the pod status (as shown by describe), which still shows not ready due to readiness probe failures.
+
+4) In-depth pod status summary
+- Command: kubectl get pod resource-limits-cpu-starvation-app -n default -o jsonpath='{.metadata.name}:{.status.phase}:{.status.containerStatuses[0].ready}'
+- Result: resource-limits-cpu-starvation-app:Running:true
+- Interpretation: The pod is Running and the container is reported as ready by this specific field at the moment of that query. However, the describe output indicates the pod is not Ready and containers are not Ready, due to failing readiness probe. This discrepancy suggests transient state changes; the current definitive status for readiness is the describe output, which shows not Ready.
+
+5) In-pod health check attempt (optional, limited evidence)
+- Attempted to exec a health check from within the pod (curl to http://127.0.0.1:8080/healthz). The container environment does not have curl installed, so a direct curl test via kubectl exec failed due to missing tool. Python is present (Python 3.8.10), but a reliable in-container health check via Python did not yield a clear, reproducible HTTP status in the captured run.
+- Command attempts and notes:
+  - kubectl exec resource-limits-cpu-starvation-app -n default -- curl ... failed: curl: not found
+  - kubectl exec resource-limits-cpu-starvation-app -n default -- python3 -V => Python 3.8.10 confirmed
+  - Attempts to run a Python-based HTTP HEAD/GET inside the container reported no conclusive stdout in this run (not a definitive pass/fail), but combined with readiness probe failures, this does not indicate a healthy ready state.
+
+Assessment against the verification criteria
+
+- The original problem states the pod remains unready with readiness probe timeouts due to very low CPU limits.
+- Current state shows:
+  - Pod is Running (verified in kubectl get pods output).
+  - Pod is not Ready according to kubectl describe pod (ContainersReady: False; Readiness probe failures).
+  - Readiness probe failures persist (timeout and connection refused) per Events.
+  - There is no Service in this scenario, so reachability is evaluated via in-pod health checks rather than an external Service. The in-pod health check attempts did not produce a conclusive, programmatic success.
+
+Conclusion
+
+- The issue is NOT fully resolved. The readiness probe still fails with timeouts/refused connections, indicating the pod is not Ready despite Running. Therefore, <|FAILED|> is the correct verification result.

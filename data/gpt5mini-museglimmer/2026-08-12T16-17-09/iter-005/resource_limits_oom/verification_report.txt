@@ -1,0 +1,68 @@
+
+Running:
+ - run_shell_command(command=kubectl get pods -o wide)
+
+
+Running:
+ - run_shell_command(command=kubectl describe pod resource-limits-oom-app)
+
+
+Running:
+ - run_shell_command(command=kubectl logs resource-limits-oom-app --previous)
+
+
+Running:
+ - run_shell_command(command=kubectl logs resource-limits-oom-app)
+
+Verification results
+
+1) Pods status
+- Command: kubectl get pods -o wide
+- Output:
+  NAME                      READY   STATUS             RESTARTS      AGE     IP             NODE       NOMINATED NODE   READINESS GATES
+  resource-limits-oom-app   0/1     CrashLoopBackOff   4 (75s ago)   2m50s   10.244.2.132   minikube   <none>           <none>
+
+- Interpretation: The pod resource-limits-oom-app is not Running. It is in CrashLoopBackOff with 0/1 ready.
+
+2) Pod description and events
+- Command: kubectl describe pod resource-limits-oom-app
+- Key excerpts:
+  - State: Waiting
+    Reason: CrashLoopBackOff
+  - Last State: Terminated
+    Reason: OOMKilled
+    Exit Code: 137
+    Started: Thu, 13 Aug 2026 02:22:03 +0000
+    Finished: Thu, 13 Aug 2026 02:22:06 +0000
+  - Ready: False
+  - Restart Count: 4
+  - Limits: memory: 50Mi, cpu: 200m
+  - Requests: memory: 32Mi, cpu: 100m
+  - Events:
+    - Normal  Scheduled: Successfully assigned default/resource-limits-oom-app to minikube
+    - Normal  Pulled: Container image "kube-resource-limits-oom-app" already present on machine
+    - Normal  Created: Created container app
+    - Normal  Started: Started container app
+    - Warning BackOff: Back-off restarting failed container app in pod resource-limits-oom-app_default(33bd2ad2-b64a-440f-b8ca-f4b2b3b230ce)
+
+Interpretation:
+- The container is repeatedly failing with OOMKilled (memory exhaustion) and is being restarted, resulting in CrashLoopBackOff. The memory limit is 50Mi, while the application (server.py) allocates a large in-process data structure at startup, which is likely causing the OOM condition under these limits.
+
+3) Logs
+- Command: kubectl logs resource-limits-oom-app --previous
+- Output:
+  2026-08-13 02:22:05,904 - INFO - Starting server and allocating memory...
+- Command: kubectl logs resource-limits-oom-app
+- Output:
+  2026-08-13 02:22:05,904 - INFO - Starting server and allocating memory...
+
+Observations:
+- The logs show the server starting and memory allocation message, but since the container is killed due to OOM, the logs are limited to the startup message before termination. There is no evidence of a healthy, long-running process.
+
+4) Service/Ingress
+- No Service or Ingress is described in the provided manifests for this scenario. The scenario explicitly notes there is no Service to verify reachability through minikube service, so this is not applicable.
+
+Conclusion
+- The issue described (pod restarting with OOMKilled) is not fixed in the current cluster state. The resource-limits-oom-app pod remains in CrashLoopBackOff due to OOMKilled (memory limit likely too low for the workload). Therefore, the verification fails to satisfy the "pod is Running/Ready" and reachable endpoint criteria.
+
+Result: <|FAILED|>

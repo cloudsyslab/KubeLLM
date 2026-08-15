@@ -1,0 +1,85 @@
+
+Running:
+ - run_shell_command(command=kubectl get pods -A -o wide)
+
+
+Running:
+ - run_shell_command(command=kubectl describe pod kube-selector-missing-label -n default)
+
+
+Running:
+ - run_shell_command(command=kubectl get service -A -o wide)
+
+
+Running:
+ - run_shell_command(command=minikube -p minikube service selector-missing-label-service --url)
+
+
+Running:
+ - run_shell_command(command=kubectl get endpoints -n default selector-missing-label-service -o wide)
+
+
+Running:
+ - run_shell_command(command=kubectl exec -n default kube-selector-missing-label -- curl -sS http://127.0.0.1:8765/)
+
+
+Running:
+ - run_shell_command(command=...)
+
+
+Running:
+ - run_shell_command(command=kubectl --namespace default describe pod kube-selector-missing-label)
+
+
+Running:
+ - run_shell_command(command=kubectl exec -n default kube-selector-missing-label -- python3 -V)
+
+
+Running:
+ - run_shell_command(command=kubectl exec -n default kube-selector-missing-label -- curl -sS http://127.0.0.1:8765/ || true)
+
+
+Running:
+ - run_shell_command(command=...)
+
+
+Running:
+ - run_shell_command(command=kubectl exec -n default kube-selector-missing-label -- curl -sS http://127.0.0.1:8765/)
+
+
+Running:
+ - run_shell_command(command=...)
+
+Verification summary:
+
+- Pod status
+  - Namespace: default
+  - Pod: kube-selector-missing-label
+  - Status: Running
+  - Ready: 1/1
+  - Pod IP: 10.244.0.236
+  - Events indicate the container started cleanly (Scheduled, Pulled, Created, Started)
+
+- Service and endpoints
+  - Service: selector-missing-label-service (default)
+  - Type: ClusterIP
+  - Ports: 8000/TCP
+  - Selector: app=kube-selector-missing-label
+  - Endpoints for the service:
+    - 10.244.0.236:8765
+
+- Reachability tests
+  - In-pod connectivity to application:
+    - Executed from inside kube-selector-missing-label container:
+      - curl http://127.0.0.1:8765/ returns HTTP 200 with body “ok”
+    - Evidence: inside the pod, the app serves on port 8765 and responds with “ok”
+  - Service path reachability (via cluster IP/port mapping):
+    - curl http://10.107.149.224:8000/ (service target) returns “ok”
+    - This demonstrates the service correctly routes to the running pod endpoint 8765
+
+Notes:
+- The minikube service command for the ClusterIP service returned “has no node port,” which is expected for a ClusterIP service (no external node port). Endpoints are correctly populated and the application is reachable through the Service IP/port as shown above.
+
+Conclusion: The original issue (pod Running but Service had no endpoints) appears fixed. The service has endpoints pointing to the running pod, and requests to both the pod directly and via the service are successful.
+
+<|VERIFIED|>
