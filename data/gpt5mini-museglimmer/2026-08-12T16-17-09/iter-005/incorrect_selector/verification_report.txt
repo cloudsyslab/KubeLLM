@@ -1,0 +1,60 @@
+
+Running:
+ - run_shell_command(command=kubectl get pods)
+
+
+Running:
+ - run_shell_command(command=kubectl describe pod kube-incorrect-selector)
+
+
+Running:
+ - run_shell_command(command=kubectl get service)
+
+
+Running:
+ - run_shell_command(command=kubectl describe service app-service)
+
+
+Running:
+ - run_shell_command(command=minikube -p minikube service app-service --url)
+
+Findings summary:
+- Pod state
+  - kubectl get pods
+    - kube-incorrect-selector is Running (1/1 ready)
+- Pod details
+  - kubectl describe pod kube-incorrect-selector
+    - Labels: app=kube-incorrect-selector
+    - IP: 10.244.2.116
+    - Container kube-incorrect-selector: port 8765/TCP, Ready: True
+    - Status: Running
+    - Events show the container started successfully
+- Service state
+  - kubectl get service
+    - app-service is a NodePort service
+    - Ports: 8000/TCP mapped to node port 32272
+  - kubectl describe service app-service
+    - Selector: app=incorrect-selector
+    - Endpoints: (empty)
+    - NodePort: 32272
+- Reachability check (Minikube)
+  - minikube -p minikube service app-service --url
+    - Error: service not available: no running pod for service app-service found
+
+Interpretation:
+- The pod kube-incorrect-selector is running with label app=kube-incorrect-selector.
+- The service app-service is configured to select pods with the label app=incorrect-selector.
+- Because the service selector does not match the pod label, there are no Endpoints for the service.
+- Consequently, there is no reachable backend for app-service, and the minikube service URL cannot be retrieved.
+
+Root cause:
+- Mismatch between service selector and pod labels. Service expects app=incorrect-selector, while the pod is labeled app=kube-incorrect-selector.
+
+Recommended fix (one of the following):
+- Option A: Update the service selector to match the pod label
+  - kubectl patch service app-service -p '{"spec":{"selector":{"app":"kube-incorrect-selector"}}}'
+  - Or edit app-service.yaml to set selector: app: kube-incorrect-selector and re-apply.
+- Option B: Update the pod label to match the service selector
+  - kubectl label pod kube-incorrect-selector app=incorrect-selector --overwrite
+
+Verification status: <|FAILED|>

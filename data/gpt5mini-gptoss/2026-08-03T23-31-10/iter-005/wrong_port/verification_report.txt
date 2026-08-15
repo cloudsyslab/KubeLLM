@@ -1,0 +1,104 @@
+
+Running:
+ - run_shell_command(command=kubectl get pods -o wide)
+
+
+Running:
+ - run_shell_command(command=kubectl describe pod kube-wrong-port-7b9d4dcff-rt44l)
+
+
+Running:
+ - run_shell_command(command=kubectl exec kube-wrong-port-7b9d4dcff-rt44l -- curl -sI http://127.0.0.1:8765/)
+
+
+Running:
+ - run_shell_command(command=...)
+
+
+Running:
+ - run_shell_command(command=...)
+
+
+Running:
+ - run_shell_command(command=kubectl exec kube-wrong-port-7b9d4dcff-rt44l -- /bin/sh -lc 'ss -ltnp | grep 8765 || true')
+
+
+Running:
+ - run_shell_command(command=kubectl get svc --all-namespaces -o wide | sed -n '1,200p')
+
+
+Running:
+ - run_shell_command(command=kubectl describe pod kube-wrong-port-7b9d4dcff-rt44l | sed -n '1,200p')
+
+
+Running:
+ - run_shell_command(command=kubectl describe pod kube-wrong-port-645895c98f-lcgdz | sed -n '1,200p')
+
+
+Running:
+ - run_shell_command(command=...)
+
+
+Running:
+ - run_shell_command(command=...)
+
+
+Running:
+ - run_shell_command(command=kubectl get pods -n default -o wide)
+
+
+Running:
+ - run_shell_command(command=kubectl describe deployment kube-wrong-port -n default | sed -n '1,240p')
+
+
+Running:
+ - run_shell_command(command=...)
+
+
+Running:
+ - run_shell_command(command=kubectl exec kube-wrong-port-7b9d4dcff-rt44l -- /bin/sh -lc 'node -v 2>&1 || echo NO-NODE')
+
+
+Running:
+ - run_shell_command(command=...)
+
+
+Running:
+ - run_shell_command(command=kubectl exec kube-wrong-port-7b9d4dcff-rt44l -- /bin/sh -lc 'ps -ef | head -n 50')
+
+Verification results
+
+- Pod status snapshot
+  - Running pod (desired/ready): kube-wrong-port-7b9d4dcff-rt44l
+    - Status: Running
+    - IP: 10.244.1.250
+    - Containers: kube-wrong-port
+    - Container ports: 8765/TCP, 8000/TCP
+  - Old pod still present in Terminating state (rollout): kube-wrong-port-645895c98f-lcgdz
+    - Status: Terminating
+- Deployment rollout state
+  - Deployment kube-wrong-port in default namespace:
+    - Replicas: 1 desired | 1 updated | 1 total | 1 available | 0 unavailable
+    - OldReplicaSets: kube-wrong-port-645895c98f (0/0 replicas)
+    - NewReplicaSet: kube-wrong-port-7b9d4dcff (1/1 replicas)
+  - Events indicate the old pod transitioned to zero replicas and the new pod became available
+- Direct in-pod reachability test (the scenario’s direct access path)
+  - Inside the running pod kube-wrong-port-7b9d4dcff-rt44l, Python 3 is available
+    - Command checked: python3 -c "import urllib.request; print(urllib.request.urlopen('http://127.0.0.1:8765/').getcode())"
+    - Result: 200
+  - This confirms the application is listening on 127.0.0.1:8765 inside the pod and responding successfully to HTTP requests
+  - Additional checks inside the pod showed the server process is running (server.py) and listening on port 8765
+- Service state (note about scenario guidance)
+  - A Service exists in the cluster: kube-wrong-port-svc (ClusterIP) exposing 8765/TCP
+  - However, per the scenario’s guidance, the verification focused on the direct in-pod access path, not on Service-based access
+  - The presence of the Service does not negate the observed in-pod accessibility for port 8765
+- Observations relevant to the original problem
+  - The workload is running in a pod and port 8765 is exposed by the container (containerPort 8765/TCP)
+  - The application responds successfully to in-pod HTTP requests on port 8765 (HTTP 200)
+  - The old pod is in Terminating state, which is acceptable during a rollout; the new pod is Running and Ready
+
+Conclusion
+- The direct access path to port 8765 inside the running pod is reachable and responding (HTTP 200) despite the presence of an older terminating pod and despite a Service existing in the cluster.
+- Based on the evidence, the original problem—accessing the workload directly via port 8765 without relying on a Service—appears resolved for the current active pod, and the Pod is Running/Ready with the correct port exposed.
+
+<|VERIFIED|>

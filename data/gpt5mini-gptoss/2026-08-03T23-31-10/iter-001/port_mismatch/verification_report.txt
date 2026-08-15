@@ -1,0 +1,66 @@
+
+Running:
+ - run_shell_command(command=kubectl get pods -o wide --all-namespaces | sed -n '1,200p')
+
+
+Running:
+ - run_shell_command(command=kubectl describe pod kube-port-mismatch -n default)
+
+
+Running:
+ - run_shell_command(command=kubectl get service -n default -o wide)
+
+
+Running:
+ - run_shell_command(command=minikube -p minikube service app-service --url)
+
+
+Running:
+ - run_shell_command(command=curl -sS -v http://192.168.94.2:30606/ -o /dev/null -w "%{http_code}\n")
+
+Verification results
+
+1) Pod status verification
+- Command: kubectl get pods -o wide --all-namespaces
+- Outcome:
+  - default  kube-port-mismatch  1/1  Running  0  92s  10.244.0.190  minikube
+  - kube-system  coredns-6f6b679f8f6? 1/1  Running
+  - Other system pods (etcd, apiserver, controller-manager, etc.) are Running
+- Assessment: The target pod kube-port-mismatch in the default namespace is Running with 1/1 Ready containers. Evidence shows the pod exists and is ready.
+
+2) Pod describe for errors
+- Command: kubectl describe pod kube-port-mismatch -n default
+- Key details:
+  - Status: Running
+  - IP: 10.244.0.190
+  - Containers:
+    - kube-port-mismatch: 8765/TCP, Ready: True
+  - Events:
+    - Normal  Scheduled: Successfully assigned default/kube-port-mismatch to minikube
+    - Normal  Pulled: Image kube-port-mismatch-app:latest already present
+    - Normal  Created: Created container kube-port-mismatch
+    - Normal  Started: Started container kube-port-mismatch
+- Assessment: No crash or error events; container started and is Ready. This indicates no runtime startup errors.
+
+3) Service existence and configuration
+- Command: kubectl get service -n default -o wide
+- Outcome:
+  - app-service  NodePort  10.108.14.53  <none>  8000:30606/TCP  97s  app.kubernetes.io/name=app
+- Assessment: The service app-service exists with ClusterIP 10.108.14.53 and NodePort mapping 8000:30606, matching the manifest selector app.kubernetes.io/name=app.
+
+4) Access path validation via Minikube
+- Command: minikube -p minikube service app-service --url
+- Outcome: http://192.168.94.2:30606
+- Assessment: The service is accessible via the NodePort on Minikube. URL is returned and matches the NodePort mapping.
+
+5) Reachability test
+- Command: curl -sS -v http://192.168.94.2:30606/ -o /dev/null -w "%{http_code}\n"
+- Outcome: 200
+- Assessment: The service endpoint responds with HTTP 200, indicating the application is serving requests at the expected path.
+
+Conclusion
+- All relevant pods are Running/Ready.
+- The app-service is present and reachable via the MinikubeNodePort URL, with a successful HTTP 200 response from curl.
+- Based on the evidence, the 502 Bad Gateway issue described in the original report appears resolved in this cluster state.
+
+<|VERIFIED|>

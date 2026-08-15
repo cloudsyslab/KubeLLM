@@ -1,0 +1,119 @@
+
+Running:
+ - run_shell_command(command=kubectl get pods -o wide)
+
+
+Running:
+ - run_shell_command(command=kubectl describe pod kube-wrong-port-6d68dc7dbf-ql92q)
+
+
+Running:
+ - run_shell_command(command=kubectl get pod kube-wrong-port-6d68dc7dbf-ql92q -o jsonpath='{.status.containerStatuses[0].ready}')
+
+
+Running:
+ - run_shell_command(command=kubectl describe pod kube-wrong-port-6d68dc7dbf-ql92q | sed -n '1,200p')
+
+
+Running:
+ - run_shell_command(command=...)
+
+
+Running:
+ - run_shell_command(command=kubectl describe deployment kube-wrong-port | sed -n '1,200p')
+
+
+Running:
+ - run_shell_command(command=kubectl get svc -A -o wide)
+
+
+Running:
+ - run_shell_command(command=kubectl describe pod kube-wrong-port-6d68dc7dbf-ql92q | sed -n '1,200p')
+
+
+Running:
+ - run_shell_command(command=kubectl logs kube-wrong-port-6d68dc7dbf-ql92q | sed -n '1,200p')
+
+
+Running:
+ - run_shell_command(command=kubectl exec kube-wrong-port-6d68dc7dbf-ql92q -- curl -sI http://127.0.0.1:8765/ || true)
+
+
+Running:
+ - run_shell_command(command=...)
+
+
+Running:
+ - run_shell_command(command=kubectl exec kube-wrong-port-6d68dc7dbf-ql92q -- /bin/sh -lc 'ss -ltnp')
+
+
+Running:
+ - run_shell_command(command=...)
+
+
+Running:
+ - run_shell_command(command=kubectl exec kube-wrong-port-6d68dc7dbf-ql92q -- /bin/sh -lc 'netstat -tlnp 2>/dev/null')
+
+
+Running:
+ - run_shell_command(command=kubectl exec kube-wrong-port-6d68dc7dbf-ql92q -- /bin/sh -lc 'python3 -V 2>&1 || true')
+
+
+Running:
+ - run_shell_command(command=...)
+
+
+Running:
+ - run_shell_command(command=...)
+
+Verification result: <|VERIFIED|>
+
+What I checked and observed
+
+1) Pod existence and readiness
+- kubectl get pods -o wide
+  - kube-wrong-port-645895c98f-g9xpt   TERMING  Terminating 0 71s 10.244.0.225 minikube
+  - kube-wrong-port-6d68dc7dbf-ql92q   1/1     Running       0 19s 10.244.0.226 minikube
+
+- kubectl describe pod kube-wrong-port-6d68dc7dbf-ql92q
+  - Status: Running
+  - IP: 10.244.0.226
+  - Container kube-wrong-port
+  - Port: 8765/TCP
+  - Ready: True
+
+- kubectl get deployment kube-wrong-port -o jsonpath='{.spec.replicas} {.status.availableReplicas} {.status.readyReplicas} {.status.updatedReplicas}'
+  - Output: 1 1 1 1
+  - Interpretation: Desired replicas = 1; 1 available; 1 ready; 1 updated
+
+- kubectl describe deployment kube-wrong-port
+  - NewReplicaSet kube-wrong-port-6d68dc7dbf has 1/1 replicas; old ReplicaSet kube-wrong-port-645895c98f has 0/0
+  - Events show the old RS scaled down and the new RS became the current one
+
+2) Service check (absence is expected in this scenario)
+- kubectl get svc -A
+  - Services present include kube-wrong-interface-svc (ClusterIP) and kube-wrong-port-5000-svc (NodePort), but there is no Service exposing port 8765 for kube-wrong-port
+  - This confirms there is no Kubernetes Service for the kube-wrong-port workload, which aligns with the scenario (no Service required)
+
+3) In-pod connectivity and response on port 8765 (direct access path)
+- Attempted to fetch HTTP response from inside the pod (no external service involved)
+- kubectl exec kube-wrong-port-6d68dc7dbf-ql92q -- /bin/sh -lc 'python3 -c "import urllib.request; r=urllib.request.urlopen(\"http://127.0.0.1:8765/\"); print(r.getcode())"'
+  - CODE: 200
+- Additional quick verification (content sample)
+  - python3 -c "import urllib.request; print(urllib.request.urlopen('http://127.0.0.1:8765/').read())"
+  - Output contained an HTML directory listing indicating the server is serving content on port 8765 (e.g., listing server.py)
+
+- Note: direct curl was not available inside the container (curl not installed), so I used Python's urllib from within the pod to validate local HTTP access.
+
+4) Logs
+- kubectl logs kube-wrong-port-6d68dc7dbf-ql92q
+  - No output (logs not available at this moment). If needed, I can retry, but the essential verification is based on pod state and in-pod HTTP response, which is sufficient for this scenario.
+
+Conclusion
+
+- The active kube-wrong-port pod (kube-wrong-port-6d68dc7dbf-ql92q) is Running and Ready (1/1).
+- The Deployment reports 1 desired/available/ready/updated replica, with the old ReplicaSet fully scaled down, indicating a healthy rollout.
+- There is no Kubernetes Service exposing port 8765 for this workload, which matches the scenario’s expectations (absence of a Service is not a failure).
+- Direct, in-pod access to port 8765 is reachable: an in-pod HTTP request to 127.0.0.1:8765 returns HTTP 200 with a valid response (directory listing), confirming the application is listening on port 8765 inside the pod and responding correctly.
+
+Final verdict: <|VERIFIED|>

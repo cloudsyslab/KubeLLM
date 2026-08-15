@@ -1,0 +1,109 @@
+
+Running:
+ - run_shell_command(command=kubectl get pods -o wide)
+
+
+Running:
+ - run_shell_command(command=kubectl describe pod kube-wrong-interface-bind-address)
+
+
+Running:
+ - run_shell_command(command=kubectl get service -o wide)
+
+
+Running:
+ - run_shell_command(command=minikube -p minikube service wrong-interface-bind-address-service --url)
+
+
+Running:
+ - run_shell_command(command=curl -sS -v http://192.168.94.2:30499/  || true)
+
+
+Running:
+ - run_shell_command(command=kubectl describe service wrong-interface-bind-address-service)
+
+
+Running:
+ - run_shell_command(command=curl -v http://192.168.94.2:30499/ || true)
+
+
+Running:
+ - run_shell_command(command=curl -m 5 -sS -v http://192.168.94.2:30499/ -o /dev/null -w "%{http_code}\n")
+
+
+Running:
+ - run_shell_command(command=kubectl exec kube-wrong-interface-bind-address -- curl -sS -I http://127.0.0.1:8765/ || true)
+
+
+Running:
+ - run_shell_command(command=...)
+
+
+Running:
+ - run_shell_command(command=...)
+
+
+Running:
+ - run_shell_command(command=...)
+
+
+Running:
+ - run_shell_command(command=...)
+
+
+Running:
+ - run_shell_command(command=...)
+
+
+Running:
+ - run_shell_command(command=...)
+
+Verification results
+
+Cluster state and access path
+- Pod status
+  - kubectl get pods
+    - kube-wrong-interface-bind-address 1/1 Ready, Running
+- Pod details
+  - kubectl describe pod kube-wrong-interface-bind-address
+    - Status: Running
+    - IP: 10.244.2.22
+    - Container kube-wrong-interface-bind-address: Running, Ready
+    - Events: Pod successfully scheduled and container started
+- Service status
+  - kubectl get service -o wide
+    - wrong-interface-bind-address-service
+      - Type: NodePort
+      - ClusterIP: 10.98.131.93
+      - Port: 8000/TCP
+      - TargetPort: 8765/TCP
+      - NodePort: 30499/TCP
+      - Endpoints: 10.244.2.22:8765
+  - kubectl describe service wrong-interface-bind-address-service
+    - Endpoints: 10.244.2.22:8765
+- Access path via Minikube
+  - minikube -p minikube service wrong-interface-bind-address-service --url
+    - URL returned: http://192.168.94.2:30499/
+
+External reachability test
+- Attempt to reach the service from the host using the NodePort URL
+  - curl -m 5 -sS -v http://192.168.94.2:30499/ -o /dev/null -w "%{http_code}\n"
+    - Result: Connection refused (no HTTP status code returned)
+
+In-container reachability test
+- Test from inside the Pod to the application port on localhost
+  - kubectl exec kube-wrong-interface-bind-address -- python3 -c "import urllib.request; print(urllib.request.urlopen('http://127.0.0.1:8765/').getcode())"
+    - Result: 200 (OK)
+
+What this implies
+- The pod is Running and the container is Ready.
+- The Service is created and correctly targets the Pod on port 8765.
+- Inside the Pod, the application is reachable at 127.0.0.1:8765 (code 200), confirming the app is listening on the expected port inside the container.
+- External reachability through NodePort 30499 to the Service is not working: the host URL (Minikube node IP 192.168.94.2) refuses connections on port 30499.
+  - This indicates a problem with external networking / NodePort exposure from the Minikube host, not with the Pod or the application itself.
+
+Conclusion
+- The original problem describes timeouts when accessing the app via Pod IP or Service externally. Internally (within the Pod), the app responds correctly on 127.0.0.1:8765 (code 200).
+- External reachability via the NodePort path is not working (connection refused), so the issue is not fully resolved in the current cluster state.
+
+Verification result: <|FAILED|>

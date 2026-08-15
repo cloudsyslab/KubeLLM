@@ -1,0 +1,52 @@
+
+Running:
+ - run_shell_command(command=kubectl get pods)
+
+
+Running:
+ - run_shell_command(command=kubectl describe pod kube-env-wrong-name)
+
+
+Running:
+ - run_shell_command(command=kubectl exec kube-env-wrong-name -- curl -s http://127.0.0.1:8765/)
+
+
+Running:
+ - run_shell_command(command=kubectl exec kube-env-wrong-name -- sh -lc 'which curl || echo no-curl')
+
+
+Running:
+ - run_shell_command(command=...)
+
+Verification results
+
+- Pod discovery
+  - kubectl get pods
+    - kube-env-wrong-name 1/1 Running
+
+- Pod detail and readiness
+  - kubectl describe pod kube-env-wrong-name
+    - Container env: APP_MODE: production
+    - Container state: Running
+    - ContainersReady: True
+    - Events:
+      - Normal  Scheduled: Successfully assigned default/kube-env-wrong-name to minikube
+      - Normal  Pulled: kube-env-wrong-name-app:latest present
+      - Normal  Created: Container kube-env-wrong-name created
+      - Normal  Started: Container kube-env-wrong-name started
+  - Interpretation: The pod is Running with the APP_MODE environment variable set to production in the container's environment, no errors reported.
+
+- In-pod application behavior (verification that APP_MODE is accessible by the app)
+  - Command executed:
+    - kubectl exec kube-env-wrong-name -- sh -lc 'python3 - <<'PY'\nimport urllib.request\nprint(urllib.request.urlopen(\"http://127.0.0.1:8765/\").read())\nPY'
+  - Result:
+    - b'mode=production'
+  - Interpretation: The application inside the pod successfully reads APP_MODE and serves mode=production at port 8765 (via localhost). This confirms APP_MODE is available to the application and is being used as intended.
+
+Notes
+- There is no Service manifest in this scenario, which is expected per the guidance. Reachability is demonstrated via in-pod HTTP request to 127.0.0.1:8765, which aligns with the verification approach for this scenario.
+
+Conclusion
+- The original problem (KeyError: 'APP_MODE' despite an environment variable in the manifest) appears resolved in the current cluster state. APP_MODE is set, the app reads it, and the in-container test confirms the expected behavior.
+
+<|VERIFIED|>

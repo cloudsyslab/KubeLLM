@@ -1,0 +1,155 @@
+
+Running:
+ - run_shell_command(command=kubectl get pods -o wide)
+
+
+Running:
+ - run_shell_command(command=kubectl describe pod kube-wrong-interface-env-host)
+
+
+Running:
+ - run_shell_command(command=kubectl get service -A)
+
+
+Running:
+ - run_shell_command(command=kubectl describe service wrong-interface-env-host-service -n default)
+
+
+Running:
+ - run_shell_command(command=minikube -p minikube service wrong-interface-env-host-service --url)
+
+
+Running:
+ - run_shell_command(command=curl -sS -o /tmp/curl_output -w '%{http_code}\n' http://192.168.94.2:30913/ -v | head -n 20)
+
+
+Running:
+ - run_shell_command(command=...)
+
+
+Running:
+ - run_shell_command(command=...)
+
+## Verification Summary
+
+Findings indicate the original problem is not fixed in this cluster state. The application is bound to 127.0.0.1 inside the container, so it is not reachable via Pod IP or the Service NodePort from outside the container namespace. Internal reachability to 127.0.0.1:8765 works, but external reachability (Pod IP or Service) does not.
+
+Key evidence from commands run below.
+
+---
+
+## 1) Pods status
+
+Command:
+- kubectl get pods -o wide
+
+Output:
+- kube-wrong-interface-env-host   1/1     Running   0          2m11s   10.244.2.82   minikube
+
+Conclusion: The pod exists and is Running with 1/1 containers ready.
+
+---
+
+## 2) Pod description and state
+
+Command:
+- kubectl describe pod kube-wrong-interface-env-host
+
+Key points observed:
+- Status: Running
+- IP: 10.244.2.82
+- Container: kube-wrong-interface-env-host
+- Env: APP_HOST: 127.0.0.1
+- Ports: 8765/TCP
+- Events show Normal lifecycle (Scheduled, Pulled, Created, Started)
+
+Conclusion: Pod is Running, but the APP_HOST is set to 127.0.0.1, which means the application binds to loopback inside the container.
+
+---
+
+## 3) Services status
+
+Command:
+- kubectl get service -A
+
+Output highlights:
+- wrong-interface-env-host-service (default) is NodePort with port 8000 and NodePort 30913.
+- Endpoints for the service: 10.244.2.82:8765
+
+Command:
+- kubectl describe service wrong-interface-env-host-service -n default
+
+Key details:
+- Name: wrong-interface-env-host-service
+- Type: NodePort
+- Ports: 8000/TCP
+- NodePort: 30913
+- Endpoints: 10.244.2.82:8765
+
+Conclusion: There is a NodePort service exposing port 8000 (NodePort 30913) mapped to Pod port 8765, and the Endpoint points to the Pod IP 10.244.2.82:8765.
+
+---
+
+## 4) Access path tests
+
+4a) External access via Minikube service URL (NodePort)
+
+Command:
+- minikube -p minikube service wrong-interface-env-host-service --url
+
+Output:
+- http://192.168.94.2:30913
+
+Conclusion: The NodePort URL is available for testing.
+
+4b) External access attempt via NodePort
+
+Command:
+- curl -sS -o /tmp/curl_output -w '%{http_code}\\n' http://192.168.94.2:30913/ -v | head -n 20
+
+Output:
+- 000
+
+Interpretation:
+- The curl command did not receive an HTTP response code (shows 000), indicating the request did not succeed at the network/connection level. This suggests the service could not reach the application through the Pod IP/port path.
+
+4c) In-container test to Pod-local host
+
+Commands:
+- kubectl exec kube-wrong-interface-env-host -- python3 -c "import urllib.request; print(urllib.request.urlopen('http://127.0.0.1:8765/').getcode())"
+
+Output:
+- 200
+
+- kubectl exec kube-wrong-interface-env-host -- python3 -c "import urllib.request; print(urllib.request.urlopen('http://10.244.2.82:8765/').getcode())"
+
+Output:
+- ConnectionRefusedError (as shown in the traceback)
+
+Interpretation:
+- Inside the container itself, connecting to 127.0.0.1:8765 returns HTTP 200, meaning the server is bound to 127.0.0.1 inside the container.
+- Attempting to reach 10.244.2.82:8765 (Pod IP) from within the same Pod results in Connection Refused, which confirms the port is not bound to the Pod IP but only to the loopback inside the container.
+
+Conclusion from tests:
+- Pod IP access (10.244.2.82:8765) is not reachable.
+- NodePort access via 192.168.94.2:30913 is not reachable.
+- The service is correctly defined but the application is bound to 127.0.0.1, not 0.0.0.0.
+
+---
+
+## Diagnosis and Root Cause
+
+- The application binds to 127.0.0.1 due to APP_HOST being set to 127.0.0.1 in the pod environment.
+- binding to 127.0.0.1 prevents external access through both Pod IP and NodePort.
+- To fix, the application must bind to all interfaces (0.0.0.0). This can be achieved by setting APP_HOST to 0.0.0.0 (or removing the host binding behavior) in the deployment so that the server listens on 0.0.0.0:8765.
+
+Suggested fix (example):
+- Update wrong_interface_env_host.yaml to set APP_HOST value to "0.0.0.0" (or modify server.py to default to 0.0.0.0 if not set).
+- Re-deploy the pod and verify that the container now binds to 0.0.0.0:8765.
+- Re-run the reachability tests via Pod IP and NodePort.
+
+---
+
+## Final verdict
+
+<|FAILED|>
