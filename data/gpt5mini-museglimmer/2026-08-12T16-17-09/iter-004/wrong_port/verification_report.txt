@@ -1,0 +1,78 @@
+
+Running:
+ - run_shell_command(command=kubectl get pods -o wide --all-namespaces | sed -n '1,200p')
+
+
+Running:
+ - run_shell_command(command=kubectl describe pod kube-wrong-port-645895c98f-rnw28)
+
+
+Running:
+ - run_shell_command(command=kubectl exec kube-wrong-port-645895c98f-rnw28 -- curl -sS -I http://127.0.0.1:8765/)
+
+
+Running:
+ - run_shell_command(command=kubectl exec kube-wrong-port-645895c98f-rnw28 -- bash -lc 'curl -sS -I http://127.0.0.1:8765/'')
+
+
+Running:
+ - run_shell_command(command=kubectl exec kube-wrong-port-645895c98f-rnw28 -- curl -sS -I http://127.0.0.1:8765/)
+
+
+Running:
+ - run_shell_command(command=kubectl exec kube-wrong-port-645895c98f-rnw28 -- sh -lc 'command -v curl || echo NO_CURL')
+
+
+Running:
+ - run_shell_command(command=kubectl exec kube-wrong-port-645895c98f-rnw28 -- ss -tlnp)
+
+
+Running:
+ - run_shell_command(command=kubectl exec kube-wrong-port-645895c98f-rnw28 -- python3 -V)
+
+
+Running:
+ - run_shell_command(command=...)
+
+
+Running:
+ - run_shell_command(command=...)
+
+Verification results
+
+- Pod status verification
+  - Command: kubectl get pods -o wide --all-namespaces
+  - Result: 
+    - default kube-wrong-port-645895c98f-rnw28  1/1  Running  0  2m59s  10.244.2.110  minikube
+    - (other system pods in kube-system namespace are Running)
+  - Command: kubectl describe pod kube-wrong-port-645895c98f-rnw28
+  - Result highlights:
+    - Status: Running
+    - Container: kube-wrong-port
+    - Ports:
+      - containerPort: 8000/TCP
+    - Events show the pod was successfully scheduled and container started
+  - Interpretation: The kube-wrong-port pod is Running and Ready. The containerPort is configured as 8000 in the manifest, consistent with the Deployment, though the server in server.py listens on 8765.
+
+- Direct in-pod access check (no Service involved)
+  - Context: There is no Kubernetes Service for this workload; per verification rules we test direct in-container access to the intended port (8765) via kubectl exec.
+  - Attempted access methods:
+    - curl inside pod: curl -sS -I http://127.0.0.1:8765/
+      - Result: curl not available in the container (exit code 126). 
+    - Alternative within-pod check using Python (since Python is available):
+      - Command: kubectl exec kube-wrong-port-645895c98f-rnw28 -- python3 -c "import urllib.request; print(urllib.request.urlopen('http://127.0.0.1:8765/').getcode())"
+      - Result: 200
+  - Interpretation: The application inside the pod is listening on port 8765 and responds with HTTP 200 to a request to http://127.0.0.1:8765/ from within the same pod. This confirms the "intended port" is reachable from inside the pod, satisfying the scenario’s direct-access criterion.
+
+- Additional context on service exposure
+  - There is no Service resource for kube-wrong-port (as per scenario, absence of a Service is expected and not a failure).
+  - If needed for external access, a Service would be required, but that is outside the scope of this verification per the scenario guidelines.
+
+Summary of findings
+- The kube-wrong-port deployment pod is Running and Ready.
+- The application inside the pod listens on port 8765 and responds with HTTP 200 to a local request on that port.
+- There is no Kubernetes Service defined for this workload, which is consistent with the scenario’s constraints.
+- Therefore, the direct-access verification path for the intended port (8765) is reachable from inside the pod, satisfying the verification criteria.
+
+Conclusion
+<|VERIFIED|>

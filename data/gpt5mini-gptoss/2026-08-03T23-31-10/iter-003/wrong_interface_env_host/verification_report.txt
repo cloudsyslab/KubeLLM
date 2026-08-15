@@ -1,0 +1,91 @@
+
+Running:
+ - run_shell_command(command=kubectl get pods --no-headers -o wide)
+
+
+Running:
+ - run_shell_command(command=kubectl describe pod kube-wrong-interface-env-host)
+
+
+Running:
+ - run_shell_command(command=kubectl get service --all-namespaces -o wide)
+
+
+Running:
+ - run_shell_command(command=minikube -p minikube service wrong-interface-env-host-service --url)
+
+
+Running:
+ - run_shell_command(command=curl -sS -o /dev/null -w "%{http_code}\n" http://192.168.94.2:32561)
+
+
+Running:
+ - run_shell_command(command=kubectl describe service wrong-interface-env-host-service)
+
+
+Running:
+ - run_shell_command(command=kubectl describe pod kube-wrong-interface-env-host -n default)
+
+
+Running:
+ - run_shell_command(command=...)
+
+
+Running:
+ - run_shell_command(command=...)
+
+
+Running:
+ - run_shell_command(command=kubectl logs kube-wrong-interface-env-host)
+
+
+Running:
+ - run_shell_command(command=kubectl get pod kube-wrong-interface-env-host -o jsonpath='{.status.containerStatuses[0].ready}')
+
+
+Running:
+ - run_shell_command(command=kubectl get pod kube-wrong-interface-env-host -o jsonpath='{.status.containerStatuses[0].state}')
+
+### Verification result
+
+Not fixed. Evidence and steps below.
+
+- Pod status
+  - kubectl get pods
+    - kube-wrong-interface-env-host is Running with 1/1 containers ready (IP 10.244.1.123 in minikube node 192.168.94.2).
+
+- Pod description (environment and status)
+  - kubectl describe pod kube-wrong-interface-env-host
+    - Environment: APP_HOST: 127.0.0.1
+    - Container kube-wrong-interface-env-host: Running, Ready
+    - Events: Normal scheduling, container started successfully
+  - This shows the app inside the pod binds to 127.0.0.1 due to APP_HOST being set to the loopback address.
+
+- Service status
+  - kubectl get service --all-namespaces -o wide
+    - wrong-interface-env-host-service (default)
+      - Type: NodePort
+      - ClusterIP: 10.109.114.96
+      - Ports: 8000/TCP (nodePort 32561)
+      - Endpoints: 10.244.1.123:8765
+  - kubectl describe service wrong-interface-env-host-service
+    - NodePort: 32561/TCP
+    - Endpoints: 10.244.1.123:8765
+  - Interpretation: Service and endpoint exist and route to the pod, but the pod’s container listener binding may prevent external reach.
+
+- Access path checks
+  - minikube -p minikube service wrong-interface-env-host-service --url
+    - URL: http://192.168.94.2:32561
+  - curl -v http://192.168.94.2:32561
+    - Result: Connection refused (host unreachable on the NodePort path in this test)
+  - Attempt to curl inside the pod:
+    - kubectl exec kube-wrong-interface-env-host -- curl ... failed because curl is not installed in the container (executable not found)
+    - Subsequent attempts to curl localhost:8765 inside the container could not be performed due to missing curl tool.
+
+- Key finding relative to the original problem
+  - The app is reachable through the Kubernetes Service Endpoints, but binding is to 127.0.0.1 inside the container (APP_HOST=127.0.0.1), so the service cannot successfully route traffic to the application.
+  - The manifest / YAML provided shows APP_HOST set to 0.0.0.0 in wrong_interface_env_host.yaml, but the running pod environment shows APP_HOST: 127.0.0.1. This discrepancy indicates the runtime environment is not aligned with the intended manifest, and the app is not listening on all interfaces as required for service access.
+
+Conclusion: The issue described (HTTP requests through the pod IP or Service failing due to binding) is not fixed in the current cluster state. The app is listening on localhost (127.0.0.1) inside the container, preventing external access via Pod IP or Service NodePort.
+
+Final verdict: <|FAILED|>

@@ -1,0 +1,71 @@
+
+Running:
+ - run_shell_command(command=kubectl get pods)
+
+
+Running:
+ - run_shell_command(command=kubectl describe pod readiness-slow-start-app)
+
+
+Running:
+ - run_shell_command(command=kubectl exec readiness-slow-start-app -- curl -sS http://127.0.0.1:8080/ready || true)
+
+
+Running:
+ - run_shell_command(command=...)
+
+
+Running:
+ - run_shell_command(command=...)
+
+
+Running:
+ - run_shell_command(command=kubectl exec readiness-slow-start-app -- sh -lc 'wget -qO- http://127.0.0.1:8080/ready')
+
+
+Running:
+ - run_shell_command(command=kubectl exec readiness-slow-start-app -- sh -lc 'python3 -V || python -V')
+
+
+Running:
+ - run_shell_command(command=...)
+
+
+Running:
+ - run_shell_command(command=kubectl describe pod readiness-slow-start-app | sed -n '1,200p')
+
+Verification results
+
+Cluster and pod state
+- kubectl get pods
+  - readiness-slow-start-app 0/1 Running 0 4m21s
+
+- kubectl describe pod readiness-slow-start-app
+  - Status: Running
+  - Containers:
+    - app
+      - Port: 8080/TCP
+      - Ready: False
+      - Readiness: http-get http://:8080/ready delay=1s timeout=1s period=3s #success=1 #failure=1
+  - Events:
+    - Warning Unhealthy 3m20s (x22 over 4m22s) kubelet: Readiness probe failed: Get "http://10.244.2.71:8080/ready": context deadline exceeded (Client.Timeout exceeded while awaiting headers)
+
+Observation from within the pod
+- kubectl exec readiness-slow-start-app -- python3 -c "import urllib.request; print(urllib.request.urlopen('http://127.0.0.1:8080/ready', timeout=5).read())"
+  - Output: b'ready'
+  - This shows the application endpoint /ready does respond within the container itself (2-second sleep in server.py, then 200).
+
+Context on readinessProbe behavior
+- Readiness probe config (from manifest):
+  - initialDelaySeconds: 5
+  - periodSeconds: 3
+  - timeoutSeconds: 3
+  - failureThreshold: 3
+- Reality: The kubelet readiness probe is timing out trying to GET http://10.244.2.71:8080/ready, as evidenced by the events showing context deadline exceeded. Despite the in-pod test succeeding, the probe itself is failing from the node's perspective.
+
+Conclusion
+- The pod is not Ready (0/1) due to the readiness probe still failing with timeout errors.
+- The internal endpoint is reachable and returns the expected response, but the readiness probe configuration or timing is not yielding a Ready state for the container.
+- Therefore, the original problem (pod staying at 0/1 Ready with readiness probe timing out) has not been resolved in the current cluster state.
+
+Result: <|FAILED|>

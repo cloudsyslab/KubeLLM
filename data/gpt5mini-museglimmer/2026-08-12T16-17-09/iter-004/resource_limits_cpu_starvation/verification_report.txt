@@ -1,0 +1,66 @@
+
+Running:
+ - run_shell_command(command=kubectl get pods -o wide)
+
+
+Running:
+ - run_shell_command(command=kubectl describe pod resource-limits-cpu-starvation-app)
+
+
+Running:
+ - run_shell_command(command=kubectl describe pod resource-limits-cpu-starvation-app | sed -n '1,160p')
+
+
+Running:
+ - run_shell_command(command=...)
+
+### Verification Summary
+
+Issue being verified: The pod was previously unready due to readiness probe timeouts under CPU-limited conditions. We need to confirm the pod is now Ready/Running and the in-pod health endpoint responds as expected.
+
+Exact resource names (from manifests):
+- Pod: resource-limits-cpu-starvation-app
+- Container: app
+- Image: kube-resource-limits-cpu-starvation-app:latest
+- Readiness probe path: /healthz
+
+Steps and results
+
+1) kubectl get pods
+- Result:
+  - resource-limits-cpu-starvation-app   1/1     Running   0          4m41s   10.244.2.102   minikube   <none>
+- Conclusion: Pod exists and is in Running state with 1/1 ready containers.
+
+2) kubectl describe pod resource-limits-cpu-starvation-app
+- Key pod/container status:
+  - Container app
+    - State: Running
+    - Ready: True
+    - Limits: cpu: 5m, memory: 128Mi
+    - Requests: cpu: 5m, memory: 64Mi
+    - Readiness: http-get http://:8080/healthz delay=2s timeout=1s period=3s
+- Events (selected):
+  - There were earlier readiness probe failures (Unhealthy: connection refused and timeout), which correspond to the initial period after startup.
+- Conclusion: Pod is currently in Ready state. Readiness probe is configured to /healthz and has run, with prior failures during startup now superseded by Ready status.
+
+3) Health check from inside the Pod
+- Command attempted:
+  - kubectl exec resource-limits-cpu-starvation-app -- python3 -c "import urllib.request; print(urllib.request.urlopen('http://127.0.0.1:8080/healthz').getcode())"
+- Result:
+  - 200
+- Conclusion: The in-pod health endpoint /healthz responds with HTTP 200, indicating the container serves requests and the health check path is functioning as expected.
+
+4) Service/Ingress checks
+- No Service manifest present for this scenario; the verification path uses direct in-pod access. No Service/Ingress checks were applicable here.
+
+Assessment against the verification rules
+
+- The pod is Running and Ready (resource-limits-cpu-starvation-app, 1/1 ready, IP 10.244.2.102).
+- The in-pod health endpoint /healthz responds with 200 when invoked from within the pod.
+- There is no Service to verify via minikube service; direct in-pod health check suffices for this scenario.
+- Earlier readiness probe failures were observed in events, but the current state shows Ready=True for the container, indicating the readiness condition is satisfied now.
+- All required steps were performed with exact resource name usage from the manifest.
+
+Conclusion: The issue appears to be resolved in the current cluster state (pod is Running and Ready; health endpoint reachable within the pod). Evidence supports that the readiness condition is satisfied and the app responds as expected.
+
+<|VERIFIED|>

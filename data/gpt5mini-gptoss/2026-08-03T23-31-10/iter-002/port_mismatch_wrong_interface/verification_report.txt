@@ -1,0 +1,66 @@
+
+Running:
+ - run_shell_command(command=kubectl get pods)
+
+
+Running:
+ - run_shell_command(command=kubectl describe pod port-mismatch-wrong-interface-app)
+
+
+Running:
+ - run_shell_command(command=kubectl get service)
+
+
+Running:
+ - run_shell_command(command=kubectl describe service port-mismatch-app-service)
+
+
+Running:
+ - run_shell_command(command=minikube -p minikube service port-mismatch-app-service --url)
+
+
+Running:
+ - run_shell_command(command=curl -sS -o /dev/null -w "%{http_code}\n" http://192.168.94.2:30916)
+
+Verification steps and results
+
+1) kubectl get pods
+- Command output:
+  - port-mismatch-wrong-interface-app  1/1  Running 0  60s
+
+2) kubectl describe pod port-mismatch-wrong-interface-app
+- Key observations:
+  - Status: Running
+  - IP: 10.244.0.255
+  - Container app: Port 8765/TCP
+  - Ready: True
+  - No error events; container started successfully
+
+3) kubectl get service
+- Command output includes the relevant service:
+  - port-mismatch-app-service  NodePort  10.98.249.105  <none>  80:30916/TCP  65s
+  - (Other services listed in the output are not involved in this verification)
+
+4) kubectl describe service port-mismatch-app-service
+- Key observations:
+  - Ports: 80/TCP mapped to TargetPort 8765/TCP
+  - NodePort: 30916
+  - Endpoints: 10.244.0.255:8765
+  - Service is of type NodePort; selector matches app=port-mismatch-wrong-interface-app
+
+5) Access path check via Minikube
+- Command: minikube -p minikube service port-mismatch-app-service --url
+- Output: http://192.168.94.2:30916
+
+6) Reachability test
+- Command: curl -sS -o /dev/null -w "%{http_code}\n" http://192.168.94.2:30916
+- Output: 200
+
+Assessment
+- Pod status: Running and Ready (port-mismatch-wrong-interface-app)
+- Service path: NodePort 30916 exposed; Endpoint resolves to the pod IP 10.244.0.255:8765
+- External access: curl to http://192.168.94.2:30916 returns HTTP 200
+
+Conclusion: The original issue appears to be resolved for this cluster state; the service is reachable and returns a successful HTTP response through the NodePort path.
+
+<|VERIFIED|>

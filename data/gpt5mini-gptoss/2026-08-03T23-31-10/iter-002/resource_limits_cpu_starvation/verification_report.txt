@@ -1,0 +1,59 @@
+
+Running:
+ - run_shell_command(command=kubectl get pods)
+
+
+Running:
+ - run_shell_command(command=kubectl describe pod resource-limits-cpu-starvation-app)
+
+
+Running:
+ - run_shell_command(command=...)
+
+- Verification steps and results
+
+- Step 1: kubectl get pods
+  - Command: kubectl get pods
+  - Result:
+    - resource-limits-cpu-starvation-app   1/1     Running   0          26s
+
+- Step 2: kubectl describe pod resource-limits-cpu-starvation-app
+  - Command: kubectl describe pod resource-limits-cpu-starvation-app
+  - Key observed details:
+    - IP: 10.244.1.7
+    - Containers:
+      - app
+        - Image: kube-resource-limits-cpu-starvation-app:latest
+        - Ports: 8080/TCP
+        - Limits: cpu: 100m, memory: 128Mi
+        - Requests: cpu: 50m, memory: 64Mi
+        - Readiness: http-get http://:8080/healthz delay=2s timeout=1s period=3s
+        - State: Running (Started: Tue, 04 Aug 2026 03:56:42 +0000)
+        - Ready: True
+        - ContainersReady: True
+    - Conditions:
+      - Ready: True
+      - ContainersReady: True
+      - PodScheduled: True
+    - Events:
+      - Normal  Scheduled  Successfully assigned default/resource-limits-cpu-starvation-app to minikube
+      - Normal  Pulled     Container image "kube-resource-limits-cpu-starvation-app:latest" already present on machine
+      - Normal  Created    Created container app
+      - Normal  Started    Started container app
+  - Interpretation: Pod is Running and Ready; no error events reported (no CrashLoopBackOff, ImagePullBackOff, OOM, etc.)
+
+- Step 3: Service check
+  - There is no Service manifest in the provided scenario; absence of a Service is expected and not a failure for this verification. No Service to query.
+
+- Step 4 & 5: Ingress/External access checks
+  - Not applicable since there is no Ingress or Service to route externally in this scenario.
+
+- Health check verification inside the pod
+  - Command: kubectl exec resource-limits-cpu-starvation-app -- python3 -c "import urllib.request; print(urllib.request.urlopen('http://127.0.0.1:8080/healthz').getcode())"
+  - Result: 200
+  - Interpretation: The readiness path /healthz responds with HTTP 200, consistent with readiness probe expectations despite the simulated busy-wait behavior in server.py.
+
+- Conclusion
+  - The pod resource-limits-cpu-starvation-app is Running and Ready (1/1), and the in-pod health check endpoint responds successfully. There are no error events indicating readiness probe failures or container issues. Service exposure is not part of this scenario, and ingress/service access is not applicable here.
+
+<|VERIFIED|>

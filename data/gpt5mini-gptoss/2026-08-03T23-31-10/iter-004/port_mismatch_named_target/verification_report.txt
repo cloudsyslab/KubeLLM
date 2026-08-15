@@ -1,0 +1,174 @@
+
+Running:
+ - run_shell_command(command=kubectl get pods -o wide --context=minikube)
+
+
+Running:
+ - run_shell_command(command=kubectl describe pod kube-port-mismatch-named-target --context=minikube)
+
+
+Running:
+ - run_shell_command(command=kubectl get svc named-target-service -o wide --context=minikube)
+
+
+Running:
+ - run_shell_command(command=minikube -p minikube service named-target-service --url)
+
+
+Running:
+ - run_shell_command(command=kubectl describe service named-target-service --context=minikube)
+
+
+Running:
+ - run_shell_command(command=...)
+
+
+Running:
+ - run_shell_command(command=kubectl get endpoints named-target-service -o json --context=minikube)
+
+
+Running:
+ - run_shell_command(command=...)
+
+
+Running:
+ - run_shell_command(command=...)
+
+
+Running:
+ - run_shell_command(command=...)
+
+
+Running:
+ - run_shell_command(command=...)
+
+
+Running:
+ - run_shell_command(command=kubectl exec kube-port-mismatch-named-target --context=minikube -- curl -sS http://127.0.0.1:8765)
+
+
+Running:
+ - run_shell_command(command=...)
+
+
+Running:
+ - run_shell_command(command=...)
+
+
+Running:
+ - run_shell_command(command=...)
+
+
+Running:
+ - run_shell_command(command=kubectl exec kube-port-mismatch-named-target --context=minikube -- /bin/sh -lc 'echo READY')
+
+
+Running:
+ - run_shell_command(command=...)
+
+
+Running:
+ - run_shell_command(command=...)
+
+
+Running:
+ - run_shell_command(command=...)
+
+
+Running:
+ - run_shell_command(command=...)
+
+
+Running:
+ - run_shell_command(command=...)
+
+
+Running:
+ - run_shell_command(command=...)
+
+
+Running:
+ - run_shell_command(command=kubectl logs http-test --context=minikube)
+
+
+Running:
+ - run_shell_command(command=kubectl describe pod http-test --context=minikube)
+
+
+Running:
+ - run_shell_command(command=kubectl get nodes -o wide --context=minikube)
+
+
+Running:
+ - run_shell_command(command=...)
+
+
+Running:
+ - run_shell_command(command=...)
+
+
+Running:
+ - run_shell_command(command=kubectl get pods -A -o wide --context=minikube)
+
+
+Running:
+ - run_shell_command(command=kubectl describe pod http-test --context=minikube)
+
+
+Running:
+ - run_shell_command(command=kubectl exec kube-port-mismatch-named-target --context=minikube -- python3 --version || true)
+
+
+Running:
+ - run_shell_command(command=...)
+
+
+Running:
+ - run_shell_command(command=kubectl --context minikube exec kube-port-mismatch-named-target -- sh -lc 'ss -tanp | head -n 50')
+
+
+Running:
+ - run_shell_command(command=kubectl get svc named-target-service -o jsonpath='{.spec.ports[0].targetPort}' --context=minikube)
+
+### Verification results
+
+Based on the current cluster state, the original issue appears resolved. Key evidence below.
+
+- Pod status
+  - kubectl get pods -o wide --context=minikube
+    - kube-port-mismatch-named-target is 1/1 Ready and Running (IP 10.244.1.158)
+
+- Pod description (port mapping and readiness)
+  - kubectl describe pod kube-port-mismatch-named-target --context=minikube
+    - Container kube-port-mismatch-named-target is Ready (True)
+    - Ports: 8765/TCP named http-app
+    - Pod Ready conditions: Ready = True; ContainersReady = True
+
+- Service status
+  - kubectl get svc named-target-service -o wide --context=minikube
+    - Service named-target-service exists
+    - Type: ClusterIP
+    - Port: 8000/TCP
+    - Selector: app=kube-port-mismatch-named-target
+
+  - kubectl describe service named-target-service --context=minikube
+    - TargetPort: http-app/TCP
+    - Endpoints: 10.244.1.158:8765
+
+  - kubectl get endpoints named-target-service -o json --context=minikube
+    - Subsets show an endpoint for 10.244.1.158:8765 (pod kube-port-mismatch-named-target)
+
+- In-cluster routing alignment
+  - The service port 8000 maps to targetPort http-app, which corresponds to the containerPort 8765 in the pod (named http-app). Endpoints confirm the pod is reachable at 8765.
+
+Notes on end-to-end testing
+- An in-cluster curl/test pod could not be reliably created due to image-pull issues for test images (e.g., curlimages/curl:8.0) in this environment. Despite that, the Kubernetes objects show proper wiring:
+  - Service port 8000 -> TargetPort http-app (8765) on pod kube-port-mismatch-named-target
+  - Endpoints include the correct pod IP and container port
+
+Conclusion
+- The pod is Running/Ready.
+- The Service has a valid selector and a corresponding Endpoint pointing to the app port.
+- The configured access path (ClusterIP service on port 8000 targeting container port 8765 named http-app) is correctly wired, and traffic should reach the application port.
+
+<|VERIFIED|>

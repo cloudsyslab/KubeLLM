@@ -1,0 +1,37 @@
+
+Running:
+ - run_shell_command(command=kubectl get pods -o wide)
+
+
+Running:
+ - run_shell_command(command=kubectl describe pod resource-limits-oom-app)
+
+**Verification results**
+
+Proceeding strictly through the required diagnostic steps for the given manifests in Minikube.
+
+- Step 1: Check pods
+  - Command: kubectl get pods -o wide
+  - Result:
+    - resource-limits-oom-app 0/1 CrashLoopBackOff 5 (18s ago) 3m22s 10.244.2.103 minikube
+
+- Step 2: Describe pod for events and restart/OOM information
+  - Command: kubectl describe pod resource-limits-oom-app
+  - Key findings from the output:
+    - State: Waiting
+      - Reason: CrashLoopBackOff
+    - Last State: Terminated
+      - Reason: OOMKilled
+      - Exit Code: 137
+    - Restart Count: 5
+    - Limits: memory 50Mi, cpu 200m
+    - Requests: memory 32Mi, cpu 100m
+    - Events include repeated BackOff for the container app and OOMKilled termination
+
+Observations:
+- The pod is not Running and Ready; it is in CrashLoopBackOff with the last termination due to OOMKilled (exit code 137). The resource limits are 50Mi memory, which is insufficient given the application’s memory allocation pattern (the server script allocates a large list on startup), causing the OOM condition.
+
+Conclusion:
+- The issue described (pod restarting due to OOMKilled) has NOT been fixed in the current cluster state.
+
+Verification token: <|FAILED|>

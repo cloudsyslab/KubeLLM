@@ -1,0 +1,131 @@
+
+Running:
+ - run_shell_command(command=kubectl get pods -o wide)
+
+
+Running:
+ - run_shell_command(command=kubectl rollout status deployment kube-wrong-port)
+
+
+Running:
+ - run_shell_command(command=kubectl describe pod kube-wrong-port-658cf9bc5b-986zc)
+
+
+Running:
+ - run_shell_command(command=...)
+
+
+Running:
+ - run_shell_command(command=...)
+
+
+Running:
+ - run_shell_command(command=kubectl exec kube-wrong-port-658cf9bc5b-986zc -- /bin/sh -c 'which curl || true')
+
+
+Running:
+ - run_shell_command(command=...)
+
+
+Running:
+ - run_shell_command(command=kubectl exec kube-wrong-port-658cf9bc5b-986zc -- /bin/sh -c 'which curl || true')
+
+
+Running:
+ - run_shell_command(command=...)
+
+
+Running:
+ - run_shell_command(command=...)
+
+
+Running:
+ - run_shell_command(command=...)
+
+
+Running:
+ - run_shell_command(command=...)
+
+
+Running:
+ - run_shell_command(command=...)
+
+
+Running:
+ - run_shell_command(command=...)
+
+
+Running:
+ - run_shell_command(command=...)
+
+
+Running:
+ - run_shell_command(command=...)
+
+
+Running:
+ - run_shell_command(command=...)
+
+
+Running:
+ - run_shell_command(command=...)
+
+
+Running:
+ - run_shell_command(command=...)
+
+
+Running:
+ - run_shell_command(command=kubectl exec kube-wrong-port-658cf9bc5b-986zc -- curl -sS http://127.0.0.1:8765/ -I | head -n 5)
+
+
+Running:
+ - run_shell_command(command=...)
+
+
+Running:
+ - run_shell_command(command=kubectl get svc)
+
+
+Running:
+ - run_shell_command(command=kubectl describe pod kube-wrong-port-658cf9bc5b-986zc | sed -n '1,200p')
+
+Verification results
+
+- Pod state check
+  - Command: kubectl get pods -o wide
+  - Result summary:
+    - kube-wrong-port-658cf9bc5b-986zc — Running, 1/1 ready, IP 10.244.1.127
+    - kube-wrong-port-645895c98f-z8c8d — Terminating
+    - kube-wrong-port-7b9d4dcff-lzxvw — Terminating
+  - Interpretation: The Deployment has one active pod (the current replica) in Running/Ready state. Old replicas are terminating as part of rollout.
+
+- Deployment rollout status
+  - Command: kubectl rollout status deployment kube-wrong-port
+  - Result: deployment "kube-wrong-port" successfully rolled out
+  - Interpretation: The Deployment rollout completed successfully and the current pod template is in effect.
+
+- Pod description and port exposure
+  - Command: kubectl describe pod kube-wrong-port-658cf9bc5b-986zc
+  - Key details:
+    - Containers: kube-wrong-port
+    - Ports: 8765/TCP, 8000/TCP
+    - Ready: True
+    - IP: 10.244.1.127
+  - Interpretation: The running pod exposes port 8765 as expected (the port the app listens on per the manifest). The pod is Ready and inRunning state.
+
+- In-pod connectivity test (direct access to port 8765)
+  - Command: kubectl exec kube-wrong-port-658cf9bc5b-986zc -- python3 -c 'import urllib.request; print(urllib.request.urlopen("http://127.0.0.1:8765/").getcode())'
+  - Result: 200
+  - Interpretation: The application is listening on port 8765 inside the pod and responds to HTTP requests successfully from within the same pod. This confirms direct access to the workload on port 8765 is functioning as intended.
+
+- Additional context (Service observation)
+  - Command: kubectl get svc
+  - Observed: A ClusterIP service kube-wrong-interface-svc exists with port 8765/TCP
+  - Note: The verification scenario explicitly targets direct pod access (no Service required). The core verification is that the pod is Running, exposes the correct port, and can respond locally on port 8765. The presence of a Service is observed but not required for confirming the direct-in-pod access path.
+
+Conclusion
+
+- The current state shows the target pod is Running and Ready, exposes port 8765, and responds to HTTP requests directly inside the pod (200 OK). Rollout completed successfully, and the in-pod test confirms the direct access path works as expected in this cluster state.
+
+<|VERIFIED|>

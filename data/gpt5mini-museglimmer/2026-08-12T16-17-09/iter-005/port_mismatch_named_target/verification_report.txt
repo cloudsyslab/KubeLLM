@@ -1,0 +1,173 @@
+
+Running:
+ - run_shell_command(command=kubectl get pods -o wide)
+
+
+Running:
+ - run_shell_command(command=kubectl describe pod kube-port-mismatch-named-target)
+
+
+Running:
+ - run_shell_command(command=kubectl get service -A)
+
+
+Running:
+ - run_shell_command(command=kubectl describe service named-target-service)
+
+
+Running:
+ - run_shell_command(command=minikube -p minikube service named-target-service --url)
+
+
+Running:
+ - run_shell_command(command=kubectl get endpoints named-target-service -o wide)
+
+
+Running:
+ - run_shell_command(command=...)
+
+
+Running:
+ - run_shell_command(command=kubectl get service named-target-service -o yaml)
+
+
+Running:
+ - run_shell_command(command=kubectl describe pod kube-port-mismatch-named-target)
+
+
+Running:
+ - run_shell_command(command=kubectl get endpoints named-target-service -o wide)
+
+
+Running:
+ - run_shell_command(command=...)
+
+
+Running:
+ - run_shell_command(command=minikube -p minikube service named-target-service --url)
+
+
+Running:
+ - run_shell_command(command=kubectl exec -it kube-port-mismatch-named-target -- curl -sS http://127.0.0.1:8765/ -i)
+
+
+Running:
+ - run_shell_command(command=kubectl exec kube-port-mismatch-named-target -- curl -sS http://127.0.0.1:8765/ -i)
+
+
+Running:
+ - run_shell_command(command=kubectl exec kube-port-mismatch-named-target -- /bin/sh -lc 'curl -sS http://127.0.0.1:8765/ -i')
+
+
+Running:
+ - run_shell_command(command=...)
+
+
+Running:
+ - run_shell_command(command=kubectl exec kube-port-mismatch-named-target -- /bin/sh -lc 'nc -zv 127.0.0.1 8765')
+
+
+Running:
+ - run_shell_command(command=kubectl exec kube-port-mismatch-named-target -- /bin/sh -lc 'python3 -V || python -V')
+
+
+Running:
+ - run_shell_command(command=...)
+
+
+Running:
+ - run_shell_command(command=...)
+
+
+Running:
+ - run_shell_command(command=...)
+
+
+Running:
+ - run_shell_command(command=...)
+
+
+Running:
+ - run_shell_command(command=...)
+
+
+Running:
+ - run_shell_command(command=...)
+
+
+Running:
+ - run_shell_command(command=kubectl exec kube-port-mismatch-named-target -- curl -sS http://10.103.125.164:8000/ -i)
+
+
+Running:
+ - run_shell_command(command=...)
+
+**Verification Results for port_mismatch_named_target scenario**
+
+Summary: The Service now correctly routes to the named container port, and in-cluster reachability via the Service works. External access to the ClusterIP from outside the cluster is not configured (no NodePort), which is expected for a ClusterIP service.
+
+What I checked and observed
+
+1) Pods state
+- Command: kubectl get pods -o wide
+- Output snippet:
+  - kube-port-mismatch-named-target   1/1     Running   0          106s   IP: 10.244.2.124    Node: minikube
+- Pod status: Running, Ready: 1/1
+
+2) Pod description (to verify container readiness and port exposure)
+- Command: kubectl describe pod kube-port-mismatch-named-target
+- Key observations:
+  - Containers:
+    - kube-port-mismatch-named-target
+    - Port: 8765/TCP (http-app)
+  - Ready: True
+  - State: Running
+- Conclusion: The pod’s container is running and exposing port 8765 with the name http-app, and the container is Ready.
+
+3) Service state and configuration
+- Command: kubectl describe service named-target-service
+- Key observations:
+  - Selector: app=kube-port-mismatch-named-target
+  - Port: 8000/TCP
+  - TargetPort: http-app
+  - Endpoints: 10.244.2.124
+- Command: kubectl get endpoints named-target-service -o wide
+- Output: Endpoints: 10.244.2.124:8765
+- Interpretation:
+  - The service is correctly configured to map external port 8000 to the container port named http-app (8765).
+  - The endpoint for the service points to the pod IP 10.244.2.124:8765, which matches the container port.
+
+4) In-cluster reachability tests (primary verification path)
+- Test A: Reachable from inside the pod to its own port
+  - Command: kubectl exec kube-port-mismatch-named-target -- python3 -c "import urllib.request; print(urllib.request.urlopen('http://127.0.0.1:8765/').read())"
+  - Output: b'ok'
+  - Interpretation: The application is serving on 8765 and responds with 200-like payload when hit directly inside the pod.
+- Test B: Reachable through the Service within the cluster
+  - Command: kubectl exec kube-port-mismatch-named-target -- python3 -c "import urllib.request; print(urllib.request.urlopen('http://10.103.125.164:8000/').read())"
+  - Output: b'ok'
+  - Interpretation: The Service IP (ClusterIP 10.103.125.164) on port 8000 correctly routes to the container port 8765 via targetPort http-app, and the application responds successfully.
+
+5) External access (NodePort/Minikube URL)
+- Attempted external access (to verify reachability from outside the cluster)
+  - Command: minikube -p minikube service named-target-service --url
+  - Result: service default/named-target-service has no node port
+  - Explanation: This is a ClusterIP service, so there is no NodePort exposed. External access through the Minikube node is not configured by design for this service type.
+- Additional external curl attempt (host to service)
+  - Command: curl -v http://<minikube-ip>:8000/
+  - Result: Connection refused on port 8000 (expected due to no NodePort / external exposure)
+  - Note: This does not affect in-cluster reachability, which is what matters for the issue as described.
+
+Assessment against the original problem
+
+- The pod is Running and Ready.
+- The Service correctly targets the container port via the named port (http-app), and Endpoints show the pod IP:8765.
+- In-cluster reachability through the Service to the named application port works:
+  - Access via 127.0.0.1:8765 from inside the pod returns content ("ok").
+  - Access via the Service IP 10.103.125.164:8000 from inside the same pod returns content ("ok").
+- External access to the ClusterIP service is not configured (no NodePort), which is expected for a ClusterIP service. If external access is required, a NodePort or an Ingress/port-forward would be needed; that is outside the scope of the original issue, which focused on traffic reaching the named application port through the Service inside the cluster.
+
+Conclusion
+
+- The issue described as traffic through the Service not reaching the named application port appears resolved for in-cluster traffic. The service properly maps port 8000 to the container port named http-app (8765), and the pod serves on 8765 as expected. Therefore, the verification result is <|VERIFIED|>.
+
+<|VERIFIED|>
