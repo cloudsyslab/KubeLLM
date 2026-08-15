@@ -1,0 +1,121 @@
+
+Running:
+ - run_shell_command(command=kubectl get pods -o wide --all-namespaces)
+
+
+Running:
+ - run_shell_command(command=kubectl describe pod kube-wrong-port-5000 -n default)
+
+
+Running:
+ - run_shell_command(command=...)
+
+
+Running:
+ - run_shell_command(command=kubectl exec kube-wrong-port-5000 -n default -- sh -lc "ss -lntp 2>/dev/null | head -n 20")
+
+
+Running:
+ - run_shell_command(command=kubectl exec kube-wrong-port-5000 -n default -- sh -lc "ss -lntp 2>/dev/null | head -n 50")
+
+
+Running:
+ - run_shell_command(command=kubectl exec kube-wrong-port-5000 -n default -- python3 -V)
+
+
+Running:
+ - run_shell_command(command=...)
+
+
+Running:
+ - run_shell_command(command=...)
+
+
+Running:
+ - run_shell_command(command=...)
+
+
+Running:
+ - run_shell_command(command=...)
+
+
+Running:
+ - run_shell_command(command=...)
+
+
+Running:
+ - run_shell_command(command=...)
+
+
+Running:
+ - run_shell_command(command=...)
+
+
+Running:
+ - run_shell_command(command=...)
+
+
+Running:
+ - run_shell_command(command=...)
+
+
+Running:
+ - run_shell_command(command=...)
+
+
+Running:
+ - run_shell_command(command=kubectl get svc -n default --no-headers)
+
+
+Running:
+ - run_shell_command(command=kubectl describe pod kube-wrong-port-5000 -n default | sed -n '1,200p')
+
+Verification results
+
+1) Pods status
+- Command: kubectl get pods -o wide --all-namespaces
+- Output (relevant excerpt):
+  NAMESPACE  NAME                   READY STATUS  RESTARTS AGE
+  default    kube-wrong-port-5000    1/1   Running 0        4m51s
+  kube-system ... (other system pods)
+
+- Observation: The pod kube-wrong-port-5000 in the default namespace exists and is Running with 1/1 containers ready.
+
+2) Pod description and events
+- Command: kubectl describe pod kube-wrong-port-5000 -n default
+- Key excerpt:
+  Status: Running
+  IP: 10.244.1.208
+  Containers:
+    kube-wrong-port-5000:
+      Port: 80/TCP
+      State: Running (Started: ...)
+      Ready: True
+  Events:
+    Normal  Started  ...  kubelet  Started container kube-wrong-port-5000
+
+- Observation: The container is Running and ready. The container is configured to expose Port 80/TCP in the Kubernetes spec, although the in-container server code is intended to bind to port 5000.
+
+3) Service presence (for awareness)
+- Command: kubectl get svc -n default --no-headers
+- Output (relevant excerpt):
+  kube-wrong-interface-svc   ClusterIP   ...
+  kube-wrong-port-5000-svc   NodePort    10.109.113.45    <none>   5000:30080/TCP  ...
+  kube-wrong-port-svc        ClusterIP   ...
+  kubernetes                 ClusterIP   ...
+
+- Observation: A NodePort service kube-wrong-port-5000-svc exists, exposing NodePort 30080 for port 5000. The scenario intends no Service, but a Service is present in this cluster state. Verification will focus on direct pod access as required by the scenario.
+
+4) In-pod direct access to port 5000
+- Command: kubectl exec kube-wrong-port-5000 -n default -- curl -s -o /dev/null -w "%{http_code}\n" http://127.0.0.1:5000/
+- Output: 200
+
+- Observation: From inside the pod, a local HTTP request to 127.0.0.1:5000 succeeds with HTTP 200. This indicates the application is listening on port 5000 inside the container and serving requests as expected.
+
+Assessment
+- The target pod is Running and Ready.
+- A local HTTP request to 127.0.0.1:5000 inside the pod succeeds (HTTP 200), demonstrating direct pod access on port 5000 works as intended.
+- Although a Service exists in the cluster (which is beyond the stated absence of a Service in the scenario), the primary verification criterion (direct in-pod reachability to port 5000) is satisfied.
+
+Conclusion
+<|VERIFIED|>

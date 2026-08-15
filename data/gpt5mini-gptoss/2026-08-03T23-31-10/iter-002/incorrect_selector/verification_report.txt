@@ -1,0 +1,88 @@
+
+Running:
+ - run_shell_command(command=kubectl get pods -o wide --all-namespaces | sed -n '1,200p')
+
+
+Running:
+ - run_shell_command(command=kubectl get pods -o wide --all-namespaces | sed -n '1,200p')
+
+
+Running:
+ - run_shell_command(command=kubectl get svc app-service -o wide -A || true)
+
+
+Running:
+ - run_shell_command(command=kubectl describe pod kube-incorrect-selector -n default)
+
+
+Running:
+ - run_shell_command(command=kubectl describe svc app-service -n default || true)
+
+
+Running:
+ - run_shell_command(command=minikube -p minikube service app-service --url -n default)
+
+
+Running:
+ - run_shell_command(command=curl -sS -v http://192.168.94.2:32007/ -m 5 || true)
+
+Verification result: <|VERIFIED|>
+
+Summary
+- The pod kube-incorrect-selector in default is Running and Ready.
+- The Service app-service exists and has an endpoint pointing to the pod, with a NodePort exposed.
+- The service is reachable via minikube (NodePort) and returns a valid HTTP response.
+
+Evidence and commands run
+
+1) Check all pods are present and Running
+- Command:
+  kubectl get pods -o wide --all-namespaces
+- Observed:
+  - default  kube-incorrect-selector  1/1  Running  0  54s  10.244.0.234  minikube
+  - kube-system coredns-...  1/1  Running  ...  18h  10.244.0.218  minikube
+  - (other system pods in kube-system are Running)
+- Conclusion: The target pod kube-incorrect-selector exists and is Running in the default namespace.
+
+2) Pod detail for kube-incorrect-selector (events, status)
+- Command:
+  kubectl describe pod kube-incorrect-selector -n default
+- Observed (highlights):
+  - Status: Running
+  - Ready: True
+  - IP: 10.244.0.234
+  - Containers: kube-incorrect-selector (image: kube-incorrect-selector-app:latest) port 8765/TCP
+  - Events: Normal Scheduled, Pulled, Created, Started
+- Conclusion: Pod is healthy and container started successfully with no error events.
+
+3) Service status and endpoints
+- Command:
+  kubectl describe svc app-service -n default
+- Observed:
+  - Name: app-service
+  - Selector: app=kube-incorrect-selector
+  - Type: NodePort
+  - Port: 8000/TCP
+  - TargetPort: 8765/TCP
+  - NodePort: 32007/TCP
+  - Endpoints: 10.244.0.234:8765
+- Conclusion: Service exists, is of type NodePort, and has an endpoint pointing to the pod at 10.244.0.234:8765.
+
+4) Access the service via Minikube
+- Command:
+  minikube -p minikube service app-service --url -n default
+- Observed:
+  - http://192.168.94.2:32007
+- This confirms the service is exposed via NodePort and the URL is returned.
+
+5) Reachability test via curl
+- Command:
+  curl -sS -v http://192.168.94.2:32007/ -m 5
+- Observed:
+  - HTTP response shows a directory listing for / with a link to server.py
+- Conclusion: The application is reachable through the service URL, and the HTTP server is serving content as expected.
+
+Conclusion
+- The original problem (service endpoints not listed) appears to be resolved in the current cluster state. The pod is Running, the service has a valid endpoint, and the service is reachable via the exposed NodePort URL.
+
+Status: <|VERIFIED|>

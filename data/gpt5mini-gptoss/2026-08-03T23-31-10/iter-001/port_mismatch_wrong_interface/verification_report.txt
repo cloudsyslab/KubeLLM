@@ -1,0 +1,74 @@
+
+Running:
+ - run_shell_command(command=kubectl get pods -o wide)
+
+
+Running:
+ - run_shell_command(command=kubectl describe pod port-mismatch-wrong-interface-app)
+
+
+Running:
+ - run_shell_command(command=kubectl get service port-mismatch-app-service -o wide)
+
+
+Running:
+ - run_shell_command(command=kubectl describe service port-mismatch-app-service)
+
+
+Running:
+ - run_shell_command(command=minikube -p minikube service port-mismatch-app-service --url)
+
+
+Running:
+ - run_shell_command(command=curl -s -D - http://192.168.94.2:32434/ -o /dev/null | head -n 5)
+
+Verification summary
+
+- Pods status (kubectl get pods)
+  - curl-pod is Completed (not needed for routing)
+  - port-mismatch-wrong-interface-app is Running
+  - Relevant output:
+    - NAME                               READY   STATUS      RESTARTS   AGE
+      - curl-pod                           0/1     Completed   0          35s
+      - port-mismatch-wrong-interface-app   1/1     Running     0          2m30s
+
+- Pod details (kubectl describe pod port-mismatch-wrong-interface-app)
+  - Status: Running
+  - Container app: Ready: True
+  - Endpoints: 10.244.0.193:8765
+  - Key events: Scheduled, Created, Started (no errors)
+  - Relevant excerpt:
+    - Status: Running
+    - Containers:
+      - app: Ready: True
+    - Endpoints: 10.244.0.193:8765
+
+- Service status and endpoints (kubectl get service port-mismatch-app-service -o wide and kubectl describe service)
+  - Service name: port-mismatch-app-service
+  - Type: NodePort
+  - ClusterIP: 10.108.191.226
+  - Ports: 80/TCP (NodePort 32434)
+  - Selector: app=port-mismatch-wrong-interface-app
+  - Endpoints: 10.244.0.193:8765
+  - Observed NodePort mapping via describe:
+    - NodePort: 32434
+    - TargetPort: 8765
+  - Verified service exists and is routable to the app pod
+
+- Accessing the service via minikube (minikube service --url)
+  - Command: minikube -p minikube service port-mismatch-app-service --url
+  - URL returned: http://192.168.94.2:32434/
+
+- Reachability test (curl to the service URL)
+  - Command: curl -s -D - http://192.168.94.2:32434/ -o /dev/null | head -n 5
+  - Result: HTTP/1.0 200 OK
+  - Server: BaseHTTP/0.6 Python/3.9.25
+  - Content-type: text/html
+  - Indicates the app is reachable and responding through the NodePort
+
+Conclusion
+- The application pod port-mismatch-wrong-interface-app is Running.
+- The Service port-mismatch-app-service exposes the app via NodePort 32434 and correctly routes to the pod’s port 8765.
+- The NodePort URL is reachable from the cluster host (minikube) and returns HTTP 200 OK, confirming the previously observed connection errors are resolved.
+
+Final verdict: <|VERIFIED|>

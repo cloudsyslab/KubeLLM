@@ -1,0 +1,85 @@
+
+Running:
+ - run_shell_command(command=kubectl get pods -o wide --all-namespaces)
+
+
+Running:
+ - run_shell_command(command=kubectl get pods -A -o wide)
+
+
+Running:
+ - run_shell_command(command=kubectl get svc -n default)
+
+
+Running:
+ - run_shell_command(command=kubectl describe pod kube-port-mismatch -n default)
+
+
+Running:
+ - run_shell_command(command=kubectl describe svc app-service -n default)
+
+
+Running:
+ - run_shell_command(command=...)
+
+
+Running:
+ - run_shell_command(command=minikube -p minikube service app-service --url)
+
+Verification status: NOT FIXED
+
+Evidence from the cluster (names taken exactly from manifests):
+
+- Pod status
+  - Pod: kube-port-mismatch in namespace default
+  - kubectl get pods -A shows:
+    - default/kube-port-mismatch 1/1 Running
+      - IP: 10.244.2.38
+      - Node: minikube
+  - kubectl describe pod kube-port-mismatch -n default
+    - Container: kube-port-mismatch
+    - Ports: containerPort 8765/TCP
+    - Status: Running, Ready: True
+    - Labels: app.kubernetes.io/name=app
+- Service status
+  - Service: app-service in namespace default
+  - kubectl get svc -n default
+    - app-service: Type NodePort, Port 8000/TCP, TargetPort 8756/TCP, NodePort 31069
+  - kubectl describe svc app-service -n default
+    - Selector: app=kube-port-mismatch
+    - Endpoints: (none)
+- Mismatch details (root cause)
+  - Pod labels do not match the Service selector:
+    - Pod label: app.kubernetes.io/name=app
+    - Service selector: app=kube-port-mismatch
+  - Port mismatch between Service TargetPort and Pod containerPort:
+    - Pod containerPort: 8765
+    - Service TargetPort: 8756
+  - Because there are no Endpoints, the Service cannot route traffic to the Pod
+- Access attempt evidence
+  - minikube service app-service --url failed with:
+    - Error: X Exiting due to SVC_UNREACHABLE: service not available: no running pod for service app-service found
+
+What this means
+- The 502 Bad Gateway observed previously is still explainable by misconfiguration:
+  - The Service selector does not target the existing Pod, so no Endpoints exist for app-service.
+  - Even if the selector were corrected, the Service TargetPort (8756) does not match the Pod containerPort (8765), so the traffic would still fail unless adjusted.
+- As a result, the configured access path via app-service is not reachable.
+
+Recommended fixes (deployments must be aligned to exact manifest names)
+- Option A (simplest minimal change to align labels and port):
+  - Change the Service selector to match the Pod labels, or add a matching label to the Pod.
+    - Example Pod label addition (if choosing to keep current service selector):
+      - Add label: app: kube-port-mismatch (or modify selector to app.kubernetes.io/name=app if you also update the Pod label accordingly)
+  - Change the Service TargetPort to match the Pod containerPort:
+    - TargetPort: 8765
+  - Ensure the Pod is labeled in a way that matches the Service selector after changes.
+- Option B (align Pod to Service without changing many resources):
+  - Update the Pod metadata labels to include app: kube-port-mismatch (to match selector app=kube-port-mismatch),
+  - Or change Service selector to app.kubernetes.io/name=app (and optionally adjust Endpoints accordingly).
+  - Update app-service.yaml so that TargetPort equals the Pod containerPort (8765).
+
+Current verdict
+- Not fixed. The critical routing path is still broken due to label selector mismatch and a port mismatch between the Service and the Pod.
+
+ <|FAILED|>

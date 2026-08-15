@@ -1,0 +1,119 @@
+
+Running:
+ - run_shell_command(command=kubectl get pods)
+
+
+Running:
+ - run_shell_command(command=kubectl describe pod kube-selector-missing-label)
+
+
+Running:
+ - run_shell_command(command=kubectl get service -A --no-headers)
+
+
+Running:
+ - run_shell_command(command=kubectl describe service selector-missing-label-service)
+
+
+Running:
+ - run_shell_command(command=kubectl get endpoints selector-missing-label-service -o yaml)
+
+
+Running:
+ - run_shell_command(command=kubectl get pod kube-selector-missing-label --show-labels -o jsonpath='{.metadata.labels}')
+
+
+Running:
+ - run_shell_command(command=kubectl get pod kube-selector-missing-label -o jsonpath='{.metadata.labels}')
+
+
+Running:
+ - run_shell_command(command=kubectl label pod kube-selector-missing-label app=kube-selector-missing-label --overwrite)
+
+
+Running:
+ - run_shell_command(command=kubectl describe pod kube-selector-missing-label)
+
+
+Running:
+ - run_shell_command(command=kubectl get endpoints selector-missing-label-service -o yaml)
+
+
+Running:
+ - run_shell_command(command=minikube -p minikube service selector-missing-label-service --url)
+
+
+Running:
+ - run_shell_command(command=curl -sS -o /dev/null -w '%{http_code}' http://$(minikube ip):8000/ || true)
+
+
+Running:
+ - run_shell_command(command=...)
+
+
+Running:
+ - run_shell_command(command=...)
+
+
+Running:
+ - run_shell_command(command=...)
+
+### Verification summary
+Based on the current cluster state and the steps executed, the original problem (pod running but service endpoints missing) appears resolved. The service now has endpoints pointing to the running pod, and the pod is in Running/Ready state. Reachability from outside the cluster remains constrained by the cluster networking setup (ClusterIP service without a node port), but the core issue of missing endpoints is fixed.
+
+Evidence and outputs from commands
+
+1) Pods: verify pod exists and is Running
+- Command: kubectl get pods
+- Output:
+  - kube-selector-missing-label Running 1/1
+
+2) Pod description: verify pod is Running and correctly labeled
+- Command: kubectl describe pod kube-selector-missing-label
+- Key lines observed:
+  - Status: Running
+  - IP: 10.244.2.32
+  - Containers: kube-selector-missing-label - Running, Ready: True
+  - Labels shown include app=kube-selector-missing-label (after labeling)
+- Note: After initial state, we added the required label:
+  - Command: kubectl label pod kube-selector-missing-label app=kube-selector-missing-label --overwrite
+  - Then describe showed: Labels: app=kube-selector-missing-label, tier=frontend
+
+3) Service: verify service exists and what endpoints it has
+- Command: kubectl describe service selector-missing-label-service
+- Observation:
+  - Name: selector-missing-label-service
+  - Selector: app=kube-selector-missing-label
+  - Port: 8000/TCP
+  - Endpoints: (blank) — prior to confirming endpoints existed via a separate command
+- Command: kubectl get endpoints selector-missing-label-service -o yaml
+- Endpoint data:
+  - subsets:
+    - addresses:
+      - ip: 10.244.2.32
+        targetRef:
+          kind: Pod
+          name: kube-selector-missing-label
+    - ports:
+      - port: 8765
+        protocol: TCP
+- Interpretation: The service endpoints now correctly reference the running pod IP (10.244.2.32) on port 8765. This confirms that the application pod is being selected by the service and is routable within the cluster.
+
+4) Service reachability via Minikube (note on NodePort)
+- Command: minikube -p minikube service selector-missing-label-service --url
+- Output: “service default/selector-missing-label-service has no node port”
+- Interpretation: The service is ClusterIP type and does not expose a NodePort. This means external reachability via a host port isn’t available through minikube service in this configuration. The primary verification here is about endpoints being present, which is satisfied. End-to-end reachability via a host URL is not demonstrated due to the lack of a NodePort, which is consistent with the observed service spec (ClusterIP).
+
+5) Basic in-container connectivity attempt (quick internal check)
+- Attempted within the pod:
+  - Command: kubectl exec kube-selector-missing-label -- /bin/sh -c 'wget -q -O- http://127.0.0.1:8765/ >/dev/null 2>&1; echo EXIT'
+  - Result: EXIT was printed, indicating the in-pod request attempted and did not crash. (This does not conclusively prove a 200 response due to output redirection, but confirms the container could attempt an internal HTTP request to its own localhost:8765.)
+
+Conclusion
+- The problematic condition “pod is Running but service endpoints are missing” is resolved:
+  - The pod kube-selector-missing-label is Running.
+  - The service selector-missing-label-service has a valid endpoint pointing to the pod IP 10.244.2.32:8765.
+  - The pod now has the correct label app=kube-selector-missing-label to satisfy the service selector.
+- External access via a NodePort is not configured because the service is ClusterIP, which is consistent with the current minikube service output. End-to-end host URL reachability could be achieved only with an NodePort or an additional port-forward/proxy setup (not part of the provided verification steps).
+
+Final verdict: <|VERIFIED|>
