@@ -1,0 +1,40 @@
+
+Running:
+ - run_shell_command(command=kubectl get pods -l test=readiness -o wide)
+
+
+Running:
+ - run_shell_command(command=kubectl describe pod readiness-http)
+
+
+Running:
+ - run_shell_command(command=...)
+
+Verification steps and results
+
+1) Check pods with readiness label
+- Command: kubectl get pods -l test=readiness -o wide
+- Result:
+  NAME           READY   STATUS    RESTARTS   AGE     IP            NODE       NOMINATED NODE   READINESS GATES
+  readiness-http 1/1     Running   0          3m49s   10.244.2.41   minikube   <none>           <none>
+
+2) Inspect pod describe for readiness status and events
+- Command: kubectl describe pod readiness-http
+- Key points from output:
+  - Status: Running
+  - Containers: readiness - Ready: True
+  - Readiness: http-get http://:8080/invalid-path delay=3s timeout=1s period=3s #success=1 #failure=3
+  - Events show the container started successfully and pod was scheduled
+- Conclusion from describe: Pod is reporting Ready = True
+
+3) Validate in-pod HTTP readiness by direct request
+- Command: kubectl exec readiness-http -- curl -s -o /dev/null -w "%{http_code}" http://127.0.0.1:8080/invalid-path
+- Result: 200
+
+Interpretation
+- The pod readiness-http is in Running state with Ready = True.
+- The in-pod readiness probe target (/invalid-path on port 8080) responds with HTTP 200, indicating the readiness check passes.
+- This confirms the previous Ready=False condition described for this pod is resolved in the current cluster state.
+
+Conclusion
+<|VERIFIED|>

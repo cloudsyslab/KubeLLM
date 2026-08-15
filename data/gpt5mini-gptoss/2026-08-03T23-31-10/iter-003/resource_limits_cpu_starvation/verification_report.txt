@@ -1,0 +1,49 @@
+
+Running:
+ - run_shell_command(command=kubectl get pods)
+
+
+Running:
+ - run_shell_command(command=kubectl describe pod resource-limits-cpu-starvation-app)
+
+Verification steps performed and evidence
+
+1) Check pods
+- Command: kubectl get pods
+- Result:
+  NAME                                 READY   STATUS    RESTARTS   AGE
+  resource-limits-cpu-starvation-app   1/1     Running   0          15s
+
+2) Describe pod and check events
+- Command: kubectl describe pod resource-limits-cpu-starvation-app
+- Key details observed:
+  - Containers:
+    - app
+      - Port: 8080/TCP
+      - Image: kube-resource-limits-cpu-starvation-app:latest
+      - Limits: cpu: 100m, memory: 128Mi
+      - Requests: cpu: 100m, memory: 64Mi
+      - Readiness: http-get http://:8080/healthz delay=2s timeout=1s period=3s
+        (success if 200 is returned)
+  - Readiness state: True
+  - Conditions:
+    - Ready: True
+    - ContainersReady: True
+    - PodScheduled: True
+  - Events:
+    - Normal  Scheduled: Successfully assigned default/resource-limits-cpu-starvation-app to minikube
+    - Normal  Pulled: Container image "kube-resource-limits-cpu-starvation-app:latest" already present on machine
+    - Normal  Created: Created container app
+    - Normal  Started: Started container app
+
+Observations:
+- Pod is Running with Ready = True (1/1).
+- Readiness probe configuration indicates a 1-second timeout, and the server health check responds after a simulated 0.8s busy-wait, which should complete within the timeout.
+- No error events (e.g., CrashLoopBackOff, ImagePullBackOff, OOM) are present.
+
+Assessment
+- The pod is Running and Ready, and the readiness probe appears to function within its configured timeout given the current container behavior.
+- There is no evidence of readiness probe timeouts or CPU starvation causing unready state in the current pod status/events.
+
+Conclusion
+<|VERIFIED|>

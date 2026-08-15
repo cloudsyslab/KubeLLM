@@ -1,0 +1,96 @@
+
+Running:
+ - run_shell_command(command=kubectl get pods -o wide)
+
+
+Running:
+ - run_shell_command(command=kubectl describe pod kube-selector-missing-label)
+
+
+Running:
+ - run_shell_command(command=kubectl get service -A)
+
+
+Running:
+ - run_shell_command(command=kubectl get endpoints selector-missing-label-service -o yaml)
+
+
+Running:
+ - run_shell_command(command=minikube -p minikube service selector-missing-label-service --url)
+
+
+Running:
+ - run_shell_command(command=kubectl describe service selector-missing-label-service)
+
+
+Running:
+ - run_shell_command(command=kubectl exec kube-selector-missing-label -- curl -sS http://127.0.0.1:8765/ || true)
+
+
+Running:
+ - run_shell_command(command=...)
+
+
+Running:
+ - run_shell_command(command=...)
+
+
+Running:
+ - run_shell_command(command=...)
+
+Verification results
+
+- Pod status
+  - Command: kubectl get pods -o wide
+  - Output:
+    NAME                          READY   STATUS    RESTARTS   AGE    IP            NODE       NOMINATED NODE   READINESS GATES
+    kube-selector-missing-label   1/1     Running   0          3m4s   10.244.2.90   minikube   <none>           <none>
+  - Observations: Pod is Running and Ready (1/1).
+
+- Pod details and events
+  - Command: kubectl describe pod kube-selector-missing-label
+  - Key points:
+    - Labels: tier=frontend
+    - Container kube-selector-missing-label: Running, Ready=True
+    - No error events (Scheduled, Pulled, Started present)
+  - Observations: Pod is healthy and running; container is up.
+
+- Service status
+  - Command: kubectl get service -A
+  - Output (relevant lines):
+    NAMESPACE     NAME                             TYPE        CLUSTER-IP       EXTERNAL-IP   PORT(S)                  AGE
+    default       selector-missing-label-service   ClusterIP   10.104.93.234    <none>        8000/TCP                 3m8s
+  - Observations: Service selector-missing-label-service exists as a ClusterIP service on port 8000.
+
+  - Command: kubectl describe service selector-missing-label-service
+  - Output highlights:
+    Name: selector-missing-label-service
+    Selector: app=kube-selector-missing-label
+    Port: 8000/TCP
+    TargetPort: 8765/TCP
+    Endpoints: 
+  - Observations: Service exists but its selector requires pods with label app=kube-selector-missing-label. The current pod has label tier=frontend, not app=kube-selector-missing-label. Endpoints are empty due to label mismatch.
+
+  - Command: kubectl get endpoints selector-missing-label-service -o yaml
+  - Output: Endpoints section present but empty (no endpoints listed).
+
+  - Command: minikube -p minikube service selector-missing-label-service --url
+  - Output: * service default/selector-missing-label-service has no node port
+  - Observations: No NodePort available; access via service URL is not applicable for a ClusterIP service in this context.
+
+- In-cluster reachability / application responsiveness
+  - Command: kubectl exec kube-selector-missing-label -- /bin/sh -c 'python3 -c "import urllib.request; print(urllib.request.urlopen(\"http://127.0.0.1:8765/\").read())"'
+  - Output: b'ok'
+  - Observations: The application inside the pod responds correctly on port 8765, returning 'ok'. This confirms the containerized app is functioning, but the Service cannot route to it because the selector does not match the pod labels. The Endpoints remain empty.
+
+Conclusion
+
+- The original problem description stated: the pod is Running, but the Service has no endpoints for the application. In the current cluster state:
+  - The pod kube-selector-missing-label is Running and Ready.
+  - The Service selector-missing-label-service exists but its selector requires label app=kube-selector-missing-label, which the pod does not have (pod has tier=frontend).
+  - Endpoints for the Service are empty due to label mismatch.
+  - The app inside the pod responds on its own port (8765), indicating the container works, but Service routing is not configured to target it.
+
+- Therefore, the issue is NOT fixed in this cluster state. The service must be reconciled with the pod labels (either update the pod labels to include app=kube-selector-missing-label or update the service selector to match tier=frontend).
+
+Final verdict: <|FAILED|>

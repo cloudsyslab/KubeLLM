@@ -1,0 +1,95 @@
+
+Running:
+ - run_shell_command(command=kubectl get pods)
+ - run_shell_command(command=kubectl get service app-service)
+
+
+Running:
+ - run_shell_command(command=kubectl describe pod kube-wrong-interface)
+
+
+Running:
+ - run_shell_command(command=minikube -p minikube service app-service --url)
+
+
+Running:
+ - run_shell_command(command=curl -sv http://192.168.94.2:32047/)
+
+
+Running:
+ - run_shell_command(command=kubectl exec kube-wrong-interface -- curl -sS http://127.0.0.1:8765/)
+
+
+Running:
+ - run_shell_command(command=...)
+
+Verification results
+
+Summary:
+- The pod kube-wrong-interface is Running and Ready.
+- The Service app-service exists as a NodePort (8000:32047) with ClusterIP 10.100.220.121.
+- minikube.service reports an external URL: http://192.168.94.2:32047
+- External curl to the NodePort URL fails with connection refused.
+- Inside the Pod, a test via Python to 127.0.0.1:8765 returns HTTP 200, indicating the app is listening on loopback only (localhost) inside the container.
+
+Step-by-step findings
+
+1) Pods
+- Command: kubectl get pods
+- Output:
+  - kube-wrong-interface   1/1     Running   0          3m7s
+
+2) Pod description and readiness
+- Command: kubectl describe pod kube-wrong-interface
+- Key details:
+  - Status: Running
+  - IP: 10.244.2.21
+  - Container kube-wrong-interface: Port 8765/TCP
+  - Readiness: ContainersReady True
+  - Events show normal scheduling, pulling, creation, and start
+
+3) Service
+- Command: kubectl get service app-service
+- Output:
+  - Name: app-service
+  - Type: NodePort
+  - Cluster-IP: 10.100.220.121
+  - Ports: 8000:32047/TCP
+  - Age: 3m7s
+
+4) Access via minikube service
+- Command: minikube -p minikube service app-service --url
+- Output:
+  - http://192.168.94.2:32047
+
+5) External access test (curl)
+- Command: curl -sv http://192.168.94.2:32047/
+- Output:
+  - Connection refused
+
+6) In-container self-test (port binding)
+- Attempted command: kubectl exec kube-wrong-interface -- curl -sS http://127.0.0.1:8765/
+  - Result: curl not available (command terminated with exit code 126)
+- Alternative test: kubectl exec kube-wrong-interface -- python3 -c "import urllib.request; print(urllib.request.urlopen('http://127.0.0.1:8765/').getcode())"
+- Output: 200
+
+Root cause analysis based on evidence
+- The application is indeed reachable inside the container on 127.0.0.1:8765 (HTTP 200 from the Python test).
+- The external access via the NodePort fails due to the server binding only to localhost (127.0.0.1) inside the container. Kubernetes (via the Service and kube-proxy) can only reach the Pod on its IP:port if the container is listening on 0.0.0.0 (all interfaces). Binding to localhost prevents external (and Pod-network) access even though the process is up and port is open inside the container.
+
+Conclusion
+- The issue is NOT fixed. The service remains unreachable from outside the cluster due to the server binding to localhost only.
+
+Recommended fix
+- Update the application server to bind to all interfaces (0.0.0.0) instead of localhost.
+  - server.py change (example):
+    - Change TCPServer(("localhost", 8765), Handler) to TCPServer(("0.0.0.0", 8765), Handler)
+- Rebuild/redeploy the container image (kube-wrong-interface-app:latest) and reapply the deployment/service manifests if needed.
+- After redeploy, re-test:
+  - kubectl get pods (ensure Running/Ready)
+  - minikube -p minikube service app-service --url
+  - curl -sv <returned-url>
+  - Optional: inside-pod test: kubectl exec kube-wrong-interface -- python3 -c "import urllib.request; print(urllib.request.urlopen('http://0.0.0.0:8765/').getcode())"
+
+Final verdict
+- <|FAILED|>

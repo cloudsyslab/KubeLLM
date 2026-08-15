@@ -1,0 +1,49 @@
+
+Running:
+ - run_shell_command(command=kubectl get pods -o wide)
+
+
+Running:
+ - run_shell_command(command=kubectl describe pod resource-limits-oom-app)
+
+Verification results
+
+ pod resource and status
+ - Pod: resource-limits-oom-app
+ - kubectl get pods output:
+   - resource-limits-oom-app  0/1  CrashLoopBackOff  5 (28s ago)  3m40s  10.244.2.75  minikube  <none>  <none>
+
+Evidence from describe command
+ - Command: kubectl describe pod resource-limits-oom-app
+ - Key details:
+   - State: Waiting
+     - Reason: CrashLoopBackOff
+   - Last State: Terminated
+     - Reason: OOMKilled
+     - Exit Code: 137
+     - Started: Wed, 12 Aug 2026 22:25:10 +0000
+     - Finished: Wed, 12 Aug 2026 22:25:13 +0000
+   - Ready: False
+   - Restart Count: 5
+   - Limits:
+     - memory: 50Mi
+     - cpu: 200m
+   - Requests:
+     - memory: 32Mi
+     - cpu: 100m
+   - Events (selected):
+     - Normal Scheduled: Successfully assigned default/resource-limits-oom-app to minikube
+     - Normal Pulled: Container image "kube-resource-limits-oom-app" already present
+     - Normal Created: Created container app
+     - Normal Started: Started container app
+     - Warning BackOff: Back-off restarting failed container app in pod resource-limits-oom-app_default(9efd2760-bcfc-437e-9a3e-ab711b241368)
+
+Interpretation
+ - The container is repeatedly crashing due to memory exhaustion (OOMKilled), and the pod is in CrashLoopBackOff.
+ - The current pod limits shown by describe indicate memory limit of 50Mi, which is well below the YAML’s intended memory limit (256Mi) and far below what the Python application may allocate (the application code allocates a large memory structure).
+ - The pod is not in Running/Ready state (0/1 ready, Ready = False), so the issue has not been resolved in the current cluster state.
+
+Conclusion
+ - The issue described (repeated crashes with OOMKilled) is NOT fixed in the current cluster state.
+
+Verdict: <|FAILED|>

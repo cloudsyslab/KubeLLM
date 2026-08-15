@@ -1,0 +1,67 @@
+
+Running:
+ - run_shell_command(command=kubectl get pods -o wide --show-labels)
+
+
+Running:
+ - run_shell_command(command=kubectl describe pod port-mismatch-wrong-interface-app)
+
+
+Running:
+ - run_shell_command(command=kubectl get service -o wide)
+
+
+Running:
+ - run_shell_command(command=minikube -p minikube service port-mismatch-app-service --url)
+
+
+Running:
+ - run_shell_command(command=curl -s -o /dev/null -w "%{http_code}\n" http://192.168.94.2:32371)
+
+Verification steps and results
+
+1) Pods status
+- Command: kubectl get pods -o wide --show-labels
+- Result: port-mismatch-wrong-interface-app is Running, 1/1 READY
+  - NAME: port-mismatch-wrong-interface-app
+  - READY: 1/1
+  - STATUS: Running
+  - IP: 10.244.2.40
+  - LABELS: app=port-mismatch-wrong-interface-app
+
+2) Pod details and events
+- Command: kubectl describe pod port-mismatch-wrong-interface-app
+- Key observations:
+  - Status: Running
+  - Containers: app - Ready: True
+  - Events:
+    - Normal  Scheduled: Successfully assigned to minikube
+    - Normal  Pulled: image kube-port-mismatch-wrong-interface-app already present
+    - Normal  Created: container app created
+    - Normal  Started: container app started
+- Conclusion: No crash or error events; container is healthy and running
+
+3) Service status
+- Command: kubectl get service -o wide
+- Result for the relevant service:
+  - port-mismatch-app-service
+  - TYPE: NodePort
+  - CLUSTER-IP: 10.97.126.179
+  - PORT(S): 80:32371/TCP
+  - SELECTOR: app=port-mismatch-wrong-interface-app
+- Observations: Service exists, has a NodePort (32371) mapped to container port 8765 via targetPort 8765, and is associated with the correct pod via selector.
+
+4) Service accessibility via Minikube
+- Command: minikube -p minikube service port-mismatch-app-service --url
+- Returned URL: http://192.168.94.2:32371
+
+5) Connectivity test
+- Command: curl -s -o /dev/null -w "%{http_code}\n" http://192.168.94.2:32371
+- Result: 200
+
+Conclusion
+- The pod is Running and Ready.
+- The service port mapping is correctly configured (80 -> 8765) and accessible via NodePort 32371.
+- The Minikube URL is reachable, and a curl test returned HTTP 200, indicating successful communication to the app through the service.
+
+Verdict: <|VERIFIED|>

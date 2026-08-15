@@ -1,0 +1,102 @@
+
+Running:
+ - run_shell_command(command=kubectl get pods)
+
+
+Running:
+ - run_shell_command(command=kubectl describe pod kube-wrong-interface-env-host)
+
+
+Running:
+ - run_shell_command(command=kubectl get service -A)
+
+
+Running:
+ - run_shell_command(command=kubectl describe service wrong-interface-env-host-service)
+
+
+Running:
+ - run_shell_command(command=minikube -p minikube service wrong-interface-env-host-service --url)
+
+
+Running:
+ - run_shell_command(command=curl -sS -o /dev/null -w "%{http_code}\n" http://192.168.94.2:31666)
+
+
+Running:
+ - run_shell_command(command=kubectl exec kube-wrong-interface-env-host -- curl -sI http://127.0.0.1:8765 || true)
+
+
+Running:
+ - run_shell_command(command=...)
+
+
+Running:
+ - run_shell_command(command=...)
+
+### Verification results
+
+Work performed with exact resource names from the manifests you provided.
+
+1) Pods
+- Command: kubectl get pods
+- Result: kube-wrong-interface-env-host 1/1 Running
+- Evidence: Pod is Running with a single container ready.
+
+2) Pod details and environment
+- Command: kubectl describe pod kube-wrong-interface-env-host
+- Key details:
+  - IP: 10.244.1.248
+  - Container: kube-wrong-interface-env-host
+  - Environment variable APP_HOST: 127.0.0.1
+  - Status: Running
+  - Events show the container was started successfully
+- Interpretation: The application inside the pod is running, but APP_HOST is set to 127.0.0.1 (loopback) rather than 0.0.0.0 (all interfaces) as in the YAML manifest.
+
+3) Services
+- Command: kubectl get service -A
+- Result (relevant line):
+  - wrong-interface-env-host-service (NodePort) ports: 8000:31666/TCP; Endpoints: 10.244.1.248:8765
+- Command: kubectl describe service wrong-interface-env-host-service
+- Key details:
+  - Type: NodePort
+  - Port: 8000/TCP
+  - NodePort: 31666
+  - Endpoints: 10.244.1.248:8765
+- Interpretation: Service exists and has a NodePort; Pod IP and target port are configured as expected, but the application inside the Pod is not listening on all interfaces (see below).
+
+4) Access path checks
+- Command: minikube -p minikube service wrong-interface-env-host-service --url
+- Result: http://192.168.94.2:31666
+- Command: curl -sS -o /dev/null -w "%{http_code}\n" http://192.168.94.2:31666
+- Result: Connection refused (curl failed to connect)
+- Interpretation: External access via the NodePort (31666) is not reaching the application. The service front-end (minikube node port mapping) is reachable in principle, but the backend is not accepting connections from outside the Pod’s loopback boundary.
+
+5) In-Pod access (internal to the Pod)
+- Command: kubectl exec kube-wrong-interface-env-host -- python3 -c "import urllib.request; print(urllib.request.urlopen('http://127.0.0.1:8765').getcode())"
+- Result: 200
+- Interpretation: The application is reachable from within the Pod at 127.0.0.1:8765, i.e., on localhost inside the Pod. This confirms the server is listening on loopback inside the container and responds there.
+
+6) Cross-checking Pod IP vs. binding
+- Observations:
+  - APP_HOST is 127.0.0.1 inside the container (as shown by describe pod).
+  - The server.py uses host from APP_HOST, so it is binding to 127.0.0.1:8765.
+  - Binding to 127.0.0.1 means the service will not accept connections coming through the Pod IP (10.244.1.248) or NodePort (31666) from the cluster boundary; it will only respond to connections on localhost within the Pod.
+- This explains why the NodePort access via Minikube external IP fails, while in-Pod access to 127.0.0.1:8765 succeeds.
+
+Conclusion
+- The issue as described — HTTP requests to the application through the pod IP or Service fail — is not fixed in the current cluster state. The internal test to 127.0.0.1:8765 works, but external access via the NodePort (31666) fails due to APP_HOST being 127.0.0.1 instead of 0.0.0.0, causing the server to listen only on loopback inside the Pod.
+- The root cause is the APP_HOST environment value being 127.0.0.1 inside the container, whereas the manifest intends 0.0.0.0 to expose the server on all interfaces.
+
+Suggested fix (not executed here)
+- Ensure the application binds to all interfaces:
+  - Option A: Change APP_HOST in the Pod YAML to 0.0.0.0 and recreate the Pod (delete existing kube-wrong-interface-env-host and apply the corrected YAML so the environment is 0.0.0.0 at startup).
+  - Option B: Modify server.py to ignore APP_HOST and explicitly bind to 0.0.0.0, then rebuild/redeploy.
+- After applying the fix, verify:
+  - kubectl get pods → pod Running
+  - kubectl describe pod kube-wrong-interface-env-host → APP_HOST either reconciled to 0.0.0.0 or code binds to 0.0.0.0
+  - minikube -p minikube service wrong-interface-env-host-service --url → reachable URL
+  - curl -sS -o /dev/null -w "%{http_code}\n" <url> should return 200, not connection refused.
+
+Verification result
+<|FAILED|>

@@ -1,0 +1,169 @@
+
+Running:
+ - run_shell_command(command=kubectl get pods -o wide)
+
+
+Running:
+ - run_shell_command(command=kubectl describe pod kube-wrong-interface-env-host)
+
+
+Running:
+ - run_shell_command(command=kubectl get service -A)
+
+
+Running:
+ - run_shell_command(command=kubectl describe pod kube-wrong-interface-env-host)
+
+
+Running:
+ - run_shell_command(command=minikube -p minikube service wrong-interface-env-host-service --url)
+
+
+Running:
+ - run_shell_command(command=curl -sS -o /dev/null -w "%{http_code}\n" http://192.168.94.2:30532)
+
+
+Running:
+ - run_shell_command(command=kubectl get endpoints wrong-interface-env-host-service -o wide)
+
+
+Running:
+ - run_shell_command(command=kubectl get pod kube-wrong-interface-env-host -o jsonpath='{.status.containerStatuses[0].ready}')
+
+
+Running:
+ - run_shell_command(command=kubectl describe pod kube-wrong-interface-env-host | sed -n '1,200p')
+
+
+Running:
+ - run_shell_command(command=kubectl exec kube-wrong-interface-env-host -- sh -lc 'which curl || echo NO_CURL')
+
+
+Running:
+ - run_shell_command(command=...)
+
+
+Running:
+ - run_shell_command(command=...)
+
+
+Running:
+ - run_shell_command(command=...)
+
+
+Running:
+ - run_shell_command(command=...)
+
+
+Running:
+ - run_shell_command(command=...)
+
+
+Running:
+ - run_shell_command(command=kubectl exec kube-wrong-interface-env-host -- sh -lc 'echo READY')
+
+
+Running:
+ - run_shell_command(command=kubectl run curl-test --image=curlimages/curl:8.88.1 --restart=Never --rm -i --tty -- sh)
+
+
+Running:
+ - run_shell_command(command=...)
+
+
+Running:
+ - run_shell_command(command=...)
+
+
+Running:
+ - run_shell_command(command=kubectl exec kube-wrong-interface-env-host -- curl http://127.0.0.1:8765 || true)
+
+
+Running:
+ - run_shell_command(command=...)
+
+
+Running:
+ - run_shell_command(command=...)
+
+
+Running:
+ - run_shell_command(command=...)
+
+
+Running:
+ - run_shell_command(command=kubectl exec kube-wrong-interface-env-host -- bash -lc 'curl -sS http://127.0.0.1:8765/ -m 5')
+
+
+Running:
+ - run_shell_command(command=...)
+
+- Verification title: Wrong-interface-env-host pod with NodePort service
+
+Evidence and steps performed (exact commands and results):
+
+1) Pod status
+- Command: kubectl get pods -o wide
+- Result:
+  - kube-wrong-interface-env-host 1/1 Running 0 16m 10.244.1.198 minikube
+
+2) Pod details and events
+- Command: kubectl describe pod kube-wrong-interface-env-host
+- Key points:
+  - Status: Running
+  - IP: 10.244.1.198
+  - Container kube-wrong-interface-env-host: Ready: True
+  - Events show normal scheduling, image pull, container creation and start (no errors)
+
+3) Service existence and type
+- Command: kubectl get service -A
+- Result excerpt:
+  - default wrong-interface-env-host-service NodePort 10.110.122.199 8000:30532/TCP 16m
+- Command: kubectl describe pod kube-wrong-interface-env-host (confirm pod readiness again)
+- Result excerpt:
+  - Pod is Running and container is Ready
+
+4) NodePort URL for the service
+- Command: minikube -p minikube service wrong-interface-env-host-service --url
+- Result:
+  - http://192.168.94.2:30532
+
+5) External access test to NodePort (host to NodePort)
+- Command: curl -sS http://192.168.94.2:30532
+- Result:
+  - Connection refused (curl: Failed to connect)
+
+6) Pod endpoints for the service
+- Command: kubectl get endpoints wrong-interface-env-host-service -o wide
+- Result:
+  - wrong-interface-env-host-service 10.244.1.198:8765
+
+7) In-pod connectivity test (loopback to app)
+- Command: kubectl exec kube-wrong-interface-env-host -- python3 - <<'PY'
+  import urllib.request
+  try:
+      code = urllib.request.urlopen('http://127.0.0.1:8765/').getcode()
+      print(code)
+  except Exception as e:
+      print("ERROR", type(e).__name__, e)
+  PY
+- Result:
+  - 200
+
+- Additional in-pod test (curl inside pod after installing curl)
+- Command: kubectl exec kube-wrong-interface-env-host -- bash -lc 'apt-get update >/dev/null 2>&1; apt-get install -y curl >/dev/null 2>&1; curl -sS http://127.0.0.1:8765/ -m 5'
+- Result:
+  - HTML directory listing for /
+  - This confirms the app is serving on 127.0.0.1:8765 inside the pod
+
+Summary of findings:
+- The pod kube-wrong-interface-env-host is Running and its container is Ready.
+- A NodePort service wrong-interface-env-host-service exists (port 8000 on the service, mapping to targetPort 8765) and endpoints show the pod IP 10.244.1.198:8765 is being served.
+- Access via the NodePort URL from the host (minikube node) is not currently reachable: connection refused when attempting to curl http://192.168.94.2:30532.
+- From inside the pod itself, the application is reachable at 127.0.0.1:8765 (HTTP 200 responses observed).
+
+Conclusion:
+- The root cause of the original problem is not fully resolved for external access via the Service/NodePort. While the pod is Running and the application is reachable from inside the pod, external access through the NodePort path (as tested from the host) is not functioning.
+- Therefore, the issue should not be marked as fixed.
+
+Final verification token: <|FAILED|>

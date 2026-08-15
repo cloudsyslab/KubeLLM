@@ -1,0 +1,75 @@
+
+Running:
+ - run_shell_command(command=kubectl get pods -o wide)
+
+
+Running:
+ - run_shell_command(command=kubectl describe pod kube-port-mismatch-named-target)
+
+
+Running:
+ - run_shell_command(command=kubectl get service -A)
+
+
+Running:
+ - run_shell_command(command=kubectl describe service named-target-service)
+
+
+Running:
+ - run_shell_command(command=minikube -p minikube service named-target-service --url)
+
+
+Running:
+ - run_shell_command(command=kubectl get endpoints named-target-service -o wide)
+
+Diagnostic verification results
+
+Status summary
+- Pod: kube-port-mismatch-named-target
+  - State: Running
+  - Ready: 1/1
+  - IP: 10.244.2.9
+  - Details from kubectl describe pod show container port 8765/TCP (http-app) and that the container is Running and Ready.
+
+- Service: named-target-service
+  - Type: ClusterIP
+  - ClusterIP: 10.104.169.99
+  - Port: 8000/TCP
+  - TargetPort: web/TCP
+  - Selector: app=kube-port-mismatch-named-target
+  - Endpoints: initially appeared as 10.244.2.9 in one output, but a subsequent kubectl get endpoints shows <none>. The current state indicates no endpoints are bound to the service.
+
+- Endpoints for named-target-service
+  - kubectl get endpoints named-target-service -o wide -> <none>
+  - This means there is no pod endpoint currently connected to the service port 8000.
+
+- Port mismatch issue (root cause)
+  - Pod container port: 8765 (named http-app)
+  - Service targetPort: web (no container port named web in the pod)
+  - This mismatch explains why traffic through the service does not reach the application, despite the pod being Ready.
+
+Command outputs (selected)
+- kubectl get pods -o wide
+  - kube-port-mismatch-named-target  1/1  Running  0  2m18s  10.244.2.9  minikube
+- kubectl describe pod kube-port-mismatch-named-target
+  - Port: 8765/TCP (http-app)
+  - Status: Running; Ready: True
+- kubectl describe service named-target-service
+  - Port: 8000/TCP
+  - TargetPort: web/TCP
+  - Endpoints: <none> (or inconsistent in earlier output showing a PodIP, but the Endpoints resource now reports <none>)
+- kubectl get endpoints named-target-service -o wide
+  - Endpoints: <none>
+- minikube -p minikube service named-target-service --url
+  - Result: service default/named-target-service has no node port
+  - No URL to test via minikube service
+
+Assessment against verification rules
+- The pod is Running and Ready.
+- The service exists and selects the pod, but the TargetPort (web) does not match any container port in the pod (8765, named http-app).
+- Endpoints are not bound to the service, confirming traffic cannot reach the application port through the service.
+- External access via minikube service URL is not available due to the absence of a node port / URL for this ClusterIP service.
+- Therefore, the original issue (traffic not reaching the named application port via the Service) is not resolved.
+
+Verdict
+<|FAILED|>

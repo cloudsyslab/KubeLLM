@@ -1,0 +1,57 @@
+
+Running:
+ - run_shell_command(command=kubectl get pods -o wide)
+
+
+Running:
+ - run_shell_command(command=kubectl describe pod selector-env-app)
+
+
+Running:
+ - run_shell_command(command=kubectl get service -A -o wide)
+
+
+Running:
+ - run_shell_command(command=minikube -p minikube service selector-env-app-service --url)
+
+
+Running:
+ - run_shell_command(command=curl -sS -o /dev/null -w "%{http_code}\n" http://192.168.94.2:31451/)
+
+- Verification steps and evidence
+
+1) Pod readiness
+- Command: kubectl get pods -o wide
+- Output:
+  - NAME               READY   STATUS    RESTARTS   AGE   IP             NODE       NOMINATED NODE   READINESS GATES
+  - selector-env-app   1/1     Running   0          24s   10.244.1.238   minikube   <none>           <none>
+
+2) Pod status details
+- Command: kubectl describe pod selector-env-app
+- Key points from output:
+  - Status: Running
+  - Containers: app – Ready: True, State: Running
+  - Events include: Successfully assigned, Pulled, Created, Started
+  - Env: APP_MESSAGE: Hello from Kubernetes
+  - No crash-related events observed; container started successfully
+
+3) Service existence and endpoints
+- Command: kubectl get service -A -o wide
+- Output (relevant line):
+  - default   selector-env-app-service   NodePort    10.102.8.194     <none>        80:31451/TCP             83s    app=selector-env-app
+- Interpretation: Service exists with selector app=selector-env-app and is of type NodePort, exposing port 80 mapped to node port 31451
+
+4) Access path via Minikube service command
+- Command: minikube -p minikube service selector-env-app-service --url
+- Output: http://192.168.94.2:31451
+
+5) Functional reachability test
+- Command: curl -sS -o /dev/null -w "%{http_code}\n" http://192.168.94.2:31451/
+- Output: 200
+
+Conclusion
+- The pod selector-env-app is Running and Ready.
+- The service selector-env-app-service exists and is reachable via Minikube URL at 192.168.94.2:31451.
+- A direct curl to the service URL returns HTTP 200, indicating the endpoint is responding as expected.
+
+<|VERIFIED|>
