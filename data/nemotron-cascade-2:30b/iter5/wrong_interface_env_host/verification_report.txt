@@ -1,0 +1,79 @@
+
+Running:
+ - run_shell_command(command=kubectl get pods -A -o wide)
+
+
+Running:
+ - run_shell_command(command=kubectl describe pod kube-wrong-interface-env-host -n default)
+
+
+Running:
+ - run_shell_command(command=kubectl get service -A -o wide)
+
+
+Running:
+ - run_shell_command(command=kubectl describe service wrong-interface-env-host-service -n default)
+
+
+Running:
+ - run_shell_command(command=minikube -p minikube service wrong-interface-env-host-service --url)
+
+
+Running:
+ - run_shell_command(command=curl -s -o /dev/null -w "%{http_code}\n" http://192.168.58.2:31779/ -v)
+
+Here is the precise verification run and findings.
+
+What I checked
+- Pods
+  - kubectl get pods -A -o wide
+    - default/kube-wrong-interface-env-host is Running with 1/1 READY (IP 10.244.2.143 on node minikube)
+    - Other system pods are Running (DNS, etcd, API server, etc.)
+- Pod details
+  - kubectl describe pod kube-wrong-interface-env-host -n default
+    - Status: Running
+    - IP: 10.244.2.143
+    - Environment: APP_HOST: 127.0.0.1
+    - Events show the container started successfully
+- Service information
+  - kubectl get service -A -o wide
+    - Service: wrong-interface-env-host-service (default)
+    - Type: NodePort
+    - Ports: 8000/TCP (NodePort 31779) with TargetPort 8765
+    - Endpoints: 10.244.2.143:8765
+  - kubectl describe service wrong-interface-env-host-service -n default
+    - NodePort: 31779
+    - Port: 8000/TCP
+    - TargetPort: 8765/TCP
+    - Endpoints: 10.244.2.143:8765
+- Access path test
+  - minikube -p minikube service wrong-interface-env-host-service --url
+    - URL: http://192.168.58.2:31779
+  - curl -v to the URL
+    - curl attempt: http://192.168.58.2:31779/
+    - Result: Connection refused (server not listening on that interface/port from outside)
+      - Output snippet:
+        - “Trying 192.168.58.2:31779...”
+        - “connect to 192.168.58.2 port 31779 failed: Connection refused”
+        - curl exited with non-zero status
+
+Interpretation of findings
+- The pod kube-wrong-interface-env-host is Running, and the service wrong-interface-env-host-service exists with a NodePort (31779) and endpoints pointing to the pod IP 10.244.2.143:8765. This confirms basic connectivity configuration (pod, service, endpoint wiring) is in place.
+- The critical issue appears to be the container’s binding address:
+  - The pod’s environment inside the container shows APP_HOST: 127.0.0.1 (as observed in kubectl describe pod -n default).
+  - The application code binds to host = os.environ.get("APP_HOST", "0.0.0.0"), port 8765.
+  - If APP_HOST is 127.0.0.1, the HTTP server binds to 127.0.0.1 inside the container only, making it unreachable from other containers/pods or from the NodePort on the node.
+- Consequently, even though the NodePort and service routing are configured, the server is not listening on the container’s external/interface address, causing the HTTP requests through the Service/NodePort to fail (as seen by the connection refused from the NodePort URL).
+
+Conclusion
+- The issue is not fixed. While the pod is Running and the Service is present, the HTTP endpoint is not reachable due to the application binding to 127.0.0.1 inside the container instead of 0.0.0.0, despite the manifest intending to set APP_HOST to 0.0.0.0.
+- Evidence supports that: pod is Running, service/endpoint configured, but curl to the NodePort URL fails with connection refused.
+
+Recommendation (for remediation)
+- Ensure the container's APP_HOST is set to 0.0.0.0 at runtime:
+  - Confirm the Pod manifest actually sets APP_HOST to 0.0.0.0 (the provided YAML shows APP_HOST: "0.0.0.0"), and ensure no image-level override occurs.
+  - If using a container image that overrides APP_HOST at startup, modify the entrypoint or Kubernetes env to enforce APP_HOST=0.0.0.0 (or remove APP_HOST so that the default 0.0.0.0 is used).
+  - Alternatively, modify server.py to bind to all interfaces unconditionally, e.g., host = os.environ.get("APP_HOST", "0.0.0.0") and ensure APP_HOST defaults to 0.0.0.0 unless explicitly overridden.
+
+Verification tokens
+- <|FAILED|>

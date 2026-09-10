@@ -1,0 +1,64 @@
+
+Running:
+ - run_shell_command(command=kubectl get pods)
+
+
+Running:
+ - run_shell_command(command=kubectl describe pod kube-wrong-interface-env-host)
+
+
+Running:
+ - run_shell_command(command=kubectl get service)
+
+
+Running:
+ - run_shell_command(command=kubectl describe service wrong-interface-env-host-service)
+
+
+Running:
+ - run_shell_command(command=minikube -p minikube service wrong-interface-env-host-service --url)
+
+
+Running:
+ - run_shell_command(command=curl -s -o /dev/null -w "%{http_code}\n" http://192.168.94.2:30278)
+
+Verification results
+
+Cluster: Minikube (profile: minikube)
+
+1) Pods
+- kubectl get pods
+  - kube-wrong-interface-env-host  1/1  Running  0  92s
+
+2) Pod details
+- kubectl describe pod kube-wrong-interface-env-host
+  - Status: Running
+  - Container kube-wrong-interface-env-host: Ready: True
+  - IP: 10.244.2.195
+  - Events show normal scheduling and container start (No errors)
+
+3) Service
+- kubectl get service
+  - wrong-interface-env-host-service  NodePort  10.101.95.120  <none>  8000/TCP  4m40s
+  - It exists and is of type NodePort with port 8000 mapped to the targetPort 8765
+- kubectl describe service wrong-interface-env-host-service
+  - Endpoints: 10.244.2.195:8765
+  - NodePort: 30278/TCP
+  - Port: 8000/TCP
+  - TargetPort: 8765/TCP
+
+4) Access path (NodePort)
+- minikube -p minikube service wrong-interface-env-host-service --url
+  - http://192.168.94.2:30278
+
+5) Reachability check
+- curl -s -o /dev/null -w "%{http_code}\n" http://192.168.94.2:30278
+  - HTTP status: 200
+
+Assessment
+- The pod kube-wrong-interface-env-host is Running and Ready.
+- The service wrong-interface-env-host-service exists, has a NodePort (30278) mapped to targetPort 8765, and endpoints include the running pod IP (10.244.2.195:8765).
+- The NodePort URL is reachable from Minikube (curl returned 200).
+
+Conclusion
+<|VERIFIED|>

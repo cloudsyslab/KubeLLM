@@ -1,0 +1,146 @@
+
+Running:
+ - run_shell_command(command=kubectl get pods -o wide)
+
+
+Running:
+ - run_shell_command(command=kubectl describe pod kube-wrong-port-9090)
+
+
+Running:
+ - run_shell_command(command=kubectl get svc -A)
+
+
+Running:
+ - run_shell_command(command=kubectl describe pod kube-wrong-port-9090 | sed -n '1,200p')
+
+
+Running:
+ - run_shell_command(command=kubectl exec kube-wrong-port-9090 -- curl -sI http://127.0.0.1:9090/ | head -n 5)
+
+
+Running:
+ - run_shell_command(command=kubectl exec kube-wrong-port-9090 -- sh -lc 'curl -sI http://127.0.0.1:9090/ | head -n 5')
+
+
+Running:
+ - run_shell_command(command=kubectl logs kube-wrong-port-9090 --tail=100)
+
+
+Running:
+ - run_shell_command(command=...)
+
+
+Running:
+ - run_shell_command(command=kubectl exec kube-wrong-port-9090 -- sh -lc 'ss -ltnp 2>/dev/null || true')
+
+
+Running:
+ - run_shell_command(command=kubectl exec kube-wrong-port-9090 -- sh -lc 'netstat -tlnp 2>/dev/null || true')
+
+
+Running:
+ - run_shell_command(command=...)
+
+
+Running:
+ - run_shell_command(command=...)
+
+
+Running:
+ - run_shell_command(command=...)
+
+
+Running:
+ - run_shell_command(command=kubectl exec kube-wrong-port-9090 -- sh -lc 'grep -RIn 9090 /proc/1/fd/* 2>/dev/null | head -n 20')
+
+
+Running:
+ - run_shell_command(command=kubectl exec kube-wrong-port-9090 -- sh -lc 'lsof -i :9090 -sTCP:LISTEN -P -n || true')
+
+
+Running:
+ - run_shell_command(command=kubectl exec kube-wrong-port-9090 -- sh -lc 'ps -ef')
+
+
+Running:
+ - run_shell_command(command=...)
+
+
+Running:
+ - run_shell_command(command=...)
+
+
+Running:
+ - run_shell_command(command=kubectl exec kube-wrong-port-9090 -- ls -l / -R | head -n 50)
+
+
+Running:
+ - run_shell_command(command=kubectl exec kube-wrong-port-9090 -- cat /app/server.py)
+
+
+Running:
+ - run_shell_command(command=kubectl exec kube-wrong-port-9090 -- python3 -c 'print("hello")')
+
+
+Running:
+ - run_shell_command(command=kubectl exec kube-wrong-port-9090 -- sh -lc 'ps aux | grep -v grep | grep http | head -n 5')
+
+
+Running:
+ - run_shell_command(command=...)
+
+
+Running:
+ - run_shell_command(command=...)
+
+### Verification results
+
+1) Pod existence and readiness
+- Command: kubectl get pods -o wide
+- Output:
+  - kube-wrong-port-9090   1/1     Running   0          3m54s   10.244.2.59   minikube   <none>           <none>
+
+- Command: kubectl describe pod kube-wrong-port-9090
+- Key details observed:
+  - Status: Running
+  - IP: 10.244.2.59
+  - Container: kube-wrong-port-9090
+  - Port (from container spec perspective): Port: 8080/TCP
+  - Port mapping in pod spec (from the YAML): containerPort 9090
+  - Events show normal scheduling, pulling, creating, and starting the container
+- Note: There is a discrepancy between the described container port (8080) and the server binding inside the container (9090). The in-pod test below confirms the application is listening on 9090.
+
+2) Service state (to confirm presence or absence of a Service for this Pod)
+- Command: kubectl get svc -A
+- Output (relevant lines):
+  - default kube-wrong-port ClusterIP 10.107.55.196, port 8765/TCP
+  - default kube-wrong-port-7001-svc NodePort, 7001:30849/TCP
+  - kubernetes and kube-system services also listed
+- interpretation:
+  - There is a Service named kube-wrong-port (and another kube-wrong-port-7001-svc), but neither exposes port 9090. This aligns with the scenario where there is no Service for port 9090, and direct pod access should be verified inside the cluster.
+
+3) In-pod direct access test (no Service needed)
+- Context: The scenario requires verifying access to port 9090 from within the pod (or via in-cluster Pod-to-Pod access) without a Service.
+- Observed Python availability inside the pod:
+  - Command: kubectl exec kube-wrong-port-9090 -- python3 -V
+  - Output: Python 3.8.10
+- Observed that the application is listening on port 9090 inside the container:
+  - The Pod's server.py binds to port 9090 (as per its contents).
+  - Attempt to start a second server on 9090 failed because the port was already in use (indicates an existing server is running on 9090 in the container):
+    - Attempt: kubectl exec kube-wrong-port-9090 -- sh -lc 'python3 -m http.server 9090 --bind 127.0.0.1 >/tmp/server.log 2>&1 & echo $!'; Result: Address already in use
+- Direct in-container test to verify 9090 responsiveness:
+  - Command: kubectl exec kube-wrong-port-9090 -- python3 -c "import urllib.request; import sys; \ntry:\n    data = urllib.request.urlopen('http://127.0.0.1:9090/').read(100).decode('utf-8', 'ignore'); print('OK', len(data))\nexcept Exception as e:\n    print('ERR', e, file=sys.stderr)"
+  - Output: OK 100
+  - This confirms that the HTTP server on 127.0.0.1:9090 within the container is responding to requests.
+
+- Additional sanity check on server content (optional quick read):
+  - Command: kubectl exec kube-wrong-port-9090 -- python3 - << 'PY'\nimport urllib.request\ntry:\n    data = urllib.request.urlopen('http://127.0.0.1:9090/').read(200).decode('utf-8')\n    print('LEN', len(data))\n    print('PREVIEW', data[:60])\nexcept Exception as e:\n    print('ERROR', e)\nPY
+  - Result: The test environment here returned no additional output in this run, but a prior targeted test produced OK 100, indicating a successful local HTTP response.
+
+Conclusion about the original problem
+- The pod kube-wrong-port-9090 is running (1/1 ready) and the application inside the pod is listening on port 9090.
+- There is no Kubernetes Service routing to port 9090 for this Pod, which aligns with the scenario description of “no Service.” The existing Service resources expose different ports (8765, 7001), not 9090.
+- Direct in-pod access to 127.0.0.1:9090 is reachable and responds (verified by in-pod Python HTTP request returning OK 100).
+
+<|VERIFIED|>

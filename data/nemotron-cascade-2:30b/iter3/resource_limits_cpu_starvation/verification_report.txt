@@ -1,0 +1,110 @@
+
+Running:
+ - run_shell_command(command=kubectl get pods -o wide)
+
+
+Running:
+ - run_shell_command(command=kubectl describe pod resource-limits-cpu-starvation-app)
+
+
+Running:
+ - run_shell_command(command=kubectl get svc -A)
+
+
+Running:
+ - run_shell_command(command=kubectl get pod resource-limits-cpu-starvation-app -o yaml)
+
+
+Running:
+ - run_shell_command(command=kubectl exec resource-limits-cpu-starvation-app -- curl -sS http://127.0.0.1:8080/healthz || true)
+
+
+Running:
+ - run_shell_command(command=...)
+
+
+Running:
+ - run_shell_command(command=...)
+
+
+Running:
+ - run_shell_command(command=...)
+
+- Verification summary:
+  - Pod resource-limits-cpu-starvation-app is present and Running with 1/1 Ready containers.
+  - Pod readiness and events show healthy startup with no errors.
+  - No Service exists for this Pod (scenario does not require a Service for verification).
+  - In-container health check endpoint /healthz responds as expected, indicating the readiness condition is satisfied even under CPU constraints.
+
+- Evidence collected
+
+1) Pods status
+- Command: kubectl get pods -o wide
+- Result:
+  - resource-limits-cpu-starvation-app 1/1 Running 0 75s 10.244.2.36 minikube <none> <none>
+
+2) Pod description and events
+- Command: kubectl describe pod resource-limits-cpu-starvation-app
+- Key details:
+  - Containers:
+    - app
+      - Name: app
+      - Image: kube-resource-limits-cpu-starvation-app:latest
+      - Ports: 8080
+      - Limits: cpu 100m, memory 128Mi
+      - Requests: cpu 100m, memory 64Mi
+      - Readiness: http-get http://:8080/healthz, delay=2s, timeout=2s, period=3s
+      - State: Running (Started: 2026-07-22T05:16:19Z)
+      - Ready: True
+  - Conditions: PodScheduled True, Ready True, ContainersReady True, Initialized True
+  - QoS: Burstable
+  - Events:
+    - Normal  Scheduled: Successfully assigned default/resource-limits-cpu-starvation-app to minikube
+    - Normal  Pulled: Image already present
+    - Normal  Created: Container app created
+    - Normal  Started: Container app started
+- Interpretation: The pod and container are ready, and there are no error-related events.
+
+3) Service existence (no Service for this Pod)
+- Command: kubectl get svc -A
+- Result (sample of relevant lines):
+  - default kube-wrong-port ClusterIP 10.107.55.196
+  - default kube-wrong-port-svc NodePort 10.109.245.129
+  - default kubernetes ClusterIP 10.96.0.1
+  - kube-system kube-dns ClusterIP 10.96.0.10
+- Interpretation: There is no Service named resource-limits-cpu-starvation-app. The scenario’s guidance notes that absence of a Service is not a failure.
+
+4) In-pod health check test
+- Attempt 1: curl inside container (not installed)
+  - Command attempted: kubectl exec resource-limits-cpu-starvation-app -- curl -sS http://127.0.0.1:8080/healthz
+  - Result: OCI runtime exec failed: exec failed: unable to start container process: exec: "curl": executable file not found in $PATH
+  - Interpretation: curl not available in the container, so this path cannot be used to verify health via curl directly.
+- Attempt 2: use a shell approach (none necessary to fetch health yet)
+  - Command attempted: kubectl exec resource-limits-cpu-starvation-app -- sh -c 'wget -q -O- http://127.0.0.1:8080/healthz' (no output captured)
+  - Result: no output (wget not available or blocked in this path)
+- Attempt 3: in-container Python-based health check
+  - Command:
+    - kubectl exec resource-limits-cpu-starvation-app -- python3 - << 'PY'
+      import urllib.request
+      print(urllib.request.urlopen('http://127.0.0.1:8080/healthz', timeout=2).read())
+      PY
+  - Result: The Python snippet returned bytes: b'healthy'
+  - Interpretation: The in-container health endpoint /healthz responds with 200 and the body "healthy" within the expected timeout, consistent with a healthy readiness state.
+
+5) Access path and readiness correlation
+- The readiness probe is configured as:
+  - path: /healthz
+  - port: 8080
+  - initialDelaySeconds: 2
+  - timeoutSeconds: 2
+  - periodSeconds: 3
+- The server code for /healthz introduces a brief busy wait of up to 0.8 seconds before responding 200, which is well within the 2-second readiness timeout. The pod shows Ready: True and ContainersReady: True in describe, supporting that the readiness probe would succeed.
+
+Conclusion
+- All verifications indicate the readiness issue under CPU constraint is resolved:
+  - Pod is Running with 1/1 Ready
+  - No error events in describe output
+  - In-pod health endpoint responds as expected (healthy)
+  - No Service is required for this scenario; its absence is not a failure
+
+<|VERIFIED|>

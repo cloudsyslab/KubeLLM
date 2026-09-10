@@ -1,0 +1,77 @@
+
+Running:
+ - run_shell_command(command=kubectl get pods -o wide)
+
+
+Running:
+ - run_shell_command(command=kubectl describe pod readiness-slow-start-app)
+
+
+Running:
+ - run_shell_command(command=...)
+
+
+Running:
+ - run_shell_command(command=...)
+
+
+Running:
+ - run_shell_command(command=kubectl exec readiness-slow-start-app -- sh -lc 'wget -q -O- http://127.0.0.1:8080/ready')
+
+
+Running:
+ - run_shell_command(command=...)
+
+
+Running:
+ - run_shell_command(command=...)
+
+
+Running:
+ - run_shell_command(command=kubectl get pods)
+
+ verification results
+
+- Step 1: Pod existence and status
+  - Command: kubectl get pods -o wide
+  - Result:
+    - readiness-slow-start-app 1/1 Running 0 118s
+    - IP: 10.244.2.228
+    - Node: minikube
+
+- Step 2: Pod details and readiness status
+  - Command: kubectl describe pod readiness-slow-start-app
+  - Key excerpts:
+    - Status: Running
+    - IP: 10.244.2.228
+    - Containers:
+      - app:
+        - Port: 8080/TCP
+        - Readiness: http-get http://:8080/ready delay=5s timeout=3s period=3s
+        - Ready: True
+        - ContainersReady: True
+    - Events indicate the container started successfully
+      - Normal  Started    kubelet: Started container app
+
+- Step 3: In-pod readiness probe check (no service defined; verify direct path)
+  - Attempt 1: curl inside pod
+    - Command attempted: kubectl exec readiness-slow-start-app -- curl -sS http://127.0.0.1:8080/ready -o /dev/null -w "%{http_code}"
+    - Result: curl not found in container (executable not installed)
+  - Attempt 2: fall back to in-container Python to hit the readiness endpoint
+    - Command: kubectl exec readiness-slow-start-app -- sh -lc 'python3 -c "import urllib.request; print(urllib.request.urlopen(\"http://127.0.0.1:8080/ready\").read())"'
+    - Result: b'ready'
+  - Interpretation:
+    - The readiness endpoint /ready responds with "ready" when called from inside the container, indicating the application is ready to serve.
+
+- Step 4: Service/Ingress checks (not applicable for this scenario)
+  - No Service manifest exists for this Pod; the scenario specifies not to rely on a Service for reachability.
+  - Ingress not present.
+
+Observations and conclusion
+
+- The pod readiness status is Running with Ready = True (1/1), and the container is marked as ContainersReady.
+- The in-container readiness probe would be able to succeed given the endpoint responds as shown by the internal Python check.
+- There is no Kubernetes Service for this pod (by scenario design), so reachability is verified via direct in-pod HTTP GET to 127.0.0.1:8080/ready, which returned the expected response.
+- Based on the current cluster state and the verification steps, the readiness issue described (readiness probe timing out before completing) appears resolved: the pod is healthy and the readiness endpoint responds appropriately within the configured probes.
+
+Final verdict: <|VERIFIED|>

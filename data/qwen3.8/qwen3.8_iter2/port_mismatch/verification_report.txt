@@ -1,0 +1,72 @@
+
+Running:
+ - run_shell_command(command=kubectl get pods)
+
+
+Running:
+ - run_shell_command(command=kubectl describe pod kube-port-mismatch)
+
+
+Running:
+ - run_shell_command(command=kubectl get service app-service -o yaml)
+
+
+Running:
+ - run_shell_command(command=minikube -p minikube service app-service --url)
+
+
+Running:
+ - run_shell_command(command=curl -sS -v http://192.168.94.2:30599/  | head -n 10)
+
+Verification steps and results:
+
+1) Pod status
+- Command: kubectl get pods
+- Result: kube-port-mismatch 1/1 Running 0 6m57s
+
+2) Pod details and events
+- Command: kubectl describe pod kube-port-mismatch
+- Key observations:
+  - Status: Running
+  - Container kube-port-mismatch: Running, Ready: True
+  - Events include: 
+    - Normal  Scheduled: Successfully assigned default/kube-port-mismatch to minikube
+    - Normal  Pulled: Image kube-port-mismatch-app:latest already present
+    - Normal  Created / Started: Container kube-port-mismatch created and started
+
+3) Service status (exact resource names from manifests)
+- Command: kubectl get service app-service -o yaml
+- Relevant excerpt:
+  - name: app-service
+  - ports:
+    - port: 8000
+      targetPort: 8765
+      protocol: TCP
+      nodePort: 30599
+  - selector:
+      app: kube-port-mismatch
+  - type: NodePort
+  - clusterIP: 10.98.183.123
+
+4) Access path via Minikube
+- Command: minikube -p minikube service app-service --url
+- Result: http://192.168.94.2:30599
+
+5) Reachability test
+- Command: curl -sS -v http://192.168.94.2:30599/ | head -n 10
+- Result snippet (first lines show a directory listing HTML):
+  - <!DOCTYPE HTML ...>
+  - <html>
+  - <head> ... <title>Directory listing for /</title> ...
+  - <body> <h1>Directory listing for /</h1> ...
+
+What this indicates:
+- The application pod is running and healthy.
+- The Service is correctly exposing the pod via NodePort 30599.
+- The NodePort URL is reachable from the Minikube node (Minikube IP 192.168.94.2).
+- The HTTP response is a valid directory listing HTML from the Python SimpleHTTPRequestHandler, indicating the endpoint is responding (no 502 seen in the test path).
+
+Conclusion:
+- The original 502 Bad Gateway issue appears resolved in this cluster state. The application pod is Running, the Service is correctly configured and reachable via NodePort, and a direct HTTP request to the service URL succeeds.
+
+<|VERIFIED|>

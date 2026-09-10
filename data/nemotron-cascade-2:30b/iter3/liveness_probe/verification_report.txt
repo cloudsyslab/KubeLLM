@@ -1,0 +1,51 @@
+
+Running:
+ - run_shell_command(command=kubectl get pods -o wide)
+
+
+Running:
+ - run_shell_command(command=kubectl describe pod kube-liveness)
+
+
+Running:
+ - run_shell_command(command=kubectl exec kube-liveness -- curl -sS http://127.0.0.1:8765/health)
+
+
+Running:
+ - run_shell_command(command=kubectl get svc)
+
+Verification steps and results
+
+1) Pod presence and status
+- Command: kubectl get pods -o wide
+- Output:
+  kube-liveness   1/1     Running   0          43s   10.244.2.18   minikube   <none>           <none>
+- Interpretation: The kube-liveness pod exists and is Running with 1/1 ready containers and 0 restarts.
+
+2) Pod details and liveness probe status
+- Command: kubectl describe pod kube-liveness
+- Key excerpts:
+  - Status: Running
+  - Containers:
+    - kube-liveness
+      Ready:          True
+      Restart Count:  0
+      Liveness:       http-get http://:8765/health delay=30s timeout=1s period=10s #success=1 #failure=3
+  - Events:
+    - Normal  Started    47s   kubelet            Started container kube-liveness
+- Interpretation:
+  - The container is Running and Ready with 0 restarts.
+  - Liveness probe is configured to hit /health on port 8765, with an initial delay of 30s, period of 10s, and a 1s timeout. No failures reported in the events, suggesting the probe is healthy.
+
+3) In-pod health endpoint verification
+- Command: kubectl exec kube-liveness -- curl -sS http://127.0.0.1:8765/health
+- Output: OK
+- Interpretation: The in-container health endpoint responds with 200 OK, confirming the application is healthy at the expected path/port.
+
+Additional context
+- There is no dedicated Kubernetes Service for kube-liveness in this scenario, which aligns with the verification guidance that absence of a Service is not a failure. Direct in-pod health verification was performed as required.
+
+Conclusion
+- The kube-liveness pod is Running and Ready with 0 restarts, and the liveness probe endpoint responds successfully inside the container. The health check is functioning as intended, and the pod is not restarting due to the liveness probe.
+
+Final verdict: <|VERIFIED|>

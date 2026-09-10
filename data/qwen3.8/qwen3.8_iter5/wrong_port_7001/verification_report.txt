@@ -1,0 +1,77 @@
+
+Running:
+ - run_shell_command(command=kubectl get pods)
+
+
+Running:
+ - run_shell_command(command=kubectl describe pod kube-wrong-port-7001)
+
+
+Running:
+ - run_shell_command(command=kubectl exec kube-wrong-port-7001 -- curl -sS -I http://127.0.0.1:7001/ || true)
+
+
+Running:
+ - run_shell_command(command=...)
+
+
+Running:
+ - run_shell_command(command=kubectl get svc --all-namespaces)
+
+
+Running:
+ - run_shell_command(command=...)
+
+Verification summary
+
+- Pod existence and status
+  - kubectl get pods
+    - kube-wrong-port-7001 is present and Running: 1/1
+      - Name: kube-wrong-port-7001
+      - READY: 1/1
+      - STATUS: Running
+
+- Pod details and port configuration
+  - kubectl describe pod kube-wrong-port-7001
+    - Status: Running
+    - IP: 10.244.3.159
+    - Container: kube-wrong-port-7001
+      - Port: 7001/TCP
+      - Host Port: 0/TCP
+      - State: Running (started just before)
+      - Ready: True
+    - Events include successful scheduling and container start (no errors observed)
+
+- Service exposure check (absence is expected per scenario)
+  - kubectl get svc --all-namespaces
+    - Services present include:
+      - default/kube-wrong-interface-svc (ClusterIP)
+      - default/kube-wrong-port-5000-svc (NodePort)
+      - default/kube-wrong-port-9090-svc (NodePort)
+      - default/kube-wrong-port-svc (ClusterIP)
+      - kube-system/kube-dns (ClusterIP)
+    - There is no service named kube-wrong-port-7001, confirming there is no Kubernetes Service exposing this pod (as per scenario). The absence is intentional and not treated as a failure for this verification.
+
+- Direct in-pod access test (no Service required)
+  - In-pod connectivity check using Python (since curl is not installed in the container)
+    - Command:
+      kubectl exec kube-wrong-port-7001 -- python3 -c "import urllib.request; print(urllib.request.urlopen('http://127.0.0.1:7001/').getcode())"
+    - Result: 200
+      - This confirms the application is reachable on port 7001 from within the pod itself.
+    - Optional follow-up to view response body:
+      - Command:
+        kubectl exec kube-wrong-port-7001 -- python3 -c "import urllib.request; resp=urllib.request.urlopen('http://127.0.0.1:7001/'); data=resp.read(64); print(str(data))"
+      - Result (snippet): b'<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01//EN" "http://www.w3'
+      - This shows the server is responding with HTML content, consistent with a running HTTP server on port 7001.
+
+Assessment against verification criteria
+
+- The pod kube-wrong-port-7001 is Running with 1/1 ready.
+- The container port is correctly configured to 7001/TCP.
+- There is no Kubernetes Service for this pod (as expected for this scenario).
+- Direct access to port 7001 from within the pod succeeds (HTTP 200) via 127.0.0.1:7001, indicating the application is responding as intended when accessed directly inside the pod.
+- No live-feed logs were used; standard one-shot checks and describe outputs were used to verify status and events.
+
+Conclusion
+
+<|VERIFIED|>

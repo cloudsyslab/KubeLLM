@@ -1,0 +1,145 @@
+
+Running:
+ - run_shell_command(command=kubectl get pods)
+
+
+Running:
+ - run_shell_command(command=kubectl describe pod selector-env-secret-app)
+
+
+Running:
+ - run_shell_command(command=kubectl get secret selector-env-secret -o yaml)
+
+
+Running:
+ - run_shell_command(command=kubectl get service selector-env-secret-service -o yaml)
+
+
+Running:
+ - run_shell_command(command=kubectl get endpoints selector-env-secret-service -o yaml)
+
+
+Running:
+ - run_shell_command(command=kubectl describe pod selector-env-secret-app | sed -n '1,140p')
+
+
+Running:
+ - run_shell_command(command=kubectl get services -A | sed -n '1,200p')
+
+
+Running:
+ - run_shell_command(command=minikube -p minikube service selector-env-secret-service --url)
+
+
+Running:
+ - run_shell_command(command=minikube -p minikube service selector-env-secret-service --url -n default)
+
+
+Running:
+ - run_shell_command(command=curl -sS -o /dev/null -w "%{http_code}" http://10.101.154.0:8000)
+
+
+Running:
+ - run_shell_command(command=curl -sS -o /dev/null -w "%{http_code}" http://10.101.154.0:8000 --max-time 5)
+
+
+Running:
+ - run_shell_command(command=kubectl logs selector-env-secret-app)
+
+
+Running:
+ - run_shell_command(command=kubectl get pods -o wide)
+
+
+Running:
+ - run_shell_command(command=kubectl exec selector-env-secret-app -- printenv APP_MESSAGE)
+
+
+Running:
+ - run_shell_command(command=...)
+
+
+Running:
+ - run_shell_command(command=...)
+
+
+Running:
+ - run_shell_command(command=kubectl exec selector-env-secret-app -- curl -sS http://10.101.154.0:8000 -I || true)
+
+
+Running:
+ - run_shell_command(command=kubectl exec selector-env-secret-app -- sh -lc 'echo test')
+
+
+Running:
+ - run_shell_command(command=...)
+
+Verification steps and results
+
+1) Pod status
+- Command: kubectl get pods
+- Result: 
+  - selector-env-secret-app 1/1 Running 0 13m
+- Conclusion: Pod exists and is Running.
+
+2) Pod description (for current issues)
+- Command: kubectl describe pod selector-env-secret-app
+- Key state:
+  - Status: Running
+  - Containers: app - Ready: True
+  - Events include historical issue: "Warning  Failed ... couldn't find key message in Secret default/selector-env-secret" (appears in events history) but current status is Running and container is Ready.
+- Conclusion: Pod is running now; any prior secret-key error did not persist in the current state.
+
+3) Secret manifest/state
+- Command: kubectl get secret selector-env-secret -o yaml
+- Key excerpt from data (base64-encoded):
+  - message: aGVsbG8tZnJvbS1zZWNyZXQ=
+  - (note: includes other keys like wrong_message in this Secret manifest)
+- Verification: Secret contains the key message used to populate APP_MESSAGE.
+
+4) Service state
+- Command: kubectl get service selector-env-secret-service -o yaml
+- Key excerpt:
+  - name: selector-env-secret-service
+  - spec.ports: - port: 8000, targetPort: 8080, protocol: TCP
+  - spec.selector: app: selector-env-secret-app
+- Result: Service exists (ClusterIP) and is configured to route to pods with label app=selector-env-secret-app on port 8000.
+
+5) Endpoints for the service
+- Command: kubectl get endpoints selector-env-secret-service -o yaml
+- Key excerpt:
+  - subsets:
+    - addresses:
+      - ip: 10.244.3.93
+    - ports:
+      - port: 8080
+- Result: Endpoint exists and points to the running pod 10.244.3.93 (selector-env-secret-app). Service has endpoints.
+
+6) Env variable binding (secret is consumed by pod)
+- Command: kubectl exec selector-env-secret-app -- printenv APP_MESSAGE
+- Result: hello-from-secret
+- Verification: Environment variable APP_MESSAGE is correctly set from the Secret.
+
+7) In-pod reachability to the app (localhost:8080)
+- Command: kubectl exec selector-env-secret-app -- python3 -c "import urllib.request; print(urllib.request.urlopen('http://127.0.0.1:8080').getcode())"
+- Result: 200
+- Verification: The application inside the pod responds correctly on 127.0.0.1:8080.
+
+8) Service reachability within the cluster (DNS name)
+- Command: kubectl exec selector-env-secret-app -- python3 -c "import urllib.request; print(urllib.request.urlopen('http://selector-env-secret-service.default.svc.cluster.local:8000').read())"
+- Result: b'hello-from-secret'
+- Verification: Service is reachable within the cluster via DNS name and returns expected content, confirming endpoints are functioning.
+
+9) External access attempt via minikube (NodePort)
+- Command: minikube -p minikube service selector-env-secret-service --url
+- Result: "* service default/selector-env-secret-service has no node port"
+- Command: minikube -p minikube service selector-env-secret-service --url -n default
+- Result: "* service default/selector-env-secret-service has no node port"
+- Verification: This ClusterIP service does not expose a NodePort; external access via minikube service is not applicable for this service type. Internal cluster access (as tested above) is functioning.
+
+Conclusion
+- All relevant pods are Running and Ready.
+- The service has endpoints pointing to the running pod, and the in-cluster DNS path to the service is reachable, returning the expected content.
+- The earlier Secret key error is no longer affecting the current pod state; APP_MESSAGE is correctly sourced from the Secret and the app responds over its HTTP port.
+
+Verdict: <|VERIFIED|>

@@ -1,0 +1,120 @@
+
+Running:
+ - run_shell_command(command=kubectl get pods -o wide)
+
+
+Running:
+ - run_shell_command(command=kubectl describe pod kube-port-mismatch-named-target)
+
+
+Running:
+ - run_shell_command(command=kubectl get service -A)
+
+
+Running:
+ - run_shell_command(command=kubectl get service named-target-service -o wide)
+
+
+Running:
+ - run_shell_command(command=minikube -p minikube service named-target-service --url)
+
+
+Running:
+ - run_shell_command(command=kubectl describe service named-target-service)
+
+
+Running:
+ - run_shell_command(command=...)
+
+
+Running:
+ - run_shell_command(command=...)
+
+
+Running:
+ - run_shell_command(command=...)
+
+
+Running:
+ - run_shell_command(command=...)
+
+
+Running:
+ - run_shell_command(command=kubectl logs kube-port-mismatch-named-target --tail=200)
+
+
+Running:
+ - run_shell_command(command=kubectl exec kube-port-mismatch-named-target -- python3 -V || true)
+
+
+Running:
+ - run_shell_command(command=...)
+
+
+Running:
+ - run_shell_command(command=...)
+
+Verification results summary
+
+1) Pod status
+- Command: kubectl get pods -o wide
+- Output:
+  NAME                              READY   STATUS    RESTARTS   AGE    IP            NODE       NOMINATED NODE   READINESS GATES
+  kube-port-mismatch-named-target   1/1     Running   0          6m1s   10.244.3.74   minikube   <none>           <none>
+
+2) Pod details and events
+- Command: kubectl describe pod kube-port-mismatch-named-target
+- Key output:
+  Status:           Running
+  Containers:
+    kube-port-mismatch-named-target:
+      Port:           8765/TCP (http-app)
+      Ready:          True
+  Events:
+    Normal  Scheduled  6m5s  default-scheduler  Successfully assigned default/kube-port-mismatch-named-target to minikube
+    Normal  Pulled     6m5s  kubelet            Container image "kube-port-mismatch-named-target-app:latest" already present on machine
+    Normal  Created    6m5s  kubelet            Created container kube-port-mismatch-named-target
+    Normal  Started    6m5s  kubelet            Started container kube-port-mismatch-named-target
+
+3) Service existence and configuration
+- Command: kubectl get service named-target-service -o wide
+- Output:
+  NAME                   TYPE        CLUSTER-IP      EXTERNAL-IP   PORT(S)    AGE     SELECTOR
+  named-target-service   ClusterIP   10.98.103.151   <none>        8000/TCP   6m43s   app=kube-port-mismatch-named-target
+
+- Command: kubectl describe service named-target-service
+- Key output:
+  Selector:                 app=kube-port-mismatch-named-target
+  Port:                     8000/TCP
+  TargetPort:               http-app/TCP
+  Endpoints:                10.244.3.74:8765
+  Type:                     ClusterIP
+
+- Interpretation: The Service exists with port 8000 and targets port named http-app, which is exposed by the Pod on containerPort 8765. Endpoints show the Pod IP and port 8765, confirming correct routing target.
+
+4) Minikube external access check
+- Command: minikube -p minikube service named-target-service --url
+- Output: * service default/named-target-service has no node port
+- Note: This indicates there is no NodePort; access tests should be performed inside the cluster (which is what we did).
+
+5) In-cluster reachability tests (traffic path confirmed)
+- Inside Pod: curl-like test to the Pod's own port
+  - Command (via Python in Pod): curl to http://127.0.0.1:8765/ (performed through Python in-container URL fetch)
+  - Result: HTTP 200 (printed by the in-Pod test)
+    Specifically: The Python snippet returned 200
+
+- Inside Pod: test Service DNS path
+  - Command: In-Pod Python test to service DNS: http://named-target-service.default.svc.cluster.local:8000/
+  - Result: STATUS: 200
+
+What this demonstrates
+- The Pod is Running and Ready.
+- The Service named-target-service correctly selects the Pod (endpoints show the Pod IP on port 8765).
+- Traffic to the Service on port 8000 is being correctly routed to the Pod's port 8765 (http-app), as evidenced by:
+  - In-Pod access to 127.0.0.1:8765 returning 200
+  - In-Pod access to named-target-service.default.svc.cluster.local:8000/ returning 200
+
+Conclusion
+The original issue — traffic through the Service failing due to port misalignment — appears resolved. The service correctly routes to the named target port, and the application port is reachable via the service path.
+
+Final verdict: <|VERIFIED|>

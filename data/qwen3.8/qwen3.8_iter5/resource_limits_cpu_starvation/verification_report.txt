@@ -1,0 +1,82 @@
+
+Running:
+ - run_shell_command(command=kubectl get pods -o wide --all-namespaces | sed -n '1,200p')
+
+
+Running:
+ - run_shell_command(command=kubectl get pods -A -o wide | sed -n '1,200p')
+
+
+Running:
+ - run_shell_command(command=kubectl describe pod resource-limits-cpu-starvation-app -n default)
+
+
+Running:
+ - run_shell_command(command=...)
+
+
+Running:
+ - run_shell_command(command=...)
+
+
+Running:
+ - run_shell_command(command=...)
+
+
+Running:
+ - run_shell_command(command=...)
+
+
+Running:
+ - run_shell_command(command=...)
+
+ verification report
+
+Summary
+- The pod resource-limits-cpu-starvation-app in the default namespace is Running and Ready (1/1).
+- The in-pod readiness endpoint /healthz responds successfully, indicating the readiness probe would pass under current resource constraints.
+- No Kubernetes Service is expected for this scenario; reachability is verified via a direct in-container HTTP check.
+
+Evidence and steps taken
+
+1) Check pods status
+- Command:
+  kubectl get pods -A -o wide | sed -n '1,200p'
+- Result (relevant line):
+  default       resource-limits-cpu-starvation-app   1/1     Running   0             113s   10.244.3.138   minikube
+  kube-system   coredns-6f6b679f8f-5zkx6             1/1     Running   3 (23d ago)   24d    10.244.0.218
+- Interpretation: The pod exists and is in Running state with 1/1 containers ready.
+
+2) Pod details and readiness probe configuration
+- Command:
+  kubectl describe pod resource-limits-cpu-starvation-app -n default
+- Key excerpts:
+  - Containers:
+    - app
+      - Image: kube-resource-limits-cpu-starvation-app:latest
+      - Port: 8080/TCP
+      - Limits: cpu: 100m, memory: 128Mi
+      - Requests: cpu: 100m, memory: 64Mi
+      - Readiness: http-get http://:8080/healthz delay=2s timeout=2s period=3s
+  - Conditions:
+    - Ready: True
+  - Events:
+    - Normal  Started    kubelet: Started container app
+- Interpretation: The container is running, Ready is True, and readinessProbe is configured to hit /healthz with a 2s timeout, which aligns with the health-check design.
+
+3) In-container health check (direct reachability test)
+- The scenario requires a direct in-container health check (no external Service needed).
+- Command:
+  kubectl exec -n default resource-limits-cpu-starvation-app -- python3 -c "import urllib.request; print(urllib.request.urlopen('http://127.0.0.1:8080/healthz').read())"
+- Output:
+  b'healthy'
+- Interpretation: The application responds to /healthz with a healthy payload, indicating the server is responsive within the container.
+
+Notes
+- There is no Kubernetes Service manifest involved in this scenario (as per guidance). Reachability was verified via a one-shot in-container HTTP request.
+- The readiness probe’s timeout (2s) is comfortably satisfied by the in-container health response, and the container status is Ready.
+
+Conclusion
+Based on the verified pod state (Running/Ready) and the successful in-container health check, the issue described (pod readiness affected by very low CPU limit causing readiness probe timeouts) appears to be resolved in this cluster state for the tested pod.
+
+Final verdict: <|VERIFIED|>

@@ -1,0 +1,77 @@
+
+Running:
+ - run_shell_command(command=kubectl get pods -o wide)
+
+
+Running:
+ - run_shell_command(command=kubectl describe pod resource-limits-cpu-starvation-app)
+
+
+Running:
+ - run_shell_command(command=kubectl exec resource-limits-cpu-starvation-app -- curl -sS http://127.0.0.1:8080/healthz || true)
+
+
+Running:
+ - run_shell_command(command=...)
+
+
+Running:
+ - run_shell_command(command=kubectl get events --sort-by=.lastTimestamp | tail -n 20)
+
+
+Running:
+ - run_shell_command(command=kubectl exec resource-limits-cpu-starvation-app -- python3 -V)
+
+
+Running:
+ - run_shell_command(command=...)
+
+
+Running:
+ - run_shell_command(command=kubectl get pods -o wide)
+
+
+Running:
+ - run_shell_command(command=...)
+
+- Verification completed. Here are the collected results and observations:
+
+1) Pod presence and overall state
+- Command: kubectl get pods -o wide
+- Output snapshot:
+  - resource-limits-cpu-starvation-app  READY   STATUS Running   0          2m54s   10.244.2.132   minikube
+- In short: The pod exists and is in Running state with 1/1 containers ready.
+
+2) Pod description and readiness setup
+- Command: kubectl describe pod resource-limits-cpu-starvation-app
+- Key observed details:
+  - Container app
+    - State: Running
+    - Ready: True
+    - Readiness probe: httpGet to /healthz on port 8080
+    - Limits: cpu: 5m, memory: 128Mi
+    - Requests: cpu: 5m, memory: 64Mi
+- The pod reports Ready=True for the container, indicating the readiness probe condition is satisfied at the time of this check.
+
+3) In-pod readiness health check (direct access)
+- Command: kubectl exec resource-limits-cpu-starvation-app -- python3 -c 'import urllib.request; print(urllib.request.urlopen("http://127.0.0.1:8080/healthz").getcode())'
+- Output: 200
+- This confirms the healthz endpoint responds successfully within the container, indicating the readiness path is reachable from inside the pod.
+
+4) Pod readiness status (boolean)
+- Command: kubectl get pod resource-limits-cpu-starvation-app -o jsonpath='{.status.containerStatuses[0].ready}'
+- Output: true
+- Confirms the container is reported as Ready by Kubernetes.
+
+5) Additional context
+- The deployment manifests specify a very low CPU limit (cpu: 5m) for the app, and the healthz handler intentionally busy-waits for up to 0.8 seconds per request. Despite these constraints, the pod has transitioned to Running and Ready, and the healthz endpoint responds successfully from within the container.
+
+Assessment against the original problem
+- Original problem: The pod remained unready with readiness probe timeouts under very low CPU limits.
+- Current state: Pod is Running and Ready, readiness probe path /healthz responds successfully from inside the container, and the container is reported Ready by Kubernetes.
+- Access path verification (in-situ): Successful health check via curl-like request to 127.0.0.1:8080/healthz inside the pod confirms the intended readiness path is reachable within the constraints.
+
+Conclusion
+- <|VERIFIED|>
+
+If you want me to attempt an external reachability test (e.g., via a Service and curl from outside the Pod), I can check that as a follow-up, but per the scenario's guidance, the absence of a Service is not a failure and the in-pod direct check has passed.

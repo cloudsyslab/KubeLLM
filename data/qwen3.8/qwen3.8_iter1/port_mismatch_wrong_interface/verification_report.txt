@@ -1,0 +1,66 @@
+
+Running:
+ - run_shell_command(command=kubectl get pods -o wide)
+
+
+Running:
+ - run_shell_command(command=kubectl describe pod port-mismatch-wrong-interface-app)
+
+
+Running:
+ - run_shell_command(command=kubectl get service -A)
+
+
+Running:
+ - run_shell_command(command=minikube -p minikube service port-mismatch-app-service --url)
+
+
+Running:
+ - run_shell_command(command=curl -s -D - http://192.168.94.2:30464/ -S -m 5)
+
+- Verification steps and findings
+
+1) Pods existence and status
+- Command: kubectl get pods -o wide
+- Output:
+  - port-mismatch-wrong-interface-app   1/1     Running   0          4m44s   10.244.2.172   minikube   <none>    
+
+- Assessment: The expected pod port-mismatch-wrong-interface-app exists and is Running with 1/1 ready.
+
+2) Pod details and events
+- Command: kubectl describe pod port-mismatch-wrong-interface-app
+- Key findings:
+  - Status: Running
+  - IP: 10.244.2.172
+  - Containers: app - Ready: True, State: Running (Started: Wed, 26 Aug 2026 21:36:50 +0000)
+  - Events: Normal Scheduled, Pulled, Created, Started
+- Assessment: Pod is running and container is ready. No crashes or restarts observed.
+
+3) Service existence and configuration
+- Command: kubectl get service -A
+- Relevant entry:
+  - default port-mismatch-app-service NodePort    10.96.244.149    <none>        80:30464/TCP             4m48s
+- Assessment: Service port-mismatch-app-service exists as a NodePort with port 80 mapped to node port 30464.
+
+4) Service accessibility via Minikube
+- Command: minikube -p minikube service port-mismatch-app-service --url
+- Output:
+  - http://192.168.94.2:30464
+- Assessment: The service is exposed via NodePort on the Minikube node at 192.168.94.2:30464.
+
+5) Reachability and response from the service
+- Command: curl -s -D - http://192.168.94.2:30464/ -S -m 5
+- Output:
+  - HTTP/1.0 200 OK
+  - Server: BaseHTTP/0.6 Python/3.9.25
+  - Date: Wed, 26 Aug 2026 21:42:24 GMT
+  - Content-type: text/html
+  - 
+  - Hello from port_mismatch_wrong_interface test!
+- Assessment: The service endpoint is reachable and returns the expected HTTP 200 with the correct response body.
+
+Conclusion
+- All relevant pods are Running/Ready.
+- The configured access path for the NodePort service is reachable and returning the expected content, confirming connectivity and correct routing.
+
+<|VERIFIED|>

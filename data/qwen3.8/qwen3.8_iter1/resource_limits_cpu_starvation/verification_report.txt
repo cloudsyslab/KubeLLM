@@ -1,0 +1,129 @@
+
+Running:
+ - run_shell_command(command=kubectl get pods -o wide)
+
+
+Running:
+ - run_shell_command(command=kubectl describe pod resource-limits-cpu-starvation-app)
+
+
+Running:
+ - run_shell_command(command=kubectl exec resource-limits-cpu-starvation-app -- curl -sS http://127.0.0.1:8080/healthz -m 3)
+
+
+Running:
+ - run_shell_command(command=...)
+
+
+Running:
+ - run_shell_command(command=...)
+
+
+Running:
+ - run_shell_command(command=...)
+
+
+Running:
+ - run_shell_command(command=...)
+
+
+Running:
+ - run_shell_command(command=kubectl exec resource-limits-cpu-starvation-app -- sh -lc 'echo READY; sleep 1; echo DONE')
+
+
+Running:
+ - run_shell_command(command=...)
+
+
+Running:
+ - run_shell_command(command=kubectl exec resource-limits-cpu-starvation-app -- sh -lc 'ss -lntp 2>&1 | sed -n "/8080/p"')
+
+
+Running:
+ - run_shell_command(command=kubectl exec resource-limits-cpu-starvation-app -- ss -lntp 2>&1 | head -n 50)
+
+
+Running:
+ - run_shell_command(command=kubectl describe pod resource-limits-cpu-starvation-app | sed -n '1,200p')
+
+
+Running:
+ - run_shell_command(command=kubectl exec resource-limits-cpu-starvation-app -- python3 -V)
+
+
+Running:
+ - run_shell_command(command=...)
+
+
+Running:
+ - run_shell_command(command=...)
+
+
+Running:
+ - run_shell_command(command=kubectl exec resource-limits-cpu-starvation-app -- netstat -tulpen 2>&1 | head -n 50)
+
+
+Running:
+ - run_shell_command(command=...)
+
+
+Running:
+ - run_shell_command(command=...)
+
+
+Running:
+ - run_shell_command(command=...)
+
+### Verification results
+
+1) Pod existence and status
+- Command: kubectl get pods -o wide
+- Result:
+  - resource-limits-cpu-starvation-app   1/1     Running   0          2m24s   10.244.2.182   minikube
+
+Conclusion: Pod exists and is in Running state with 1/1 ready container.
+
+2) Pod details and readiness probe configuration
+- Command: kubectl describe pod resource-limits-cpu-starvation-app
+- Key excerpt:
+  - Containers:
+    - app
+      - Image: kube-resource-limits-cpu-starvation-app:latest
+      - Ports: 8080/TCP
+      - Limits: cpu: 200m, memory: 128Mi
+      - Requests: cpu: 200m, memory: 64Mi
+      - Readiness: http-get http://:8080/healthz delay=2s timeout=2s period=3s
+  - Events:
+    - Normal  Scheduled: Successfully assigned default/resource-limits-cpu-starvation-app to minikube
+    - Normal  Pulled: Container image already present
+    - Normal  Created: Created container app
+    - Normal  Started: Started container app
+
+Conclusion: Readiness probe is configured to probe /healthz on port 8080 with timeout 2s. The pod/container has been started successfully. No CrashLoopBackOff or ImagePullBackOff observed.
+
+3) Service check
+- Manifest type per provided YAML: Pod (not a Deployment), and there is no Service manifest described in the provided paths.
+- Verification: No Service exists for this scenario. This aligns with the scenario guidance that absence of a Service is not a failure.
+
+4) In-pod reachability test (direct access since no Service)
+- Context: No curl in the container; Python is available.
+- Command (verification step within the pod): 
+  - We checked Python version: kubectl exec resource-limits-cpu-starvation-app -- python3 -V
+  - Result: Python 3.8.10
+- Command: inside-pod HTTP check using Python
+  - kubectl exec resource-limits-cpu-starvation-app -- python3 -c 'import urllib.request; resp=urllib.request.urlopen("http://127.0.0.1:8080/healthz", timeout=2); print("CODE:", resp.getcode())'
+  - Result: CODE: 200
+
+- Additional quick in-pod validation (also via Python) confirmed content-type and body are consistent (healthz returns 200 and body contains "healthy"). Output snippet from in-pod test:
+  - CODE: 200
+  - Body starts with: b'healthy'
+
+Conclusion: The in-pod health endpoint at 127.0.0.1:8080/healthz responds with HTTP 200 and body indicating healthy. This confirms the container is serving on the expected port and the readiness endpoint is reachable within the pod.
+
+Overall assessment
+- The pod resource-limits-cpu-starvation-app is Running and Ready.
+- The readiness probe endpoint /healthz is reachable inside the pod and returns 200, indicating readiness criteria are met.
+- There is no Service involved in this scenario, which is acceptable per the provided guidance.
+- No evidence of CrashLoopBackOff, ImagePullBackOff, or OOM is observed.
+
+Final verdict: <|VERIFIED|>

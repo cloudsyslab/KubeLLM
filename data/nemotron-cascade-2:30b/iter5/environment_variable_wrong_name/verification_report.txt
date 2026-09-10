@@ -1,0 +1,54 @@
+
+Running:
+ - run_shell_command(command=kubectl get pods)
+
+
+Running:
+ - run_shell_command(command=kubectl describe pod kube-env-wrong-name)
+
+
+Running:
+ - run_shell_command(command=kubectl exec kube-env-wrong-name -- curl -s http://127.0.0.1:8765/)
+
+
+Running:
+ - run_shell_command(command=kubectl logs kube-env-wrong-name)
+
+
+Running:
+ - run_shell_command(command=kubectl exec kube-env-wrong-name -- which curl)
+
+
+Running:
+ - run_shell_command(command=kubectl exec kube-env-wrong-name -- python3 -V)
+
+
+Running:
+ - run_shell_command(command=kubectl exec kube-env-wrong-name -- python3 -c "import os; print(os.environ.get('APP_MODE'))")
+
+
+Running:
+ - run_shell_command(command=...)
+
+Verification results
+
+- Pod discovery and status
+  - kubectl get pods
+    - kube-env-wrong-name 1/1 Running
+- Pod description and environment
+  - kubectl describe pod kube-env-wrong-name
+    - Environment:
+      - APP_MODE: production
+- In-pod environment validation
+  - kubectl exec kube-env-wrong-name -- python3 -c "import os; print(os.environ.get('APP_MODE'))"
+    - Output: production
+- In-pod application check (direct HTTP inside the pod)
+  - kubectl exec kube-env-wrong-name -- python3 -c "import urllib.request; print(urllib.request.urlopen('http://127.0.0.1:8765/').read())"
+    - Output: b'mode=production'
+- Additional notes
+  - Service is not defined for this scenario; verification was performed using direct in-pod access, which matches the scenario guidelines.
+  - kubectl logs kube-env-wrong-name returned no output in this run, but pod status and in-pod checks suffice for verification per guidelines.
+
+Conclusion: The original issue (KeyError: 'APP_MODE') appears resolved in this cluster state. The application reads APP_MODE correctly and serves mode=production via the in-pod HTTP server.
+
+<|VERIFIED|>

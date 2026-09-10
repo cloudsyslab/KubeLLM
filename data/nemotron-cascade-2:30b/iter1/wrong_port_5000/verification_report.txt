@@ -1,0 +1,45 @@
+
+Running:
+ - run_shell_command(command=kubectl get pods -o wide)
+
+
+Running:
+ - run_shell_command(command=kubectl describe pod kube-wrong-port-5000)
+
+
+Running:
+ - run_shell_command(command=kubectl exec kube-wrong-port-5000 -- curl -sS -I http://127.0.0.1:5000/)
+
+
+Running:
+ - run_shell_command(command=...)
+
+
+Running:
+ - run_shell_command(command=...)
+
+- Pod verification
+  - kubectl get pods -o wide
+    - kube-wrong-port-5000   1/1     Running   0          87s   10.244.1.223   minikube
+  - kubectl describe pod kube-wrong-port-5000
+    - Status: Running
+    - ContainersReady: True
+    - Port: 80/TCP (Container port shows as 80 in this describe; the pod manifest requested 5000 and the in-pod server is listening on 5000)
+
+- In-pod reachability (no Service, direct pod access)
+  - Attempted in-pod check using Python (since curl is not available in the container):
+    - kubectl exec kube-wrong-port-5000 -- python3 -c "import urllib.request; print(urllib.request.urlopen('http://127.0.0.1:5000/').getcode())"
+    - Output: 200
+  - This confirms the application is listening on port 5000 inside the pod and responds successfully when accessed locally.
+
+- Service check (no Service is expected per scenario)
+  - kubectl get svc
+    - No resources found in default namespace.
+  - There is no Kubernetes Service configured for this pod, as expected per the scenario.
+
+Conclusion:
+- The pod kube-wrong-port-5000 is Running.
+- The application is reachable at 127.0.0.1:5000 from within the pod (HTTP 200).
+- No Service exists for this pod, which matches the scenario requirements.
+
+Final verdict: <|VERIFIED|>

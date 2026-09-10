@@ -1,0 +1,74 @@
+
+Running:
+ - run_shell_command(command=kubectl get pods -o wide)
+
+
+Running:
+ - run_shell_command(command=kubectl describe pod kube-incorrect-selector)
+
+
+Running:
+ - run_shell_command(command=kubectl get service)
+
+
+Running:
+ - run_shell_command(command=kubectl describe service app-service)
+
+
+Running:
+ - run_shell_command(command=minikube -p minikube service app-service --url)
+
+
+Running:
+ - run_shell_command(command=curl -sS -I http://192.168.94.2:31497/ | head -n 5)
+
+Verification steps and results
+
+1) Pod readiness
+- Command: kubectl get pods -o wide
+- Result: kube-incorrect-selector is Running with 1/1 ready
+  - NAME: kube-incorrect-selector
+  - READY: 1/1
+  - STATUS: Running
+  - IP: 10.244.2.156
+  - NODE: minikube
+
+2) Pod description and events
+- Command: kubectl describe pod kube-incorrect-selector
+- Result: Pod is in Running state with Ready: True for containers; no errors reported in Events (normal Scheduling, Pulled, Created, Started)
+  - Container kube-incorrect-selector is Running
+  - Port: 8765/TCP (targetPort 8765)
+  - Events show: Successfully assigned, Container image present, Created, Started
+
+3) Service existence and endpoints
+- Command: kubectl get service
+- Result:
+  - app-service is a NodePort service
+  - Port mappings: 8000/TCP -> NodePort 31497
+  - ClusterIP: 10.108.196.50
+- Command: kubectl describe service app-service
+- Result:
+  - Selector: app=kube-incorrect-selector
+  - Endpoints: 10.244.2.156:8765
+  - NodePort: 31497
+  - Port: 8000/TCP (TargetPort 8765/TCP)
+- Interpretation: The service has endpoints assigned and is routable via NodePort 31497.
+
+4) Reachability via Minikube service URL
+- Command: minikube -p minikube service app-service --url
+- Result: http://192.168.94.2:31497
+
+5) Basic endpoint test (one-shot request)
+- Command: curl -sS -I http://192.168.94.2:31497/ | head -n 5
+- Result:
+  - HTTP/1.0 200 OK
+  - Server: SimpleHTTP/0.6 Python/3.8.10
+  - Content-Type: text/html; charset=utf-8
+  - Content-Length: 340
+
+Conclusion
+- The pod kube-incorrect-selector is Running and Ready.
+- The service app-service has Endpoints listed (10.244.2.156:8765) and is reachable via NodePort 31497.
+- The Minikube URL is accessible and returns HTTP 200 for a basic request, confirming end-to-end connectivity through the service to the pod.
+
+<|VERIFIED|>

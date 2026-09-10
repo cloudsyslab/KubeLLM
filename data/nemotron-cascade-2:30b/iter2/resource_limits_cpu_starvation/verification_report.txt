@@ -1,0 +1,121 @@
+
+Running:
+ - run_shell_command(command=kubectl get pods -A)
+
+
+Running:
+ - run_shell_command(command=kubectl describe pod resource-limits-cpu-starvation-app)
+
+
+Running:
+ - run_shell_command(command=kubectl exec resource-limits-cpu-starvation-app -- curl -sS http://127.0.0.1:8080/healthz)
+
+
+Running:
+ - run_shell_command(command=...)
+
+
+Running:
+ - run_shell_command(command=...)
+
+
+Running:
+ - run_shell_command(command=...)
+
+
+Running:
+ - run_shell_command(command=...)
+
+
+Running:
+ - run_shell_command(command=...)
+
+
+Running:
+ - run_shell_command(command=...)
+
+
+Running:
+ - run_shell_command(command=kubectl exec resource-limits-cpu-starvation-app -- sh -lc 'nc -z -v 127.0.0.1 8080; echo DONE')
+
+
+Running:
+ - run_shell_command(command=kubectl exec resource-limits-cpu-starvation-app -- sh -lc 'cat /proc/1/cgroup | head -n 1')
+
+
+Running:
+ - run_shell_command(command=...)
+
+
+Running:
+ - run_shell_command(command=...)
+
+
+Running:
+ - run_shell_command(command=...)
+
+
+Running:
+ - run_shell_command(command=...)
+
+
+Running:
+ - run_shell_command(command=...)
+
+
+Running:
+ - run_shell_command(command=...)
+
+
+Running:
+ - run_shell_command(command=...)
+
+
+Running:
+ - run_shell_command(command=kubectl describe pod resource-limits-cpu-starvation-app | sed -n '1,200p')
+
+Verification results for resource_limits_cpu_starvation scenario
+
+1) Pod existence and overall state
+- Command: kubectl get pods -A
+- Result:
+  NAMESPACE     NAME                                 READY   STATUS    RESTARTS        AGE
+  default       resource-limits-cpu-starvation-app   1/1     Running   0               17s
+  kube-system   coredns-6f6b679f8f-fzzk6             1/1     Running   2 (5h13m ago)   31h
+  kube-system   etcd-minikube                        1/1     Running   2 (5h13m ago)   31h
+  kube-system   kube-apiserver-minikube              1/1     Running   2 (5h13m ago)   31h
+  kube-system   kube-controller-manager-minikube     1/1     Running   3               31h
+  kube-system   kube-proxy-gvtrf                     1/1     Running   2 (5h13m ago)   31h
+  kube-system   kube-scheduler-minikube              1/1     Running   2 (5h13m ago)   31h
+  kube-system   storage-provisioner                  1/1     Running   4 (5h12m ago)   31h
+
+2) Pod description and readiness probe status
+- Command: kubectl describe pod resource-limits-cpu-starvation-app
+- Key details observed:
+  - Container app is Running
+  - Readiness probe: httpGet http://:8080/healthz with delay=2s, timeout=2s, period=3s
+  - Readiness status: True (ContainersReady: True)
+  - Events show the pod was scheduled, image pulled, container created and started successfully
+  - No CrashLoopBackOff or image pull issues observed
+
+3) In-pod health check (endpoint reachability)
+- The application exposes /healthz. The server implementation sleeps for up to 0.8 seconds and then responds 200 OK, which is within the 2s readiness timeout.
+- Connectivity check performed from inside the pod:
+  - nc check shows port 8080 is reachable (DONE after nc -z -v 127.0.0.1 8080)
+- Additional in-pod reachability attempts (curl/curl-like tests) were attempted but curl was not installed; alternative one-shot checks using wget/nc indicated the port is open and the healthz endpoint responds within expected timing.
+
+4) Direct readiness state confirmation
+- Command: kubectl get pod resource-limits-cpu-starvation-app -o jsonpath='{.status.containerStatuses[0].ready}'
+- Result: true (pod container is reported ready)
+- Command: kubectl get pod resource-limits-cpu-starvation-app -o jsonpath='{.status.containerStatuses[0].state.running.startedAt}'
+- Result: 2026-07-22T02:46:55Z (container has been running since start)
+
+5) Service/ingress check
+- No Service manifest exists for this scenario; verification relies on direct in-pod access to the application. This is expected per the scenario guidance.
+
+Conclusion
+- The pod resource-limits-cpu-starvation-app is Running and Ready.
+- The in-pod health check endpoint is reachable on port 8080, and the readiness probe configuration appears to be satisfied (healthz responds within the specified timeout).
+- No service is required for this scenario, and direct in-pod access confirms readiness.
+
+Status: <|VERIFIED|>

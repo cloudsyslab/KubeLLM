@@ -1,0 +1,104 @@
+
+Running:
+ - run_shell_command(command=kubectl get pods -o wide --all-namespaces)
+
+
+Running:
+ - run_shell_command(command=kubectl get pods -o wide --all-namespaces)
+
+
+Running:
+ - run_shell_command(command=kubectl describe pod readiness-slow-start-app -n default)
+
+
+Running:
+ - run_shell_command(command=kubectl exec readiness-slow-start-app -n default -- curl -sS http://127.0.0.1:8080/ready)
+
+
+Running:
+ - run_shell_command(command=kubectl exec readiness-slow-start-app -n default -- curl -sS http://127.0.0.1:8080/ready -m 5)
+
+
+Running:
+ - run_shell_command(command=kubectl exec readiness-slow-start-app -n default -- python3 --version)
+
+
+Running:
+ - run_shell_command(command=kubectl exec readiness-slow-start-app -n default -- /bin/sh -lc 'kill -0 1 >/dev/null 2>&1; echo ?')
+
+
+Running:
+ - run_shell_command(command=...)
+
+
+Running:
+ - run_shell_command(command=...)
+
+
+Running:
+ - run_shell_command(command=...)
+
+
+Running:
+ - run_shell_command(command=...)
+
+
+Running:
+ - run_shell_command(command=...)
+
+
+Running:
+ - run_shell_command(command=...)
+
+
+Running:
+ - run_shell_command(command=...)
+
+
+Running:
+ - run_shell_command(command=...)
+
+
+Running:
+ - run_shell_command(command=kubectl get pods -n default -o wide)
+
+
+Running:
+ - run_shell_command(command=kubectl describe pod readiness-slow-start-app -n default | sed -n '1,200p')
+
+### Verification results
+
+1) Pod presence and readiness
+- Command: kubectl get pods -n default -o wide
+- Result: readiness-slow-start-app is Running, 1/1 Ready, IP 10.244.2.176, Node minikube
+- Evidence excerpt:
+  - readiness-slow-start-app 1/1 Running
+
+2) Pod description and readiness probe status
+- Command: kubectl describe pod readiness-slow-start-app -n default
+- Result highlights:
+  - Status: Running
+  - Readiness probe: httpGet path /ready on port 8080 with delay=3s, timeout=3s, period=3s
+  - ContainersReady: True
+  - Events show an earlier Readiness probe failure (Unhealthy) with context deadline exceeded, but the pod eventually reports Ready True and remains Running
+- Evidence excerpt:
+  - Readiness: http-get http://:8080/ready delay=3s timeout=3s period=3s
+  - Events include: Warning Unhealthy ... Readiness probe failed: Get "http://10.244.2.176:8080/ready": context deadline exceeded
+
+3) Access path reachability inside the pod
+- Context: No Kubernetes Service exists for this scenario; access is via in-pod HTTP request to 127.0.0.1:8080
+- Command: kubectl exec readiness-slow-start-app -n default -- python3 -c "import urllib.request; resp=urllib.request.urlopen('http://127.0.0.1:8080/ready', timeout=5); print(resp.getcode())"
+- Result: 200
+- Evidence excerpt:
+  - ready_code 200
+
+4) Current pod status (post-verification)
+- Command: kubectl get pods -n default -o wide
+- Result: readiness-slow-start-app is Running, 1/1 Ready
+- Evidence excerpt:
+  - readiness-slow-start-app   1/1     Running   0          8m56s
+
+Conclusion
+- The pod is currently Running with 1/1 Ready, and the in-pod readiness endpoint /ready responds with HTTP 200 when invoked from within the container. While there was an earlier readiness probe warning, the pod has remained Ready, and the access path for this scenario is reachable as shown by the in-pod HTTP check.
+
+<|VERIFIED|>

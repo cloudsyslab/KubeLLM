@@ -1,0 +1,72 @@
+
+Running:
+ - run_shell_command(command=kubectl get pods -o wide)
+
+
+Running:
+ - run_shell_command(command=kubectl describe pod kube-env-wrong-name)
+
+
+Running:
+ - run_shell_command(command=kubectl logs kube-env-wrong-name)
+
+
+Running:
+ - run_shell_command(command=kubectl exec kube-env-wrong-name -- python3 -V || true)
+
+
+Running:
+ - run_shell_command(command=...)
+
+
+Running:
+ - run_shell_command(command=kubectl exec kube-env-wrong-name -- curl -s http://127.0.0.1:8765/)
+
+
+Running:
+ - run_shell_command(command=...)
+
+Verification steps and results
+
+1) Check pod existence and status
+- Command: kubectl get pods -o wide
+- Expected: Pod(s) exist and are Running with ready containers
+- Output:
+  - kube-env-wrong-name   1/1     Running   0          72s   10.244.2.210   minikube   <none>
+
+Result: Pod exists and is Running with 1/1 ready container.
+
+2) Inspect pod details for errors
+- Command: kubectl describe pod kube-env-wrong-name
+- Key observations:
+  - Environment: APP_MODE: production
+  - Container state: Running; Started 72s ago
+  - No evident CrashLoopBackOff, ImagePullBackOff, or OOM events
+  - Events show normal scheduling and container start
+
+Conclusion from this step: APP_MODE is present in the pod environment as APP_MODE=production.
+
+3) Pod logs
+- Command: kubectl logs kube-env-wrong-name
+- Result: No logs returned (empty). Logs are not strictly required here, and absence of logs does not indicate a problem given the context.
+
+4) Verify in-pod environment variable accessibility
+- Command: kubectl exec kube-env-wrong-name -- python3 -c "import os; print(os.environ.get('APP_MODE'))"
+- Output: production
+
+Conclusion: APP_MODE environment variable is set inside the container and accessible to the application.
+
+5) Verify application response over HTTP (direct in-pod check)
+- Attempted direct curl:
+  - Command: kubectl exec kube-env-wrong-name -- curl -s http://127.0.0.1:8765/
+  - Result: curl exit code 126 (curl not installed in image or inaccessible)
+- Alternative in-container check (since curl isn’t available):
+  - Command: kubectl exec kube-env-wrong-name -- /bin/bash -lc 'python3 -c "import urllib.request; print(urllib.request.urlopen(\"http://127.0.0.1:8765/\").read())"'
+  - Output: b'mode=production'
+
+Conclusion: The HTTP server responds with mode=production when invoked from inside the container, confirming that APP_MODE is correctly read by the application at runtime.
+
+Overall assessment
+- The original KeyError: 'APP_MODE' would occur only if APP_MODE were missing. In this cluster, APP_MODE is present (production) and accessible by the containerized application. The in-pod HTTP response confirms the application read the environment correctly.
+
+Status: <|VERIFIED|>

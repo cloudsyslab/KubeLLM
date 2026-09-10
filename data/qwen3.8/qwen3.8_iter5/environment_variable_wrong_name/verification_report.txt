@@ -1,0 +1,65 @@
+
+Running:
+ - run_shell_command(command=kubectl get pods -o wide --no-headers)
+
+
+Running:
+ - run_shell_command(command=kubectl describe pod kube-env-wrong-name)
+
+
+Running:
+ - run_shell_command(command=kubectl exec kube-env-wrong-name -- curl -s -o /dev/null -w "%{http_code}" http://127.0.0.1:8765/)
+
+
+Running:
+ - run_shell_command(command=...)
+
+
+Running:
+ - run_shell_command(command=kubectl exec kube-env-wrong-name -- python3 -c 'import os; print(os.environ.get("APP_MODE"))')
+
+
+Running:
+ - run_shell_command(command=...)
+
+
+Running:
+ - run_shell_command(command=kubectl get svc -o wide --all-namespaces | sed -n '1,120p')
+
+Verification steps and results
+
+1) Pod existence and status
+- Command: kubectl get pods -o wide --no-headers
+- Result: kube-env-wrong-name   1/1   Running   0     105s   10.244.3.114   minikube   <none>   <none>
+- Interpretation: The expected pod kube-env-wrong-name exists and is Running with 1/1 containers ready.
+
+2) Pod description and environment
+- Command: kubectl describe pod kube-env-wrong-name
+- Key excerpt:
+  - Status: Running
+  - Containers:
+    - kube-env-wrong-name
+      Environment:
+        APP_MODE:  production
+- Interpretation: The container has APP_MODE set to production in the environment, as defined by the manifest.
+
+3) In-pod accessibility and App behavior
+- Command: kubectl exec kube-env-wrong-name -- python3 -c 'import os; print(os.environ.get("APP_MODE"))'
+- Result: production
+- Command: kubectl exec kube-env-wrong-name -- python3 -c 'import urllib.request; print(urllib.request.urlopen("http://127.0.0.1:8765/").getcode())'
+- Result: 200
+- Command: kubectl exec kube-env-wrong-name -- python3 -c 'import urllib.request; print(urllib.request.urlopen("http://127.0.0.1:8765/").read().decode())'
+- Result: mode=production
+- Interpretation:
+  - The container reports APP_MODE as production, confirming the environment variable is indeed set.
+  - The in-container HTTP server responds with status 200 on the root path.
+  - The response body is mode=production, showing the app read the environment variable correctly and used it.
+
+Notes
+- There is no Service manifest for this scenario, as per the provided YAML (a Pod is described). Verification used in-pod direct HTTP access (127.0.0.1:8765) rather than Service-based access, which aligns with the scenario guidance.
+- No errors or crashes were observed in the pod; Events show normal scheduling, pulling, creation, and start with no failures.
+
+Conclusion
+- The APP_MODE environment variable is present in the container, and the application correctly reads it and serves the expected output (mode=production). The pod remains Running with its container ready, and the in-pod HTTP check succeeds.
+
+ <|VERIFIED|>

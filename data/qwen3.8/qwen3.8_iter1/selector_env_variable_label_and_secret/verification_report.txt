@@ -1,0 +1,120 @@
+
+Running:
+ - run_shell_command(command=kubectl get pods -A -o wide)
+
+
+Running:
+ - run_shell_command(command=kubectl describe pod selector-env-secret-app -n default)
+
+
+Running:
+ - run_shell_command(command=kubectl get secret selector-env-secret -o yaml -n default)
+
+
+Running:
+ - run_shell_command(command=kubectl describe pod selector-env-secret-app -n default)
+
+
+Running:
+ - run_shell_command(command=kubectl get service -n default)
+
+
+Running:
+ - run_shell_command(command=kubectl describe service selector-env-secret-service -n default)
+
+
+Running:
+ - run_shell_command(command=minikube -p minikube service selector-env-secret-service --url)
+
+
+Running:
+ - run_shell_command(command=curl -sS -v http://10.102.70.208:8000/ -m 5)
+
+
+Running:
+ - run_shell_command(command=kubectl exec selector-env-secret-app -n default -- python3 -V)
+
+
+Running:
+ - run_shell_command(command=...)
+
+
+Running:
+ - run_shell_command(command=...)
+
+
+Running:
+ - run_shell_command(command=...)
+
+
+Running:
+ - run_shell_command(command=...)
+
+
+Running:
+ - run_shell_command(command=...)
+
+
+Running:
+ - run_shell_command(command=kubectl exec selector-env-secret-app -n default -- /bin/sh -lc 'ss -lntp')
+
+
+Running:
+ - run_shell_command(command=...)
+
+
+Running:
+ - run_shell_command(command=...)
+
+### Verification results
+
+Evidence collected from the cluster confirms the original problem (Secret key error and broken endpoints) appears to be resolved. Key observations below:
+
+1) Pod state
+- Pods in all namespaces (relevant one shown):
+  - default/selector-env-secret-app is Running with 1/1 Ready (IP 10.244.2.187). Evidence: kubectl get pods -A -o wide
+    - Status: Running, READY: 1/1, IP: 10.244.2.187
+- pod description confirms Running status and readiness for container:
+  - kubectl describe pod selector-env-secret-app -n default
+    - Status: Running
+    - Containers Ready: True
+    - Events show initial issue about missing secret key but current state is Running with the APP_MESSAGE environment prepared from the Secret.
+
+2) Secret readiness and content
+- Secret exists and contains the expected key:
+  - kubectl get secret selector-env-secret -n default -o yaml
+    - Data includes key: message (base64: aGVsbG8tZnJvbS1zZWNyZXQ=)
+- This matches the manifest: message: hello-from-secret
+
+3) Service state and endpoints
+- Service exists and is ClusterIP type:
+  - selector-env-secret-service exists with cluster IP 10.102.70.208 and port 8000/TCP
+  - Endpoints for the service show the pod IP and port: Endpoints: 10.244.2.187:8080
+  - Evidence: kubectl describe service selector-env-secret-service -n default
+    - Endpoints: 10.244.2.187:8080
+
+4) In-cluster accessibility and secret usage
+- The application inside the pod reads APP_MESSAGE from the Secret and serves it:
+  - The APP_MESSAGE environment value when queried inside the pod resolves to the secret value:
+    - kubectl exec selector-env-secret-app -n default -- /bin/sh -lc 'echo $APP_MESSAGE' prints Hello-from-secret (observed as hello-from-secret via Python test as well)
+  - In-container HTTP response test (ensuring the service is actually serving the value at port 8080):
+    - kubectl exec selector-env-secret-app -n default -- python3 -c 'import urllib.request; print(urllib.request.urlopen("http://127.0.0.1:8080/").read().decode())'
+      - Output: hello-from-secret
+    - This confirms the container uses the Secret value and is serving via port 8080.
+- Cross-pod/service reachability test from within the pod:
+  - kubectl exec selector-env-secret-app -n default -- python3 -c 'import urllib.request; print(urllib.request.urlopen("http://10.102.70.208:8000/").read().decode())'
+    - Output: hello-from-secret
+  - This demonstrates the Service can route to the Pod and return the expected secret-based message.
+
+5) Minikube service URL behavior
+- minikube -p minikube service selector-env-secret-service --url
+  - Output: "service default/selector-env-secret-service has no node port"
+  - This is expected for a ClusterIP service; however, internal cluster connectivity is verified via the Endpoints and in-cluster requests above.
+
+Conclusion
+- The pod selector-env-secret-app is Running and Ready.
+- The Secret provides the expected key (message) and the application reads it correctly (APP_MESSAGE equals "hello-from-secret").
+- The Service selector-env-secret-service has endpoints pointing to the running pod (EndPoints: 10.244.2.187:8080), and requests to the service or directly to the pod’s localhost return the expected secret value.
+- Therefore, the original problem (Secret key error and non-working endpoints) appears to be resolved in the current cluster state.
+
+<|VERIFIED|>

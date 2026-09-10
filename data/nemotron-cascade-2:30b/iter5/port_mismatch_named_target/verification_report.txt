@@ -1,0 +1,138 @@
+
+Running:
+ - run_shell_command(command=kubectl get pods -o wide)
+
+
+Running:
+ - run_shell_command(command=kubectl describe pod kube-port-mismatch-named-target)
+
+
+Running:
+ - run_shell_command(command=kubectl get service -o wide)
+
+
+Running:
+ - run_shell_command(command=minikube -p minikube service named-target-service --url)
+
+
+Running:
+ - run_shell_command(command=kubectl describe service named-target-service)
+
+
+Running:
+ - run_shell_command(command=...)
+
+
+Running:
+ - run_shell_command(command=...)
+
+
+Running:
+ - run_shell_command(command=...)
+
+
+Running:
+ - run_shell_command(command=...)
+
+
+Running:
+ - run_shell_command(command=kubectl exec kube-port-mismatch-named-target -- sh -lc 'python3 -V || true; python -V || true')
+
+
+Running:
+ - run_shell_command(command=...)
+
+
+Running:
+ - run_shell_command(command=...)
+
+
+Running:
+ - run_shell_command(command=kubectl exec kube-port-mismatch-named-target -- sh -lc 'echo READY')
+
+
+Running:
+ - run_shell_command(command=...)
+
+
+Running:
+ - run_shell_command(command=...)
+
+
+Running:
+ - run_shell_command(command=kubectl exec kube-port-mismatch-named-target -- /bin/sh -lc 'ss -lntp | head -n 50')
+
+
+Running:
+ - run_shell_command(command=kubectl exec kube-port-mismatch-named-target -- netstat -tlnp 2>/dev/null | head -n 20)
+
+
+Running:
+ - run_shell_command(command=kubectl exec kube-port-mismatch-named-target -- sh -lc 'ps -ef | head -n 20')
+
+
+Running:
+ - run_shell_command(command=...)
+
+
+Running:
+ - run_shell_command(command=...)
+
+
+Running:
+ - run_shell_command(command=...)
+
+### Verification results
+
+Current context: Minikube cluster, using exact names from manifests.
+
+1) Pods status
+- Command: kubectl get pods -o wide
+- Result:
+  - kube-port-mismatch-named-target   1/1 Running   0  3m47s  10.244.2.119  minikube  <none>  <none>
+
+2) Pod details and readiness
+- Command: kubectl describe pod kube-port-mismatch-named-target
+- Key findings:
+  - Status: Running
+  - Container: kube-port-mismatch-named-target
+  - Ports: containerPort 8765 TCP (http-app)
+  - Ready: True
+  - Events: Normal Scheduled, Pulled, Created, Started — all indicate the pod is up and healthy
+  - Container readiness: ContainersReady True; PodReadyToStartContainers True; Ready True
+
+3) Service status and endpoint mapping
+- Command: kubectl describe service named-target-service
+- Key findings:
+  - Type: ClusterIP
+  - IP: 10.111.1.18
+  - Port: 8000/TCP
+  - TargetPort: http-app/TCP
+  - Selector: app=kube-port-mismatch-named-target
+  - Endpoints: 10.244.2.119:8765
+  - This confirms the service correctly targets the container port http-app (8765) on the pod 10.244.2.119
+
+4) Service accessibility via Minikube (note on node port)
+- Command: minikube -p minikube service named-target-service --url
+- Result: * service default/named-target-service has no node port
+- Interpretation: This is expected for a ClusterIP service without a node port. It does not indicate a connectivity problem; internal cluster access using the service IP and Port is valid.
+
+5) In-cluster reachability tests (traffic from within cluster to the service and to the app port)
+- Command: kubectl exec kube-port-mismatch-named-target -- python3 -c 'import urllib.request; resp=urllib.request.urlopen("http://127.0.0.1:8765/"); print("CODE", resp.getcode()); data=resp.read(); print("LEN", len(data))'
+  - Result: CODE 200, LEN 2
+- Command: kubectl exec kube-port-mismatch-named-target -- python3 -c 'import urllib.request; resp=urllib.request.urlopen("http://10.111.1.18:8000/"); print("CODE", resp.getcode()); data=resp.read(); print("LEN", len(data))'
+  - Result: CODE 200, LEN 2
+- Interpretation:
+  - The application is listening on port 8765 (http-app) inside the pod and responds with HTTP 200.
+  - The service at 10.111.1.18:8000 correctly routes to 8765 (http-app) on the pod, evidenced by the 200 response when accessed via the service IP/port from within the pod.
+
+6) Additional pod status checks
+- Command: kubectl get pods -o jsonpath='{range .items[*]}{.metadata.name}:{.status.phase}:{range .status.containerStatuses[*]}{.name}:{.ready}{\"\\n\"}{end}{\"\\n\"}{end}'
+- Result: kube-port-mismatch-named-target:Running:kube-port-mismatch-named-target:true
+- This confirms the container is Running and ready.
+
+Conclusion:
+- The pod is Running and Ready, the service is configured with the correct selector and target port, and traffic from the service to the named application port is reachable within the cluster (internal curl/test calls succeed with HTTP 200).
+- Therefore, the original problem (traffic through the Service failing due to port mismatch) appears resolved in the current cluster state.
+
+Final verdict: <|VERIFIED|>

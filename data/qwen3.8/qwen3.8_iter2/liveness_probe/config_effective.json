@@ -1,0 +1,99 @@
+{
+  "api-agent": {
+    "model": "gpt-5-mini",
+    "embedder": "text-embedding-3-small",
+    "embedder-provider": "openai",
+    "clear-knowledge": true,
+    "new-run": true,
+    "init-agent": true,
+    "knowledge": [
+      "https://learnk8s.io/troubleshooting-deployments"
+    ]
+  },
+  "debug-agent": {
+    "model": "qwen3.8:27b",
+    "instructions": [
+      "If all and only all commands fail to execute, declare that there was an error in trying to solve the issue, and end that statement with this token: <|ERROR|>.",
+      "You have solved this issue only when the original user-visible problem is fixed in the live cluster. Verify the relevant Kubernetes resources and application behavior with commands before declaring success; pod Running/Ready status alone is not sufficient unless the original problem is only pod startup.",
+      "After every step, check whether the original problem is fixed in the live cluster. If you changed manifests, images, or cluster configuration, apply the change and verify the live resource state reflects it before declaring success.",
+      "If you believe you have met the goal, declare that you have solved the user's issue, and end that statement with this token: <|SOLVED|>.",
+      "If the steps do not solve the issue, or if you need more information, declare that you cannot solve the issue, and end that statement with this token: <|FAILED|>.",
+      "Do not use live feed flags when checking the logs such as 'kubectl logs -f'",
+      "Do not use commands like vim or vi",
+      "Do not use commands that open up editors like 'kubectl edit'"
+    ],
+    "guidelines": [
+      "If a command invocation is successful but gives no stdout nor stderr, then that is because that invocation resulted in no output to stdout or stderr.",
+      "If a command contains a placeholder name surrounded in angle brackets such as <pod_name>, for example, then **do not** run that command as-is. First run a `kubectl get` command to find a real name to replace the placeholder name, then run the suggested command with the replaced name of the resource. For example, if you see `kubectl logs <pod_name> -n example_namespace`, first run `kubectl get pods -n example_namespace` and use the name of the first pod you see.",
+      "Do not use live feed flags when checking the logs such as 'kubectl logs -f'",
+      "If you do not conclude on an answer or a code then try again please.",
+      "Do not use commands like vim or vi",
+      "Do not use commands that open up editors like 'kubectl edit'"
+    ]
+  },
+  "verification-agent": {
+    "model": "gpt-5-nano",
+    "temperature": 1
+  },
+  "knowledge-prompt": {
+    "problem-desc": "The kube-liveness pod becomes unhealthy and restarts after startup because its liveness check fails. Fix the probe so the pod stays Running and Ready without restarts.",
+    "system-prompt": "Give specific commands to fix this issue. If modifying file contents is necessary, use the sed command to achieve this. If providing a file path, make sure to keep the full file path. Suggest only the essential steps needed to solve the issue. Be frugal.",
+    "additional-directions": ""
+  },
+  "debug-prompt": {
+    "additional-directions": "If any deployment files are modified, reapply the deployment to the cluster."
+  },
+  "relevant-files": {
+    "deployment": [
+      "liveness_probe.yaml"
+    ],
+    "application": [
+      "server.py"
+    ],
+    "service": [],
+    "dockerfile": true
+  },
+  "setup-commands": [
+    "bash -lc 'PROFILE=${MINIKUBE_PROFILE:-minikube}; CTX=$(kubectl config current-context 2>/dev/null || true); if command -v minikube >/dev/null 2>&1 && [ \"$CTX\" = \"$PROFILE\" ] && minikube -p \"$PROFILE\" status --format \"{{.Host}}\" 2>/dev/null | grep -qi running; then minikube -p \"$PROFILE\" image build -t kube-liveness-app:latest -f Dockerfile debug_assistant_latest/troubleshooting/liveness_probe; else docker build -t kube-liveness-app:latest -f debug_assistant_latest/troubleshooting/liveness_probe/Dockerfile debug_assistant_latest/troubleshooting/liveness_probe; fi'",
+    "kubectl apply -f debug_assistant_latest/troubleshooting/liveness_probe/liveness_probe.yaml"
+  ],
+  "test-name": "liveness_probe",
+  "test-directory": "/home/adibam/KubeLLM/debug_assistant_latest/troubleshooting/liveness_probe/",
+  "yaml-file-name": "liveness_probe.yaml",
+  "ground-truth": {
+    "description": "Verify liveness probe stays healthy through the initial failure window",
+    "timeout_seconds": 150,
+    "checks": [
+      {
+        "name": "pod_running",
+        "cmd": "kubectl get pod kube-liveness -o jsonpath='{.status.phase}'",
+        "expect": "Running",
+        "poll_interval_s": 2,
+        "max_attempts": 20,
+        "description": "Pod is Running"
+      },
+      {
+        "name": "pod_ready",
+        "cmd": "kubectl get pod kube-liveness -o jsonpath='{.status.conditions[?(@.type==\"Ready\")].status}'",
+        "expect": "True",
+        "poll_interval_s": 2,
+        "max_attempts": 15,
+        "depends_on": [
+          "pod_running"
+        ],
+        "description": "Pod is Ready"
+      },
+      {
+        "name": "no_restarts",
+        "cmd": "python3 -c \"import subprocess, time; time.sleep(55); print(subprocess.run(['kubectl', 'get', 'pod', 'kube-liveness', '-o', 'jsonpath={.status.containerStatuses[0].restartCount}'], capture_output=True, text=True, check=True).stdout.strip())\"",
+        "expect": "0",
+        "timeout_s": 70,
+        "depends_on": [
+          "pod_ready"
+        ],
+        "description": "Container still has restartCount=0 after the initial liveness delay"
+      }
+    ]
+  },
+  "minikube-profile": "minikube"
+}

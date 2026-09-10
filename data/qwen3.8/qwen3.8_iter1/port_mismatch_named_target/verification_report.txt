@@ -1,0 +1,134 @@
+
+Running:
+ - run_shell_command(command=kubectl get pods -o wide)
+
+
+Running:
+ - run_shell_command(command=kubectl describe pod kube-port-mismatch-named-target)
+
+
+Running:
+ - run_shell_command(command=kubectl get service -A)
+
+
+Running:
+ - run_shell_command(command=kubectl describe service named-target-service)
+
+
+Running:
+ - run_shell_command(command=minikube -p minikube service named-target-service --url)
+
+
+Running:
+ - run_shell_command(command=kubectl get pod kube-port-mismatch-named-target -o jsonpath='{.status.containerStatuses[0].ready}')
+
+
+Running:
+ - run_shell_command(command=curl -sS -o /dev/null -w "%{http_code}\n" http://10.108.130.27:8000)
+
+
+Running:
+ - run_shell_command(command=curl -sS -o /dev/null -w "%{http_code}\n" http://10.108.130.27:8000 -m 5)
+
+
+Running:
+ - run_shell_command(command=kubectl exec kube-port-mismatch-named-target -- sh -lc 'command -v curl || echo no-curl')
+
+
+Running:
+ - run_shell_command(command=...)
+
+
+Running:
+ - run_shell_command(command=..., timeout=120000)
+
+
+Running:
+ - run_shell_command(command=...)
+
+
+Running:
+ - run_shell_command(command=...)
+
+
+Running:
+ - run_shell_command(command=...)
+
+
+Running:
+ - run_shell_command(command=kubectl exec kube-port-mismatch-named-target -- /bin/sh -lc 'python3 -V || echo no-python3')
+
+
+Running:
+ - run_shell_command(command=...)
+
+
+Running:
+ - run_shell_command(command=...)
+
+
+Running:
+ - run_shell_command(command=...)
+
+
+Running:
+ - run_shell_command(command=...)
+
+
+Running:
+ - run_shell_command(command=kubectl exec kube-port-mismatch-named-target -- curl -sS http://127.0.0.1:8765/ | head -n 3)
+
+
+Running:
+ - run_shell_command(command=...)
+
+
+Running:
+ - run_shell_command(command=...)
+
+
+Running:
+ - run_shell_command(command=kubectl get endpoints named-target-service -o wide)
+
+Verification results
+
+- Pod status
+  - Command: kubectl get pods -o wide
+  - Result: kube-port-mismatch-named-target is 1/1 Running, IP 10.244.2.169, node minikube
+- Pod description and readiness
+  - Command: kubectl describe pod kube-port-mismatch-named-target
+  - Key facts:
+    - Status: Running
+    - Container kube-port-mismatch-named-target
+    - Port: 8765/TCP (http-app), Ready: True
+    - Events show container started successfully
+- Service status and endpoints
+  - Command: kubectl describe service named-target-service
+  - Key facts:
+    - Type: ClusterIP, IP: 10.108.130.27
+    - Port: 8000/TCP
+    - TargetPort: http-app/TCP
+    - Endpoints: 10.244.2.169:8765
+  - Command: kubectl get endpoints named-target-service -o wide
+  - Result: Endpoints listed as 10.244.2.169:8765
+- Access path verification (service path within cluster)
+  - Command: kubectl exec kube-port-mismatch-named-target -- python3 -c "import urllib.request; print(urllib.request.urlopen('http://named-target-service:8000/').getcode())"
+  - Result: 200
+  - Explanation: Accessing via the Service name on port 8000 successfully reaches the application port (8765) inside the pod.
+- Direct pod access validation
+  - Command: kubectl exec kube-port-mismatch-named-target -- python3 -c "import urllib.request; print(urllib.request.urlopen('http://127.0.0.1:8765/').getcode())"
+  - Result: 200
+  - Explanation: The application is listening on container port 8765 as expected (http-app), reachable from within the pod itself.
+
+Additional note on Minikube service URL
+- Command: minikube -p minikube service named-target-service --url
+- Result: service has no node port
+- Interpretation: This is a ClusterIP service; the in-cluster service path is the correct reachability path, which has been validated above.
+
+Conclusion
+- All relevant pods are Running and Ready.
+- The Service named-target-service correctly routes to the container port (http-app) 8765, and the endpoint 10.244.2.169:8765 is active.
+- In-cluster tests confirm reachable traffic through the Service to the named application port (HTTP 200 responses from both service-based and direct pod access tests).
+- Therefore, the original issue (traffic through the Service failing to reach the named application port) is resolved in the current cluster state.
+
+<|VERIFIED|>

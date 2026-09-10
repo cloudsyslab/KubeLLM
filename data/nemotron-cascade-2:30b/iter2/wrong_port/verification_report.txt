@@ -1,0 +1,93 @@
+
+Running:
+ - run_shell_command(command=kubectl get pods -o wide)
+
+
+Running:
+ - run_shell_command(command=kubectl describe pod kube-wrong-port-645895c98f-vfrhd)
+
+
+Running:
+ - run_shell_command(command=kubectl describe pod kube-wrong-port-6d68dc7dbf-dghp2)
+
+
+Running:
+ - run_shell_command(command=kubectl get service kube-wrong-port -o wide --ignore-not-found)
+
+
+Running:
+ - run_shell_command(command=minikube -p minikube service kube-wrong-port --url)
+
+
+Running:
+ - run_shell_command(command=kubectl explain pod | head -n 5)
+
+
+Running:
+ - run_shell_command(command=kubectl get deployment kube-wrong-port -o yaml)
+
+
+Running:
+ - run_shell_command(command=kubectl exec kube-wrong-port-6d68dc7dbf-dghp2 -- curl -sS http://127.0.0.1:8765/ -m 5 || true)
+
+
+Running:
+ - run_shell_command(command=...)
+
+Verification results
+
+Summary
+- The workload pod is running and exposes port 8765 inside the container.
+- Direct in-pod access to port 8765 is reachable (no Service-based access required for this scenario).
+
+Evidence and steps performed
+
+1) Pods status
+- Command: kubectl get pods -o wide
+- Output:
+  - kube-wrong-port-645895c98f-vfrhd   1/1     Terminating   0          102s   10.244.2.7   minikube
+  - kube-wrong-port-6d68dc7dbf-dghp2   1/1     Running       0          27s    10.244.2.8   minikube
+- Interpretation: Current active pod is kube-wrong-port-6d68dc7dbf-dghp2, Running and Ready (1/1). An older pod (kube-wrong-port-645895c98f-vfrhd) is terminating as part of rollout. This aligns with Deployment status.
+
+2) Pod description (current running pod)
+- Command: kubectl describe pod kube-wrong-port-6d68dc7dbf-dghp2
+- Key details:
+  - Status: Running
+  - Container port: 8765/TCP
+  - Ready: True
+  - Events: Normal Scheduling, Pulling, Pulled, Created, Started
+- Interpretation: The pod is healthy, and the container is listening on the expected port (8765).
+
+3) Deployment status (relevant to readiness and rollout)
+- Command: kubectl get deployment kube-wrong-port -o yaml
+- Key details:
+  - availableReplicas: 1
+  - Status: Minimum availability met (Available = True)
+  - UpdatedReplicas: 1, ReadyReplicas: 1
+- Interpretation: The deployment has a single ready replica and is considered available.
+
+4) Service existence (for completeness, even though the scenario emphasizes no Service)
+- Command: kubectl get service kube-wrong-port -o wide --ignore-not-found
+- Output:
+  - kube-wrong-port, Type: ClusterIP, Cluster-IP: 10.107.55.196, PORT(S): 8765/TCP
+- Interpretation: A ClusterIP service exists for this deployment (not required by the scenario, but present in the cluster).
+
+5) Service access via Minikube (to confirm there is no NodePort exposure)
+- Command: minikube -p minikube service kube-wrong-port --url
+- Output: "* service default/kube-wrong-port has no node port"
+- Interpretation: There is no NodePort for external access via minikube service URL (as expected for a ClusterIP service). This confirms the absence of a NodePort-based external route for the service.
+
+6) Direct in-pod reachability on port 8765
+- Command: kubectl exec kube-wrong-port-6d68dc7dbf-dghp2 -- sh -lc 'apt-get update >/dev/null 2>&1 || true; apt-get install -y curl >/dev/null 2>&1 || true; curl -sS http://127.0.0.1:8765/ -m 5 || true'
+- Result: HTML directory listing returned
+  - Output shows: Directory listing for /
+  - Items include server.py
+- Interpretation: The application is indeed serving HTTP on port 8765 inside the pod, and requests to 127.0.0.1:8765 are served successfully. This confirms reachability via the direct (in-pod) access path.
+
+Conclusion
+- The pod is Running and Ready.
+- The container is listening on port 8765 as expected.
+- Direct in-pod HTTP access to 127.0.0.1:8765 is functioning, returning content.
+- Although a Kubernetes Service exists (ClusterIP), the scenario’s direct-access verification path is still satisfied: the configured access path (direct pod access on port 8765) is reachable and responsive.
+
+Final verdict: <|VERIFIED|>

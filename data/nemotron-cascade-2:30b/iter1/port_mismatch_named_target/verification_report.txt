@@ -1,0 +1,149 @@
+
+Running:
+ - run_shell_command(command=kubectl get pods -o wide)
+
+
+Running:
+ - run_shell_command(command=kubectl describe pod kube-port-mismatch-named-target)
+
+
+Running:
+ - run_shell_command(command=kubectl get service -A -o wide)
+
+
+Running:
+ - run_shell_command(command=kubectl describe service named-target-service)
+
+
+Running:
+ - run_shell_command(command=minikube -p minikube service named-target-service --url)
+
+
+Running:
+ - run_shell_command(command=kubectl get pods -A -o wide)
+
+
+Running:
+ - run_shell_command(command=kubectl get endpoints named-target-service -o wide)
+
+
+Running:
+ - run_shell_command(command=...)
+
+
+Running:
+ - run_shell_command(command=...)
+
+
+Running:
+ - run_shell_command(command=kubectl logs curltester)
+
+
+Running:
+ - run_shell_command(command=kubectl describe pod curltester)
+
+
+Running:
+ - run_shell_command(command=kubectl describe pod curltester | tail -n +1 | sed -n '1,200p')
+
+
+Running:
+ - run_shell_command(command=...)
+
+
+Running:
+ - run_shell_command(command=...)
+
+
+Running:
+ - run_shell_command(command=...)
+
+
+Running:
+ - run_shell_command(command=kubectl logs curltester)
+
+
+Running:
+ - run_shell_command(command=kubectl describe pod curltester | tail -n +1 | sed -n '1,200p')
+
+
+Running:
+ - run_shell_command(command=...)
+
+
+Running:
+ - run_shell_command(command=kubectl logs curltester)
+
+
+Running:
+ - run_shell_command(command=kubectl describe pod curltester | tail -n +1 | sed -n '1,200p')
+
+
+Running:
+ - run_shell_command(command=...)
+
+
+Running:
+ - run_shell_command(command=...)
+
+
+Running:
+ - run_shell_command(command=...)
+
+
+Running:
+ - run_shell_command(command=kubectl logs curltester)
+
+
+Running:
+ - run_shell_command(command=kubectl describe pod curltester | tail -n +1 | sed -n '1,200p')
+
+
+Running:
+ - run_shell_command(command=kubectl logs curltester)
+
+### Verification result: port_mismatch_named_target
+
+Evidence and steps performed
+
+1) Pods status
+- Command: kubectl get pods -o wide
+- Result: 
+  - kube-port-mismatch-named-target 1/1 Running 0 87s 10.244.1.191 minikube
+- Interpretation: The application pod is Running with its only container Ready.
+
+2) Pod description and readiness events
+- Command: kubectl describe pod kube-port-mismatch-named-target
+- Key points:
+  - Status: Running
+  - Container kube-port-mismatch-named-target: Port 8765/TCP (http-app), Ready: True
+  - Events show the container started successfully; no errors listed
+- Interpretation: Pod is healthy and ready; no crash or image issues detected.
+
+3) Service status and endpoints
+- Command: kubectl get service -A -o wide
+- Result (relevant lines):
+  - named-target-service (default) ClusterIP 10.107.45.42, Port 8000/TCP, TargetPort http-app/TCP
+- Command: kubectl describe service named-target-service
+- Result (relevant lines):
+  - Selector: app=kube-port-mismatch-named-target
+  - Endpoints: 10.244.1.191:8765
+- Interpretation: Service exists, correctly selects the pod, and endpoints map the service port 8000 to the pod's container port 8765 (named http-app). This confirms the intended port mapping is configured.
+
+4) In-cluster reachability test via DNS/service
+- Command sequence:
+  - Created a one-shot test pod and attempted to curl the service through the cluster DNS:
+    - curl result observed inside the cluster: ok
+- Evidence: The test pod curltester reached named-target-service.default.svc.cluster.local:8000/ and received a response body of “ok” (as shown by the pod logs: ok).
+- Interpretation: Traffic to the service on port 8000 is successfully routed to the application port (8765) inside the pod, and the application responds correctly.
+
+5) Minikube URL test note
+- Command: minikube -p minikube service named-target-service --url
+- Result: The command reported that the service has no node port (ClusterIP service). While this is expected for ClusterIP services, the in-cluster DNS-based access test above confirms reachability through the Service, which is the required access path for this scenario.
+
+Conclusion
+- All relevant pods are Running/Ready.
+- The Service is configured with the correct selector and port mapping, and Endpoints show the pod IP and container port.
+- In-cluster traffic to the named-target-service on port 8000 successfully reaches the application port 8765, evidenced by the curl test returning “ok”.
+
+Final verdict: <|VERIFIED|>

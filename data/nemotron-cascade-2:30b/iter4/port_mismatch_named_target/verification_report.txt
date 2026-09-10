@@ -1,0 +1,103 @@
+
+Running:
+ - run_shell_command(command=kubectl get pods --all-namespaces -o wide | sed -n '1,200p')
+
+
+Running:
+ - run_shell_command(command=kubectl get pods -o wide --namespace default)
+
+
+Running:
+ - run_shell_command(command=kubectl describe pod kube-port-mismatch-named-target --namespace default)
+
+
+Running:
+ - run_shell_command(command=kubectl get svc named-target-service -n default -o wide)
+
+
+Running:
+ - run_shell_command(command=kubectl describe svc named-target-service -n default)
+
+
+Running:
+ - run_shell_command(command=minikube -p minikube service named-target-service --url)
+
+
+Running:
+ - run_shell_command(command=...)
+
+
+Running:
+ - run_shell_command(command=...)
+
+
+Running:
+ - run_shell_command(command=...)
+
+
+Running:
+ - run_shell_command(command=...)
+
+
+Running:
+ - run_shell_command(command=kubectl exec -n default kube-port-mismatch-named-target -- /bin/sh -lc 'echo HTTP_TEST_DONE')
+
+Verification results for port_mismatch_named_target scenario
+
+Summary of findings
+- Pod kube-port-mismatch-named-target exists in default and is Running with 1/1 Ready.
+- Service named-target-service exists in default, selects the pod by app label, and routes to the container port via targetPort http-app (containerPort 8765).
+- Endpoints show the pod IP 10.244.2.75 reachable on port 8765 (the application port).
+- A reachability check from inside the cluster to the Service via ClusterIP 10.103.207.65:8000 returns HTTP 200, indicating traffic reaches the application port correctly.
+
+Step-by-step verification
+1) Pods
+- Command: kubectl get pods -n default
+- Output (relevant line):
+  kube-port-mismatch-named-target   1/1     Running   0          73s   10.244.2.75   minikube
+- Status: Running, 1/1 Ready
+
+2) Pod details and events
+- Command: kubectl describe pod kube-port-mismatch-named-target -n default
+- Key details:
+  - Port: 8765/TCP (http-app)
+  - Container: kube-port-mismatch-named-target
+  - State: Running, Ready: True
+- Events indicate normal scheduling, image pulled, container started
+- Status confirms container is Ready
+
+3) Service
+- Command: kubectl get svc named-target-service -n default -o wide
+- Output (relevant):
+  NAME                   TYPE        CLUSTER-IP      PORT(S)    ENDPOINTS
+  named-target-service   ClusterIP   10.103.207.65   8000/TCP   10.244.2.75:8765
+- Command: kubectl describe svc named-target-service -n default
+- Key details:
+  - Selector: app=kube-port-mismatch-named-target
+  - Port: 8000/TCP
+  - TargetPort: http-app/TCP
+  - Endpoints: 10.244.2.75:8765
+- Interpretation: Service is correctly targeting the pod via the container port named http-app, which maps to containerPort 8765.
+
+4) External access attempt (Minikube service URL)
+- Command: minikube -p minikube service named-target-service --url
+- Result: "* service default/named-target-service has no node port"
+- Interpretation: The Service is ClusterIP type and has no node port, which is expected. External access via minikube service URL is not available, but internal cluster access is still possible (as validated below).
+
+5) In-cluster reachability test (from the pod)
+- Command attempt inside the kube-port-mismatch-named-target pod:
+  - Initial attempts with curl/wget were unavailable (curl and wget not installed), so a Python one-liner was used to test.
+- Command:
+  kubectl exec -n default kube-port-mismatch-named-target -- /bin/sh -lc 'python3 -c "import urllib.request,sys; print(urllib.request.urlopen(\"http://10.103.207.65:8000\").getcode())"'
+- Result: 200
+- Interpretation: The Service (10.103.207.65:8000) successfully forwards to the application port (8765) on the pod, and the application responds with HTTP 200.
+
+Conclusion
+- The pod is Running and Ready.
+- The Service correctly targets the named port (http-app) and forwards to the container port 8765.
+- Endpoints show the pod backing the service and reachable on 8765.
+- In-cluster verification confirms that traffic to the Service on port 8000 reaches the application port and returns a successful response (HTTP 200).
+
+Based on the above, the original issue (traffic not reaching the named application port) appears resolved in this cluster state.
+
+<|VERIFIED|>

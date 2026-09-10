@@ -1,0 +1,101 @@
+
+Running:
+ - run_shell_command(command=kubectl get pods -o wide --namespace default)
+
+
+Running:
+ - run_shell_command(command=kubectl describe pod selector-env-secret-app)
+
+
+Running:
+ - run_shell_command(command=kubectl get secret selector-env-secret -o yaml)
+
+
+Running:
+ - run_shell_command(command=kubectl describe svc selector-env-secret-service || true)
+
+
+Running:
+ - run_shell_command(command=minikube -p minikube service selector-env-secret-service --url)
+
+
+Running:
+ - run_shell_command(command=kubectl get endpoints selector-env-secret-service -o yaml)
+
+
+Running:
+ - run_shell_command(command=kubectl exec selector-env-secret-app -- curl -s http://127.0.0.1:8080 || true)
+
+
+Running:
+ - run_shell_command(command=...)
+
+
+Running:
+ - run_shell_command(command=...)
+
+
+Running:
+ - run_shell_command(command=...)
+
+Verification results for: selector_env_variable_label_and_secret
+
+Commands run and observed state
+
+- Pod status
+  - kubectl get pods -o wide --namespace default
+    - selector-env-secret-app 1/1 Running 0 68s 10.244.3.143 minikube ...
+
+  - kubectl describe pod selector-env-secret-app
+    - Status: Running
+    - Containers: app - Ready: True
+    - Events show the container was pulled, created, and started successfully (no crashes observed)
+
+- Secret presence and value
+  - kubectl get secret selector-env-secret -o yaml
+    - Secret exists: selector-env-secret (Opaque)
+    - Data contains key "message" (base64 value decodes to "hello-from-secret")
+
+  - Note: This confirms the secret and the key that the pod expects exist.
+
+- Service existence and endpoints
+  - kubectl describe svc selector-env-secret-service
+    - Service selector-env-secret-service exists
+    - Selector matches app=selector-env-secret-app
+    - Type: ClusterIP, IP: 10.101.226.107, Port: 8000 -> TargetPort: 8080
+
+  - kubectl get endpoints selector-env-secret-service -o yaml
+    - Endpoints include 10.244.3.143:8080 (the pod IP and port) associated with selector-env-secret-app
+
+  - minikube -p minikube service selector-env-secret-service --url
+    - Output: "* service default/selector-env-secret-service has no node port"
+    - Interpretation: This is expected for a ClusterIP service (no node port). Internal cluster routing is still functional via endpoints.
+
+- In-container reachability and content checks
+  - Attempted curl inside pod (failed due to missing curl)
+    - Command: kubectl exec selector-env-secret-app -- curl -s http://127.0.0.1:8080
+    - Result: curl not found inside container (curl-missing)
+
+  - Workaround: use Python inside the container to make an HTTP request
+    - Command: kubectl exec selector-env-secret-app -- /bin/sh -lc 'python3 -c "import urllib.request; print(urllib.request.urlopen(\"http://127.0.0.1:8080/\").read())"'
+    - Result: b'hello-from-secret'
+    - This confirms the application reads APP_MESSAGE from the secret and serves it on port 8080
+
+  - Cross-check via service IP (within cluster)
+    - Command: kubectl exec selector-env-secret-app -- /bin/sh -lc 'python3 -c "import urllib.request; print(urllib.request.urlopen(\"http://10.101.226.107:8000/\").read())"'
+    - Result: b'hello-from-secret'
+    - Confirms the service routing to the pod works and the secret value is served correctly through the service port 8000
+
+Assessment relative to the original problem
+
+- The original problem described:
+  - Pod crashes with a Secret key error: We now see the pod is Running with the APP_MESSAGE environment variable correctly sourced from the secret, and the pod is healthy (Ready).
+  - Service has no working endpoints after fix: Endpoints for selector-env-secret-service show the pod IP:port (10.244.3.143:8080), indicating the service endpoints are correctly configured and reachable within the cluster. Additionally, tests via the service IP/port show the expected response.
+
+Conclusion
+
+- All relevant pods are Running and Ready.
+- The service endpoints are correctly configured and reachable inside the cluster.
+- The application correctly serves the secret-derived message.
+
+Verdict: <|VERIFIED|>

@@ -1,0 +1,88 @@
+
+Running:
+ - run_shell_command(command=kubectl get pods -n default -o wide)
+
+
+Running:
+ - run_shell_command(command=kubectl describe pod kube-wrong-port-6d68dc7dbf-hm6lx -n default)
+ - run_shell_command(command=kubectl describe pod kube-wrong-port-645895c98f-8pl6q -n default)
+
+
+Running:
+ - run_shell_command(command=kubectl describe pod kube-wrong-port-6d68dc7dbf-hm6lx -n default)
+
+
+Running:
+ - run_shell_command(command=kubectl get svc -A)
+
+
+Running:
+ - run_shell_command(command=kubectl describe pod kube-wrong-port-6d68dc7dbf-hm6lx -n default | sed -n '1,120p')
+
+
+Running:
+ - run_shell_command(command=kubectl exec kube-wrong-port-6d68dc7dbf-hm6lx -n default -- curl -sS -I http://127.0.0.1:8765/)
+
+
+Running:
+ - run_shell_command(command=...)
+
+
+Running:
+ - run_shell_command(command=...)
+
+Verification Report
+
+Summary
+- The workload was deployed as kube-wrong-port with port 8765 exposed inside the pod.
+- There is an old ReplicaSet pod in Terminating state and a current pod in Running state, which is acceptable after a rollout.
+- Direct in-pod access to port 8765 is reachable (HTTP 200 OK).
+
+Evidence and steps performed
+
+1) Pod existence and status
+- Command: kubectl get pods -n default -o wide
+- Observed:
+  - kube-wrong-port-645895c98f-8pl6q  Terminating 0/1 77s 10.244.1.221 minikube
+  - kube-wrong-port-6d68dc7dbf-hm6lx  Running     1/1 29s 10.244.1.222 minikube
+- Interpretation:
+  - There is one Running pod (kube-wrong-port-6d68dc7dbf-hm6lx) with 1/1 Ready.
+  - There is an older pod (kube-wrong-port-645895c98f-8pl6q) in Terminating state. Per rollout guidance, old terminating pods are acceptable.
+
+2) Pod detail (sanity check for current running pod)
+- Command: kubectl describe pod kube-wrong-port-6d68dc7dbf-hm6lx -n default
+- Observed:
+  - Status: Running
+  - Port: 8765/TCP
+  - Ready: True
+  - Container kube-wrong-port started successfully
+- Interpretation:
+  - The active pod is configured to listen on 8765 and is Ready.
+
+3) Service exposure (context)
+- Command: kubectl get svc -A
+- Observed:
+  - default/kube-wrong-port  ClusterIP 10.107.55.196  8765/TCP
+  - default/kube-wrong-port-svc NodePort 8765:32444/TCP
+- Note:
+  - A ClusterIP service exists on port 8765, and a NodePort service is also present. The scenario specifies there is no Service required for the test, but its presence does not invalidate the verification. We are validating direct in-pod access as per scenario guidance.
+
+4) In-pod direct access test to port 8765
+- Command: kubectl exec kube-wrong-port-6d68dc7dbf-hm6lx -n default -- curl -sS -I http://127.0.0.1:8765/
+- Result: HTTP/1.0 200 OK (Server: SimpleHTTP/0.6 Python/3.8.10, Date, Content-Type, Content-Length)
+- Interpretation:
+  - The application is reachable inside the pod on port 8765, returning a valid HTTP 200 response header.
+
+5) Alternative in-pod curl (ensuring curl is available)
+- Command attempt: kubectl exec kube-wrong-port-6d68dc7dbf-hm6lx -n default -- curl -I http://127.0.0.1:8765/
+- Result: HTTP/1.0 200 OK
+- Interpretation:
+  - Confirms reachability via the same path.
+
+Conclusion
+- The target pod that runs the application is Running and Ready.
+- The direct access path to port 8765 inside the pod is reachable (HTTP 200 OK), satisfying the verification criteria for this scenario where no external Service-based access is required.
+- The presence of an old terminating pod is acceptable in a recent rollout, and the current pod remains healthy and accessible.
+
+Final verdict
+<|VERIFIED|>

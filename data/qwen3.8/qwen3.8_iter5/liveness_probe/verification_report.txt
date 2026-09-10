@@ -1,0 +1,66 @@
+
+Running:
+ - run_shell_command(command=kubectl get pods -o wide --all-namespaces)
+
+
+Running:
+ - run_shell_command(command=kubectl describe pod kube-liveness)
+
+
+Running:
+ - run_shell_command(command=...)
+
+Verification results for liveness_probe scenario on Minikube
+
+Evidence collected by executing Kubernetes diagnostics and in-pod health checks.
+
+1) Pods existence and status
+- Command: kubectl get pods -A
+- Result snippet:
+  NAMESPACE     NAME                               READY   STATUS    RESTARTS      AGE
+  default       kube-liveness                      1/1     Running   0             85s
+  kube-system   coredns-6f6b679f8f-5zkx6           1/1     Running   3 (23d ago)   24d
+  kube-system   etcd-minikube                      1/1     Running   3 (23d ago)   24d
+  kube-system   kube-apiserver-minikube            1/1     Running   3 (23d ago)   24d
+  kube-system   kube-controller-manager-minikube   1/1     Running   3 (23d ago)   24d
+  kube-system   kube-proxy-28xkt                   1/1     Running   3 (23d ago)   24d
+  kube-system   kube-scheduler-minikube            1/1     Running   3 (23d ago)   24d
+  kube-system   storage-provisioner                1/1     Running   6 (23d ago)   24d
+
+- Observation: The kube-liveness pod in the default namespace is Running with 1/1 Ready and RestartCount 0.
+
+2) Pod details and events
+- Command: kubectl describe pod kube-liveness -n default
+- Key details:
+  - Status: Running
+  - IP: 10.244.3.118
+  - Container: kube-liveness
+  - Image: kube-liveness-app
+  - Port: 8765/TCP
+  - Liveness: http-get http://:8765/health delay=30s timeout=1s period=10s
+  - Restart Count: 0
+  - Readiness: True
+  - Conditions: PodReadyToStartContainers True, Initialized True, Ready True, ContainersReady True, PodScheduled True
+  - Events (selected):
+    - Normal  Scheduled  93s  default-scheduler  Successfully assigned default/kube-liveness to minikube
+    - Normal  Pulled     92s  kubelet            spec.containers{kube-liveness}: Container image "kube-liveness-app" already present on machine
+    - Normal  Created    92s  kubelet            spec.containers{kube-liveness}: Created container kube-liveness
+    - Normal  Started    92s  kubelet            spec.containers{kube-liveness}: Started container kube-liveness
+- Observation: No error events observed; container started successfully and remains running with readiness satisfied.
+
+3) In-pod health check (direct HTTP probe inside the container)
+- Context: The liveness probe is configured to check /health on port 8765 with an initialDelay of 30s.
+- Command: kubectl exec kube-liveness -n default -- curl -sS -o /dev/null -w "%{http_code}" http://127.0.0.1:8765/health
+- Result: 200
+- Interpretation: The application inside the kube-liveness container responds with HTTP 200 for the /health endpoint, satisfying the liveness probe criteria after startup.
+
+4) Service/Ingress considerations
+- Observed manifests indicate there is no Kubernetes Service defined for this deployment (as per scenario guidance). Therefore, no Service, DNS, or Ingress reachability checks were performed. The verification focuses on direct in-cluster accessibility as required by the scenario.
+
+Conclusion
+- The kube-liveness pod is Running and Ready with RestartCount 0.
+- The in-pod health check for /health returns HTTP 200, indicating the liveness probe would succeed after startup (initialDelay is 30s and the pod has been up well beyond that).
+- There are no error events, and the container started cleanly.
+- Based on the evidence, the issue appears resolved: the kube-liveness pod no longer restarts due to a failing liveness probe, and it remains Running and Ready.
+
+Result: <|VERIFIED|>
