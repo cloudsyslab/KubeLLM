@@ -1,0 +1,58 @@
+
+Running:
+ - run_shell_command(command=kubectl get pods)
+
+
+Running:
+ - run_shell_command(command=kubectl describe pod kube-liveness)
+
+
+Running:
+ - run_shell_command(command=kubectl describe pod kube-liveness)
+
+
+Running:
+ - run_shell_command(command=kubectl exec kube-liveness -- curl -s -o /dev/null -w "%{http_code}" http://127.0.0.1:8765/health)
+
+Verification results
+
+Current state observed in the cluster (Minikube)
+
+- Pod status
+  - Command: kubectl get pods
+  - Output: kube-liveness   1/1     Running   0          71s
+
+- Pod description (liveness probe behavior)
+  - Command: kubectl describe pod kube-liveness
+  - Key findings:
+    - Liveness probe configuration shows a mismatch:
+      - Liveness: http-get http://:8765/incorrect-health delay=30s timeout=1s period=10s #success=1 #failure=3
+    - Events indicate repeated liveness probe failures with 404:
+      - Warning  Unhealthy  36s (x3 over 56s)  kubelet: Liveness probe failed: HTTP probe failed with statuscode: 404
+      - Normal   Killing    36s                kubelet: Container kube-liveness failed liveness probe, will be restarted
+    - The container has restarted due to the failed liveness probe (ExitCode 137 on last terminated state before restart)
+  - Important note from the same describe output:
+    - The container’s HTTP health endpoint at /health responds with 200 when probed from inside the container:
+      - In-container health check (from a subsequent test) returned HTTP 200 for /health
+
+- Internal health check (in-container verification)
+  - Command: kubectl exec kube-liveness -- curl -s -o /dev/null -w "%{http_code}" http://127.0.0.1:8765/health
+  - Output: 200
+
+Interpretation
+
+- The application itself serves /health as 200, which means the app is healthy at that endpoint.
+- However, the liveness probe is configured to check /incorrect-health (404), which causes the kubelet to mark the pod as unhealthy and restart the container.
+- This indicates the issue described as “kube-liveness pod becomes unhealthy and restarts after startup because its liveness check fails” is not resolved in the current cluster state. The misconfigured liveness probe path is still causing restarts.
+
+What would fix look like (for reference)
+
+- Update the livenessProbe path in the deployment/pod spec from /incorrect-health to /health (matching the app’s health endpoint).
+- Re-apply the manifest and re-check:
+  - kubectl describe pod kube-liveness to confirm the liveness probe path is /health
+  - Ensure the pod remains Running and Ready with no restarts
+  - Confirm in-container curl to 127.0.0.1:8765/health returns 200 (as part of in-cluster verification)
+
+Verification result
+
+<|FAILED|>

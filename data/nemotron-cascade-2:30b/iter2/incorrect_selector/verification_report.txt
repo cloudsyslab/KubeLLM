@@ -1,0 +1,65 @@
+
+Running:
+ - run_shell_command(command=kubectl get pods -A)
+
+
+Running:
+ - run_shell_command(command=kubectl describe pod kube-incorrect-selector)
+
+
+Running:
+ - run_shell_command(command=kubectl get service app-service -o wide)
+
+
+Running:
+ - run_shell_command(command=minikube -p minikube service app-service --url)
+
+
+Running:
+ - run_shell_command(command=curl -sS -o /dev/null -w "%{http_code}\n" http://192.168.58.2:30904/ -k)
+
+
+Running:
+ - run_shell_command(command=kubectl get endpoints app-service -o wide)
+
+Verification results:
+
+1) Pods status
+- Command: kubectl get pods -A
+- Observed:
+  - default/kube-incorrect-selector    1/1   Running   0        2m24s
+  - (kube-system pods are present and Running as expected)
+- The relevant pod kube-incorrect-selector is Running.
+
+2) Pod details and events
+- Command: kubectl describe pod kube-incorrect-selector
+- Key details:
+  - Status: Running
+  - IP: 10.244.1.229
+  - Container kube-incorrect-selector: Ready: True
+  - Events show: Scheduled, Pulled, Created, Started
+- No error-related events; container is healthy.
+
+3) Service status and endpoints
+- Command: kubectl get service app-service -o wide
+- Observed:
+  - Name: app-service
+  - Type: NodePort
+  - Cluster-IP: 10.108.201.108
+  - Port mapping: 8000:30904/TCP
+  - Selector: app=kube-incorrect-selector
+- Command: kubectl get endpoints app-service -o wide
+- Observed:
+  - ENDPOINTS: 10.244.1.229:8765
+- Interpretation: Service exists and has an endpoint pointing to the pod IP 10.244.1.229 on container port 8765, which matches the application's listening port.
+
+4) Access path and reachability
+- Command: minikube -p minikube service app-service --url
+- Observed URL: http://192.168.58.2:30904
+- Command: curl -sS -o /dev/null -w "%{http_code}\n" http://192.168.58.2:30904/
+- Observed: 200
+- Verification: The service endpoint is reachable via the NodePort and returns a successful HTTP response, indicating the application is reachable through the service.
+
+Conclusion:
+- The original issue (service showing no endpoints) appears resolved. The app-service now has endpoints, the pod is Running/Ready, and the service path is reachable (200 OK). 
+- Status: <|VERIFIED|>

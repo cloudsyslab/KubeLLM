@@ -1,0 +1,68 @@
+
+Running:
+ - run_shell_command(command=kubectl get pods -A)
+
+
+Running:
+ - run_shell_command(command=kubectl describe pod selector-env-app -n default)
+
+
+Running:
+ - run_shell_command(command=kubectl get service -A)
+
+
+Running:
+ - run_shell_command(command=kubectl describe service selector-env-app-service -n default)
+
+
+Running:
+ - run_shell_command(command=minikube -p minikube service selector-env-app-service --url)
+
+
+Running:
+ - run_shell_command(command=curl -sS -o /dev/null -w "%{http_code}\n" http://192.168.58.2:31858)
+
+Verification result: <|VERIFIED|>
+
+Evidence summary
+
+1) Pod status
+- Command: kubectl get pods -A
+  Output (relevant line):
+  default       selector-env-app                   1/1     Running   0              48s
+
+- Command: kubectl describe pod selector-env-app -n default
+  Key details:
+  - Status: Running
+  - IP: 10.244.1.210
+  - Container app: Ready: True, Restart Count: 0
+  - Environment: APP_MESSAGE=Hello from env
+  - Events: Created, Started (no crash-related events)
+
+2) Service status and endpoints
+- Command: kubectl get service -A
+  Output (relevant line):
+  default       selector-env-app-service   NodePort    10.102.202.190   <none>        80:31858/TCP             4m37s
+
+- Command: kubectl describe service selector-env-app-service -n default
+  Key details:
+  - Selector: app=selector-env-app
+  - Port: 80/TCP -> TargetPort 8080/TCP
+  - NodePort: 31858
+  - Endpoints: 10.244.1.210:8080
+
+3) Reachability test via Minikube service
+- Command: minikube -p minikube service selector-env-app-service --url
+  Output:
+  http://192.168.58.2:31858
+
+- Command: curl -sS -o /dev/null -w "%{http_code}\n" http://192.168.58.2:31858
+  Output:
+  200
+
+Conclusion
+- The pod selector-env-app is Running and Ready.
+- The service selector-env-app-service has an endpoint (10.244.1.210:8080) and is exposed via NodePort 31858.
+- The Minikube service URL is reachable and returns HTTP 200, confirming end-to-end accessibility through the service.
+
+All the verification criteria are satisfied: the pod is Running/Ready, endpoints exist, and the service is reachable. Therefore, the issue described (pod crash with KeyError and service endpoints being missing) appears resolved in this cluster.

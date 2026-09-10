@@ -1,0 +1,67 @@
+
+Running:
+ - run_shell_command(command=kubectl get pods)
+
+
+Running:
+ - run_shell_command(command=kubectl describe pod kube-wrong-port-7001)
+
+
+Running:
+ - run_shell_command(command=kubectl get svc)
+
+
+Running:
+ - run_shell_command(command=minikube -p minikube service kube-wrong-port-7001-svc --url)
+
+
+Running:
+ - run_shell_command(command=curl -sS http://127.0.0.1:7001/ -D -o /tmp/resp.txt || true; echo EXIT:$?)
+
+
+Running:
+ - run_shell_command(command=curl -sS -D - http://192.168.58.2:30849/ -o /tmp/server_resp.txt; echo EXIT:$?)
+
+Verification results
+
+- Pod list
+  - kubectl get pods
+    - kube-wrong-port-7001  1/1  Running 0  4m10s
+
+- Pod details
+  - kubectl describe pod kube-wrong-port-7001
+    - Status: Running
+    - IP: 10.244.2.58
+    - Container: kube-wrong-port-7001
+      - Port: 7001/TCP
+      - Ready: True
+    - Events: Normal  Scheduled, Created, Started (no errors)
+
+- Service discovery
+  - kubectl get service
+    - kube-wrong-port                ClusterIP   10.107.55.196   <none>        8765/TCP         33h
+    - kube-wrong-port-7001-svc       NodePort    10.99.78.238     <none>        7001:30849/TCP   57s
+    - kubernetes                     ClusterIP   10.96.0.1        <none>        443/TCP          35h
+
+- In-cluster URL for the NodePort service
+  - minikube -p minikube service kube-wrong-port-7001-svc --url
+    - http://192.168.58.2:30849
+
+- Reachability test
+  - curl to NodePort URL
+    - curl -sS -D - http://192.168.58.2:30849/ -o /tmp/server_resp.txt
+    - HTTP/1.0 200 OK
+    - Server: SimpleHTTP/0.6 Python/3.8.10
+    - Date: Wed, 22 Jul 2026 06:12:33 GMT
+    - Content-Type: text/html; charset=utf-8
+    - Content-Length: 340
+    - Exit status: 0
+
+Assessment
+- The pod kube-wrong-port-7001 is Running and Ready.
+- A NodePort service kube-wrong-port-7001-svc exposing port 7001 is present and mapped to node port 30849.
+- The NodePort URL via Minikube (192.168.58.2:30849) is reachable and returns HTTP 200 OK from the application on port 7001.
+- Therefore, direct access to the application on port 7001 via the service path is functioning as expected.
+
+Conclusion
+<|VERIFIED|>

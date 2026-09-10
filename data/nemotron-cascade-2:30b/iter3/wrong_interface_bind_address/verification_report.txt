@@ -1,0 +1,125 @@
+
+Running:
+ - run_shell_command(command=kubectl get pods -o wide --all-namespaces)
+
+
+Running:
+ - run_shell_command(command=kubectl describe pod kube-wrong-interface-bind-address)
+
+
+Running:
+ - run_shell_command(command=kubectl get service wrong-interface-bind-address-service -o wide --show-labels)
+
+
+Running:
+ - run_shell_command(command=minikube -p minikube service wrong-interface-bind-address-service --url)
+
+
+Running:
+ - run_shell_command(command=curl -sS -w "%{http_code}\n" http://192.168.58.2:31131/ -o /dev/null)
+
+
+Running:
+ - run_shell_command(command=...)
+
+
+Running:
+ - run_shell_command(command=...)
+
+
+Running:
+ - run_shell_command(command=...)
+
+
+Running:
+ - run_shell_command(command=kubectl get endpoints wrong-interface-bind-address-service -o yaml)
+
+
+Running:
+ - run_shell_command(command=...)
+
+
+Running:
+ - run_shell_command(command=kubectl run curl-pod --restart=Never --image=curlimages/curl --command -- sh -c "kubectl")
+
+
+Running:
+ - run_shell_command(command=kubectl get pods -l app=kube-wrong-interface-bind-address -o wide)
+
+
+Running:
+ - run_shell_command(command=kubectl get services -o wide)
+
+
+Running:
+ - run_shell_command(command=...)
+
+
+Running:
+ - run_shell_command(command=...)
+
+
+Running:
+ - run_shell_command(command=...)
+
+
+Running:
+ - run_shell_command(command=kubectl describe service wrong-interface-bind-address-service)
+
+
+Running:
+ - run_shell_command(command=...)
+
+
+Running:
+ - run_shell_command(command=...)
+
+
+Running:
+ - run_shell_command(command=kubectl exec kube-wrong-interface-bind-address -- netstat -tulpen || true)
+
+
+Running:
+ - run_shell_command(command=kubectl exec kube-wrong-interface-bind-address -- bash -lc 'ss -tulpen || true')
+
+
+Running:
+ - run_shell_command(command=kubectl describe pod kube-wrong-interface-bind-address | sed -n '1,200p')
+
+- Pod verification
+  - kubectl get pods -o wide --all-namespaces shows:
+    - default/kube-wrong-interface-bind-address (Running, 1/1 Ready), IP 10.244.2.45 on node minikube
+    - Other system pods (coredns, etcd, etc.) Running as expected
+  - kubectl describe pod kube-wrong-interface-bind-address:
+    - Status: Running
+    - ContainersReady: True
+    - Events: Normal scheduling, pull, create, start; no error events
+
+- Service verification
+  - kubectl get service wrong-interface-bind-address-service -o wide shows:
+    - Type: NodePort
+    - ClusterIP: 10.106.136.33
+    - Ports: 8000/TCP (targetPort 8765), NodePort 31131
+    - Endpoints: 10.244.2.45:8765
+  - minikube -p minikube service wrong-interface-bind-address-service --url returns:
+    - http://192.168.58.2:31131
+
+- Reachability tests
+  - From inside the pod to the app via loopback:
+    - kubectl exec kube-wrong-interface-bind-address -- python3 -c "import urllib.request; print(urllib.request.urlopen('http://127.0.0.1:8765/').getcode())"
+    - Result: 200
+  - From inside the cluster to the service ClusterIP:port (10.106.136.33:8000):
+    - kubectl exec kube-wrong-interface-bind-address -- python3 -c "import urllib.request; print(urllib.request.urlopen('http://10.106.136.33:8000/').getcode())"
+    - Result: Connection refused
+  - From host via NodePort (minikube service URL 192.168.58.2:31131):
+    - curl -sS -w "%{http_code}\n" http://192.168.58.2:31131/ -o /dev/null
+    - Result: Connection refused
+
+- Additional notes
+  - The application binds and serves on 0.0.0.0:8765 inside the pod (200 OK from localhost:8765).
+  - Service exists and endpoints point to the pod IP:8765, but internal ClusterIP reachability (10.106.136.33:8000) and external NodePort reachability (192.168.58.2:31131) fail with connection refused.
+
+Conclusion
+- The original problem (pod running but HTTP requests through pod IP or Service timing out) is not fixed in the current cluster state. Internal and external reachability paths to the HTTP server are still failing beyond localhost inside the pod.
+
+Final verdict: <|FAILED|>

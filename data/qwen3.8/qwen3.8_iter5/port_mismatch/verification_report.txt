@@ -1,0 +1,60 @@
+
+Running:
+ - run_shell_command(command=kubectl get pods -o wide)
+
+
+Running:
+ - run_shell_command(command=kubectl describe pod kube-port-mismatch)
+
+
+Running:
+ - run_shell_command(command=kubectl get service app-service -o wide)
+
+
+Running:
+ - run_shell_command(command=minikube -p minikube service app-service --url)
+
+
+Running:
+ - run_shell_command(command=curl -sS -I http://192.168.94.2:30611/ | head -n 5)
+
+Verification results
+
+- Pod verification
+  - kubectl get pods
+    - kube-port-mismatch  1/1   Running   0        3m50s   10.244.3.125   minikube
+  - kubectl describe pod kube-port-mismatch
+    - Status: Running
+    - Container kube-port-mismatch
+      - Port: 8765/TCP
+      - State: Running (Started 3m54s ago)
+    - Events show normal scheduling, image pull, container creation and start; no errors reported.
+
+- Service verification
+  - kubectl get service app-service -o wide
+    - Name: app-service
+    - Type: NodePort
+    - ClusterIP: 10.105.31.157
+    - Ports: 8000:30611/TCP
+    - Selector: app.kubernetes.io/name=app
+
+- External access verification
+  - minikube -p minikube service app-service --url
+    - URL: http://192.168.94.2:30611
+
+  - curl check (one-shot)
+    - curl -sS -I http://192.168.94.2:30611/ | head -n 5
+    - Result: HTTP/1.0 200 OK
+      Server: SimpleHTTP/0.6 Python/3.8.10
+      Date: Thu, 27 Aug 2026 15:56:55 GMT
+      Content-type: text/html; charset=utf-8
+
+Assessment
+- The pod kube-port-mismatch is Running with 1/1 ready container.
+- The service app-service exists, is of type NodePort, and has a mapped port 30611 to container port 8765 (as per manifest: containerPort 8765, targetPort 8765).
+- The minikube service URL is reachable and returns HTTP 200 OK, confirming that the application is accessible through the configured path.
+
+Conclusion
+- The reported 502 Bad Gateway issue appears resolved in this cluster state. The application pod is running, the service is correctly configured, and external access via the NodePort endpoint successfully serves HTTP 200 responses.
+
+<|VERIFIED|>

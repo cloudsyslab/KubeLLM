@@ -1,0 +1,59 @@
+
+Running:
+ - run_shell_command(command=kubectl get pods -o wide)
+
+
+Running:
+ - run_shell_command(command=kubectl describe pod kube-env-wrong-name)
+
+
+Running:
+ - run_shell_command(command=kubectl exec kube-env-wrong-name -- curl -sS http://127.0.0.1:8765/ || true)
+
+
+Running:
+ - run_shell_command(command=...)
+
+
+Running:
+ - run_shell_command(command=kubectl exec kube-env-wrong-name -- curl -sS -o /dev/null -w '%{http_code}' http://127.0.0.1:8765/)
+
+- Verification steps and observed results
+
+1) kubectl get pods
+- pods list:
+  - kube-env-wrong-name   1/1 Running   0     29s   10.244.2.14   minikube
+
+Observation: The pod kube-env-wrong-name exists and is Running with 1/1 ready, as required.
+
+2) kubectl describe pod kube-env-wrong-name
+- Key excerpt:
+  - Environment:
+      APP_MODE:  production
+  - Containers:
+      kube-env-wrong-name
+        State: Running (Started: 38s)
+        Ready: True
+- Events:
+  - Normal  Pulled  kube-env-wrong-name-app:latest already present
+  - Normal  Started  kube-env-wrong-name: Started container kube-env-wrong-name
+
+Observation: The APP_MODE environment variable is defined in the pod manifest and is exposed to the container (value: production). The container is Running and Ready with no error events.
+
+3) Service verification
+- No Service manifest exists for this scenario. Absence of a Service is acceptable per scenario guidance.
+
+4) In-pod reachability test (direct access, no Service)
+- Command executed inside the pod to fetch the root path:
+  - Result: mode=production
+  - This confirms the application successfully reads APP_MODE and uses it at runtime.
+
+- HTTP status check (one-shot curl)
+  - curl -sS -o /dev/null -w '%{http_code}' http://127.0.0.1:8765/
+  - Result: 200
+
+Conclusion
+- The application now correctly reads APP_MODE from the environment and responds with mode=production, indicating the KeyError: 'APP_MODE' issue is resolved in the current cluster state for the kube-env-wrong-name pod.
+- The pod is Running and Ready, and the in-pod HTTP endpoint is reachable and returns a successful response.
+
+Final verdict: <|VERIFIED|>

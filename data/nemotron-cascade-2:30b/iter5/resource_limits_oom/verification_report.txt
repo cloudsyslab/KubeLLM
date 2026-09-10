@@ -1,0 +1,58 @@
+
+Running:
+ - run_shell_command(command=kubectl get pods)
+
+
+Running:
+ - run_shell_command(command=kubectl describe pod resource-limits-oom-app)
+
+
+Running:
+ - run_shell_command(command=kubectl logs resource-limits-oom-app)
+
+
+Running:
+ - run_shell_command(command=...)
+
+Verification steps and results
+
+1) Pod discovery
+- Command: kubectl get pods
+- Result: resource-limits-oom-app is Running (1/1) with 0 restarts
+  - READY: 1/1
+  - STATUS: Running
+  - RESTARTS: 0
+  - AGE: 78s
+
+2) Pod description and events
+- Command: kubectl describe pod resource-limits-oom-app
+- Key observations:
+  - Pod state: Running
+  - Container app:
+    - Image: kube-resource-limits-oom-app
+    - Ports: 8080/TCP
+    - Limits/Requests: memory 256Mi / 128Mi, CPU 200m / 100m
+    - State: Running, Started: <recent time>
+    - Restart Count: 0
+  - Events: Normal Scheduled, Pulled, Created, Started
+- Interpretation: Pod is healthy with no restarts and no OOM-related events observed in describe.
+
+3) Pod logs (health and startup)
+- Command: kubectl logs resource-limits-oom-app
+- Output excerpt:
+  - "Starting server and allocating memory..."
+  - "Memory allocated. List size: 80.00 MB"
+  - "Server running on 0.0.0.0:8080"
+- Interpretation: Server starts successfully, memory allocation occurred, no OOM-related errors in logs.
+
+4) In-pod reachability (direct access to the application)
+- Command: kubectl exec resource-limits-oom-app -- python3 -c "import urllib.request; print(urllib.request.urlopen('http://127.0.0.1:8080/').getcode())"
+- Result: 200
+- Interpretation: HTTP endpoint responds successfully inside the container, confirming the app is serving requests on port 8080.
+
+Conclusion
+- The pod resource-limits-oom-app is running with 1/1 ready containers, no restarts (0), and there are no OOM-related events observed.
+- The application is reachable on port 8080 from within the pod, evidenced by a 200 HTTP status code.
+- Based on these observations, the previously observed CrashLoopBackOff due to OOM appears resolved in the current cluster state.
+
+<|VERIFIED|>

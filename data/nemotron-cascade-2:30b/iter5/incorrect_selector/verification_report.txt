@@ -1,0 +1,77 @@
+
+Running:
+ - run_shell_command(command=kubectl get pods -o wide --all-namespaces)
+
+
+Running:
+ - run_shell_command(command=kubectl describe pod kube-incorrect-selector)
+
+
+Running:
+ - run_shell_command(command=kubectl get service -A -o wide)
+
+
+Running:
+ - run_shell_command(command=minikube -p minikube service app-service --url)
+
+
+Running:
+ - run_shell_command(command=curl -sS -o /dev/null -w "%{http_code}" http://192.168.58.2:30507)
+
+
+Running:
+ - run_shell_command(command=kubectl get endpoints app-service -n default -o wide)
+
+Verification report
+
+Summary:
+- The original problem (service endpoints not listed) appears resolved. The service app-service has a valid endpoint pointing to the running pod kube-incorrect-selector, and the service is reachable via the Minikube URL.
+
+Evidence and steps performed
+
+1) Check pods
+- Command: kubectl get pods
+- Result:
+  - default/kube-incorrect-selector 1/1 Running
+  - kube-system pods (DNS, etc.) also Running
+- Interpretation: Expected pod exists and is Running.
+
+2) Describe the target pod (kube-incorrect-selector)
+- Command: kubectl describe pod kube-incorrect-selector
+- Key status:
+  - Status: Running
+  - IP: 10.244.2.111
+  - ContainersReady: True
+- Events (selected):
+  - Normal  Scheduled: Successfully assigned default/kube-incorrect-selector to minikube
+  - Normal  Pulled: Image kube-incorrect-selector-app:latest already present
+  - Normal  Created / Started: Container started successfully
+- Interpretation: Pod started cleanly with no errors.
+
+3) Check service exists and endpoints
+- Command: kubectl get service -A -o wide
+- Result:
+  - default app-service  NodePort  10.96.60.219  <none>  8000:30507/TCP  3m51s  app=kube-incorrect-selector
+  - Other services listed for context
+- Command: kubectl get endpoints app-service -n default -o wide
+- Result:
+  - ENDPOINTS: 10.244.2.111:8765
+- Interpretation: The service app-service exists and has an endpoint mapping to the pod IP: 10.244.2.111:8765. This matches the containerPort 8765 exposed by the pod.
+
+4) Access the service via Minikube and verify reachability
+- Command: minikube -p minikube service app-service --url
+- Result: http://192.168.58.2:30507
+- Command: curl -sS -o /dev/null -w "%{http_code}" http://192.168.58.2:30507
+- Result: 200
+- Interpretation: The service is reachable and serving HTTP responses at the NodePort through Minikube.
+
+5) Optional end-to-end check against the pod (direct)
+- The endpoints output confirms the service targets 10.244.2.111:8765, which is the pod IP and container port exposed.
+
+Conclusion:
+- All relevant pods are Running/Ready.
+- The service app-service has endpoints pointing to the running pod.
+- The Minikube service URL is reachable and returns HTTP 200.
+- Therefore, the issue described as “When I describe the service associated with the pod on my kubernetes cluster, it shows no endpoints listed” is resolved in this cluster state.
+
+Final verdict: <|VERIFIED|>

@@ -1,0 +1,58 @@
+
+Running:
+ - run_shell_command(command=kubectl get pods -A -o wide)
+
+
+Running:
+ - run_shell_command(command=kubectl describe pod resource-limits-cpu-starvation-app -n default)
+
+
+Running:
+ - run_shell_command(command=...)
+
+Verification report for: resource_limits_cpu_starvation scenario on Minikube
+
+Summary of findings
+- Pod resource-limits-cpu-starvation-app in default namespace is Running and Ready (1/1).
+- Container app within the pod is running with the configured CPU limit (200m) and readiness probe configured to hit /healthz.
+- In-pod health check to the readiness endpoint returns HTTP 200, indicating the health check path responds as expected under current resource constraints.
+- No Service, Ingress, or external access path is required for this scenario; reachability was verified via in-pod HTTP request.
+
+Evidence (commands and results)
+1) kubectl get pods
+- Command: kubectl get pods -A -o wide
+- Result (relevant line):
+  - default resource-limits-cpu-starvation-app 1/1 Running 0 13s ...
+
+2) kubectl describe pod
+- Command: kubectl describe pod resource-limits-cpu-starvation-app -n default
+- Key details:
+  - IP: 10.244.1.206
+  - Container: app
+  - Image: kube-resource-limits-cpu-starvation-app:latest
+  - Ports: 8080/TCP
+  - Limits: cpu: 200m, memory: 128Mi
+  - Requests: cpu: 200m, memory: 64Mi
+  - Readiness: http-get http://:8080/healthz delay=2s timeout=1s period=3s
+  - Readiness status: True
+  - State: Running (Started: ...)
+  - Conditions: PodReadyToStartContainers True, Initialized True, Ready True, ContainersReady True, PodScheduled True
+  - Events (relevant): 
+    - Normal  Scheduled: Successfully assigned default/resource-limits-cpu-starvation-app to minikube
+    - Normal  Pulled: Image already present
+    - Normal  Created: Created container app
+    - Normal  Started: Started container app
+
+3) In-pod health check (to verify readiness path)
+- Command: kubectl exec resource-limits-cpu-starvation-app -n default -- python3 -c "import urllib.request; print(urllib.request.urlopen('http://127.0.0.1:8080/healthz').getcode())"
+- Result: 200
+
+Interpretation
+- The pod is in Running state and Ready (1/1), with the container reporting Ready True in describe output.
+- The readiness probe is configured to query /healthz, and the in-pod health check returns 200, confirming the endpoint responds as expected under the current CPU limit.
+- There is no Service to verify via minikube service, and the scenario’s verification path uses in-pod endpoint reachability, which has succeeded.
+
+Conclusion
+- Based on the current cluster state and the verified in-pod health endpoint response, the issue described (readiness probe timeouts due to very low CPU limit) appears resolved for this deployment. The pod is Running and Ready, and the readiness probe succeeds.
+
+Verdict: <|VERIFIED|>

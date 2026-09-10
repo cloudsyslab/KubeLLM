@@ -1,0 +1,45 @@
+
+Running:
+ - run_shell_command(command=kubectl get pods -o wide)
+
+
+Running:
+ - run_shell_command(command=kubectl describe pod kube-wrong-port-9090)
+
+
+Running:
+ - run_shell_command(command=...)
+
+- Verification steps and results
+
+1) kubectl get pods
+- Command: kubectl get pods -o wide
+- Result:
+  - kube-wrong-port-9090  1/1  Running  0  2m7s  10.244.3.60  minikube
+
+2) kubectl describe pod kube-wrong-port-9090
+- Command: kubectl describe pod kube-wrong-port-9090
+- Key details:
+  - Name: kube-wrong-port-9090
+  - Status: Running
+  - IP: 10.244.3.60
+  - Container: kube-wrong-port-9090
+    - Port: 9090/TCP
+    - State: Running
+    - Ready: True
+  - Events indicate the container started successfully and the pod is scheduled on minikube
+- Observations:
+  - Pod is Running and Ready (1/1 container ready)
+
+3) In-pod reachability test (no Service involved)
+- Context: No Service manifest is used per the provided YAML. Access tested directly inside the pod.
+- Command: kubectl exec kube-wrong-port-9090 -- python3 -c "import urllib.request; print(urllib.request.urlopen('http://127.0.0.1:9090/').getcode())"
+- Result: 200
+- Interpretation: The application is listening on port 9090 inside the container and responds successfully to an HTTP request to http://127.0.0.1:9090/.
+
+Conclusion
+- The pod kube-wrong-port-9090 isRunning and Ready.
+- The container exposes port 9090 as configured.
+- Direct in-pod HTTP access to port 9090 returns a successful 200 response, demonstrating reachability without a Kubernetes Service.
+
+<|VERIFIED|>

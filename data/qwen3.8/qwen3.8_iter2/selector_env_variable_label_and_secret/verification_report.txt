@@ -1,0 +1,93 @@
+
+Running:
+ - run_shell_command(command=kubectl get pods -o wide)
+
+
+Running:
+ - run_shell_command(command=kubectl describe pod selector-env-secret-app)
+
+
+Running:
+ - run_shell_command(command=kubectl get secret selector-env-secret -o yaml)
+
+
+Running:
+ - run_shell_command(command=kubectl get service selector-env-secret-service -o wide)
+
+
+Running:
+ - run_shell_command(command=kubectl get endpoints selector-env-secret-service -o yaml)
+
+### Verification results for selector_env_variable_label_and_secret
+
+Evidence from the current cluster state (Minikube)
+
+- Pod status
+  - Command: kubectl get pods -o wide
+  - Result:
+    - selector-env-secret-app 0/1 CreateContainerConfigError  (IP: 10.244.2.241, Node: minikube)
+  - Interpretation: Pod is not Running or Ready. Container cannot start due to config/secret issues.
+
+- Pod details and events
+  - Command: kubectl describe pod selector-env-secret-app
+  - Key findings:
+    - State: Waiting
+    - Reason: CreateContainerConfigError
+    - Events include: 
+      - Normal Scheduled: Successfully assigned default/selector-env-secret-app to minikube
+      - Normal SandboxChanged: Pod sandbox changed, will be killed and re-created
+      - Normal Pulled: Image kube-selector-env-secret-app:latest present
+      - Warning Failed: couldn't find key message in Secret default/selector-env-secret
+  - Interpretation: The container environment expects a secret key named "message", but the Secret does not provide it. This blocks container startup.
+
+- Secret contents
+  - Command: kubectl get secret selector-env-secret -o yaml
+  - Key findings:
+    - data:
+      - wrong_message: aGVsbG8tZnJvbS1zZWNyZXQ=
+    - The Secret has a key named wrong_message instead of message. This explains the Describe pod error about missing key "message".
+  - Interpretation: Secret data is misconfigured (wrong key), preventing the pod from obtaining APP_MESSAGE.
+
+- Service details and selectors
+  - Command: kubectl get service selector-env-secret-service -o wide
+  - Result:
+    - selector-env-secret-service  ClusterIP 10.97.60.78  <none>  8000/TCP  3m42s  app=wrong-selector
+  - Interpretation: Service selector is app: wrong-selector, which does not match the Pod label app: selector-env-secret-app. Consequently, the Service will not target the pod, leading to no endpoints.
+
+- Endpoints for the service
+  - Command: kubectl get endpoints selector-env-secret-service -o yaml
+  - Result: Endpoints resource exists but contains no endpoints (no addresses listed)
+  - Interpretation: Because there is no Pod matching the Service selector, there are no endpoints for the service.
+
+Assessment against the original problem
+- Original problem: The pod crashes with a Secret key error, and the Service has no working endpoints after the container issue is addressed.
+- What is observed now:
+  - Pod is not Running due to CreateContainerConfigError caused by a secret key mismatch ("message" key missing; secret has "wrong_message").
+  - Service has a mismatching selector ("app=wrong-selector"), so it has no endpoints, and Endpoints are empty.
+  - Therefore, the root causes persist:
+    - Secret does not provide the expected key "message" for APP_MESSAGE.
+    - Service selector does not match the Pod label, resulting in no endpoints.
+
+Conclusion
+- The issue is NOT fixed in the current cluster state. Both the secret configuration and the service selector need correction, and the Pod must be able to start once the secret provides APP_MESSAGE and the Pod is reachable by the Service.
+
+Recommended next steps (not required to execute, but to fix the issue)
+- Fix the Secret to include the exact key expected by the Pod:
+  - Option A: Update the Secret so that the data contains a key named message with value hello-from-secret
+  - Example (one-liner):
+    - kubectl patch secret selector-env-secret -p '{"stringData":{"message":"hello-from-secret"}}'
+- Ensure the Service selector matches the Pod labels:
+  - Pod label: app: selector-env-secret-app
+  - Service selector should be:
+    - app: selector-env-secret-app
+  - Example (one-liner):
+    - kubectl patch service selector-env-secret-service -p '{"spec":{"selector":{"app":"selector-env-secret-app"}}}'
+- If needed, recreate or restart the Pod so it picks up the corrected secret (since environment variables from Secret are loaded at Pod start).
+  - If you’re not using a controller (Deployment/ReplicaSet), delete the Pod and recreate it using the manifest:
+    - kubectl delete pod selector-env-secret-app
+    - Recreate using the YAML that defines the Secret and Pod (or manage with a Deployment for automatic restarts).
+
+Verification tokens
+- Result: the issue has NOT been fixed in the current cluster state.
+
+<|FAILED|>

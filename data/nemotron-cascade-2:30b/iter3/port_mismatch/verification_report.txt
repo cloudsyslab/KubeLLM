@@ -1,0 +1,76 @@
+
+Running:
+ - run_shell_command(command=kubectl get pods -A -o wide)
+
+
+Running:
+ - run_shell_command(command=kubectl describe pod kube-port-mismatch)
+
+
+Running:
+ - run_shell_command(command=kubectl get service -A -o wide)
+
+
+Running:
+ - run_shell_command(command=minikube -p minikube service app-service --url)
+
+
+Running:
+ - run_shell_command(command=kubectl get endpoints app-service -n default -o wide)
+
+
+Running:
+ - run_shell_command(command=kubectl describe service app-service -n default)
+
+Verification results
+
+What I checked and observed (using exact resource names from the manifests)
+
+1) Pods state
+- Command: kubectl get pods -A -o wide
+- Observed:
+  - default/kube-port-mismatch — READY 1/1, STATUS Running, IP 10.244.2.24, Node minikube
+  - kube-system pods (coredns, etcd, kube-apiserver, etc.) Running
+- Interpretation: The kube-port-mismatch pod exists and is Running.
+
+2) Pod details and readiness
+- Command: kubectl describe pod kube-port-mismatch
+- Observed:
+  - Status: Running
+  - Container kube-port-mismatch: Port 8765/TCP, Ready True
+  - Events: Pod scheduled, container started successfully
+- Interpretation: The pod itself is healthy and its container is listening on port 8765 inside the pod.
+
+3) Service state and endpoints
+- Command: kubectl get service -A -o wide
+- Observed:
+  - default/app-service: Type NodePort, ClusterIP 10.105.128.225, Port 8000/TCP, NodePort 32628/TCP, Endpoints: <none>
+  - Selector: app=kube-port-mismatch
+- Command: kubectl get endpoints app-service -n default -o wide
+- Observed: Endpoints none
+- Command: kubectl describe service app-service -n default
+- Observed:
+  - Name: app-service
+  - Selector: app=kube-port-mismatch
+  - Port: 8000/TCP, TargetPort: 8756/TCP
+  - Endpoints: (none)
+- Interpretation:
+  - The Service exists, but it has no endpoints.
+  - The Service selector (app=kube-port-mismatch) does not match the Pod labels, leading to no backend endpoints.
+  - TargetPort configured in the Service is 8756, while the Pod container port is 8765, which would also cause a port mismatch if an endpoint existed.
+  - Therefore, traffic sent to the NodePort will not reach the Pod.
+
+4) Access via Minikube (service URL)
+- Command: minikube -p minikube service app-service --url
+- Observed: Error: service not available: no running pod for service app-service found
+- Interpretation: As expected due to the endpoints issue, the service cannot be reached via Minikube.
+
+Summary of root cause
+- The Service app-service selects pods with label app=kube-port-mismatch, but the Pod kube-port-mismatch has the label app.kubernetes.io/name: app. This label mismatch prevents the Service from discovering the Pod, resulting in Endpoints being empty.
+- Additionally, the Service TargetPort (8756) does not match the container port (8765), compounding the misconfiguration.
+
+Conclusion
+- The original problem (HTTP 502 Bad Gateway) is not resolved due to the Service having no endpoints behind it and a label/port mismatch. The cluster would continue to route requests to a non-existent backend, causing 502 errors.
+
+Verification outcome
+<|FAILED|>

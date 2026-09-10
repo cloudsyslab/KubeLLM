@@ -1,0 +1,66 @@
+
+Running:
+ - run_shell_command(command=kubectl get pods)
+
+
+Running:
+ - run_shell_command(command=kubectl describe pod resource-limits-oom-app)
+
+
+Running:
+ - run_shell_command(command=kubectl logs resource-limits-oom-app)
+
+
+Running:
+ - run_shell_command(command=...)
+
+### Verification results
+
+1) Pod existence and readiness
+- Command: kubectl get pods
+- Output:
+  - resource-limits-oom-app   1/1     Running   0          2m46s
+
+Assessment: Pod exists and has a single container that is Running and Ready.
+
+2) Pod description and events
+- Command: kubectl describe pod resource-limits-oom-app
+- Key points from the output:
+  - Status: Running
+  - Container app:
+    - State: Running
+    - Ready: True
+    - Restart Count: 0
+    - Limits: cpu 200m, memory 256Mi
+    - Requests: cpu 100m, memory 128Mi
+  - Events:
+    - Normal  Scheduled: Successfully assigned default/resource-limits-oom-app to minikube
+    - Normal  Pulled: image already present
+    - Normal  Created: Created container app
+    - Normal  Started: Started container app
+
+Assessment: No crash or OOMKilled events observed. Container is running and ready.
+
+3) Pod logs
+- Command: kubectl logs resource-limits-oom-app
+- Output (trimmed):
+  - 2026-08-27 02:56:04,394 - INFO - Starting server and allocating memory...
+  - 2026-08-27 02:56:04,599 - INFO - Memory allocated. List size: 80.00 MB
+  - 2026-08-27 02:56:04,988 - INFO - Server running on 0.0.0.0:8080
+  - 127.0.0.1 - - [27/Aug/2026 02:57:38] "GET / HTTP/1.1" 200 -
+
+Assessment: Server starts correctly and serves requests (no OOM or crashes evidenced in logs). Note: logs are available and show healthy startup and a successful HTTP request.
+
+4) In-container reachability check
+- Command: kubectl exec resource-limits-oom-app -- python3 -c "import urllib.request; resp=urllib.request.urlopen('http://127.0.0.1:8080/'); print(resp.getcode())"
+- Output: 200
+
+Assessment: In-container HTTP server on port 8080 is reachable and returns HTTP 200, confirming correct operation within the pod.
+
+Notes
+- The scenario indicates there is no Kubernetes Service for this test; absence of a Service is not treated as a failure for this verification.
+- All relevant checks indicate the pod is Running/Ready and serving on the configured port inside the pod. There are no OOMKilled events observed in current state.
+
+Conclusion: The issue described (CrashLoopBackOff due to OOMKilled) appears resolved in the current cluster state.
+
+<|VERIFIED|>

@@ -1,0 +1,61 @@
+
+Running:
+ - run_shell_command(command=kubectl get pods -o wide --show-labels)
+
+
+Running:
+ - run_shell_command(command=...)
+
+
+Running:
+ - run_shell_command(command=kubectl describe pod kube-incorrect-selector)
+
+
+Running:
+ - run_shell_command(command=kubectl describe service app-service)
+
+
+Running:
+ - run_shell_command(command=minikube -p minikube service app-service --url)
+
+
+Running:
+ - run_shell_command(command=curl -sS -D - http://192.168.58.2:30098/ -I || true)
+
+Verification results
+
+- Pod check
+  - kubectl get pods (showing pods)
+    - kube-incorrect-selector is Running with 1/1 Ready (IP 10.244.2.15 on minikube)
+  - kubectl describe pod kube-incorrect-selector
+    - Status: Running
+    - ContainersReady: True
+    - Events: Normal Scheduled, Pulled, Created, Started (no errors)
+
+- Service check
+  - kubectl describe service app-service
+    - Endpoints: 10.244.2.15:8765
+  - kubectl get service app-service -o jsonpath='{.spec.clusterIP} {.spec.ports[0].port} {.spec.ports[0].targetPort}'
+    - ClusterIP: 10.103.67.246
+    - Port: 8000
+    - TargetPort: 8765
+
+- Access path check (Minikube)
+  - minikube -p minikube service app-service --url
+    - http://192.168.58.2:30098
+
+  - curl -sS -D - http://192.168.58.2:30098/ -I
+    - HTTP/1.0 200 OK
+    - HTTP/1.0 200 OK
+    - Server: SimpleHTTP/0.6 Python/3.8.10
+    - Date: Wed, 22 Jul 2026 04:05:33 GMT
+    - Content-type: text/html; charset=utf-8
+  - curl successfully returns HTTP 200 for the NodePort path, indicating the service is reachable and routing to the pod on port 8765 (containerPort)
+
+Conclusion
+- The original issue (the service showing no endpoints) appears resolved:
+  - The pod is Running and Ready.
+  - The service has an endpoint pointing to the pod (10.244.2.15:8765).
+  - The NodePort path is reachable from Minikube (curl returns HTTP 200).
+
+Status: <|VERIFIED|>

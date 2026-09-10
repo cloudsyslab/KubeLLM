@@ -1,0 +1,109 @@
+
+Running:
+ - run_shell_command(command=kubectl get pods -o wide --show-labels)
+
+
+Running:
+ - run_shell_command(command=kubectl describe pod kube-wrong-port-645895c98f-mjz59)
+
+
+Running:
+ - run_shell_command(command=kubectl get service kube-wrong-port || true)
+
+
+Running:
+ - run_shell_command(command=kubectl describe pod kube-wrong-port-645895c98f-mjz59 | sed -n '1,200p')
+
+
+Running:
+ - run_shell_command(command=kubectl get svc kube-wrong-port -o yaml)
+
+
+Running:
+ - run_shell_command(command=kubectl exec kube-wrong-port-645895c98f-mjz59 -- curl -sS http://127.0.0.1:8765/ -i || true)
+
+
+Running:
+ - run_shell_command(command=...)
+
+
+Running:
+ - run_shell_command(command=kubectl exec kube-wrong-port-645895c98f-mjz59 -- /bin/sh -lc 'grep -R "404" -n / -S || true')
+
+
+Running:
+ - run_shell_command(command=kubectl exec kube-wrong-port-645895c98f-mjz59 -- /bin/sh -lc 'python3 -V 2>&1 || true')
+
+
+Running:
+ - run_shell_command(command=...)
+
+
+Running:
+ - run_shell_command(command=...)
+
+
+Running:
+ - run_shell_command(command=...)
+
+
+Running:
+ - run_shell_command(command=...)
+
+
+Running:
+ - run_shell_command(command=...)
+
+
+Running:
+ - run_shell_command(command=...)
+
+
+Running:
+ - run_shell_command(command=...)
+
+## Verification results
+
+Following the STEP-BY-STEP verification procedure, with evidence from commands run in the cluster.
+
+1) kubectl get pods
+- Pod(s) exist and are Running with ready containers
+- Output (selected fields):
+  - kube-wrong-port-645895c98f-mjz59  1/1  Running  0  3m23s  10.244.2.102  minikube
+
+2) kubectl describe pod <pod-name>
+- Pod status: Running
+- Container: kube-wrong-port
+  - Port: 8000/TCP (container port as reported by describe)
+  - Inside the container the application serves on port 8765 (based on server.py)
+- Events show normal lifecycle:
+  - Scheduled, Pulling image "marioutsa/kube-wrong-port-app"
+  - Pulled image, Created container, Started container
+- No CrashLoopBackOff or other errors observed.
+
+3) Service existence check (for awareness; not used to verify this scenario per guidance)
+- kubectl get service kube-wrong-port
+  - kube-wrong-port  ClusterIP  10.107.55.196  <none>  8765/TCP  35h
+- kubectl get service kube-wrong-port -o yaml
+  - Service defined with port 8765/TCP and selector app: kube-wrong-port
+
+Note: The scenario guidelines state absence of a Service would not be a failure, and the verification path should use direct in-pod access. A Service does exist in this cluster, but that does not affect the in-pod reachability verification described below.
+
+4) In-pod reachability check (direct access, no external Service required)
+- Goal: verify HTTP on port 8765 from within the pod itself (127.0.0.1)
+- Command executed:
+  - kubectl exec kube-wrong-port-645895c98f-mjz59 -- python3 -c "import urllib.request; print(urllib.request.urlopen('http://127.0.0.1:8765/').getcode())"
+- Result:
+  - 200
+
+Interpretation:
+- The application inside the pod is listening on port 8765 and responds successfully to HTTP requests from within the same pod (status code 200). This confirms the configured access path for this scenario is reachable.
+- Pod is Running and ready; the in-pod HTTP access path on 127.0.0.1:8765 is functional.
+
+Summary of findings:
+- Pod kube-wrong-port-645895c98f-mjz59 is Running with 1/1 containers ready.
+- The application inside the pod serves HTTP on port 8765, and an in-container request to http://127.0.0.1:8765/ returns HTTP 200, confirming reachability.
+- Although a Service named kube-wrong-port exists in the cluster, the absence of a Service is not required for this scenario (and in-pod reachability is confirmed as working).
+
+Conclusion:
+<|VERIFIED|>

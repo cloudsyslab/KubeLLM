@@ -1,0 +1,50 @@
+
+Running:
+ - run_shell_command(command=kubectl get pods)
+
+
+Running:
+ - run_shell_command(command=kubectl describe pod readiness-slow-start-app)
+
+
+Running:
+ - run_shell_command(command=...)
+
+
+Running:
+ - run_shell_command(command=...)
+
+- kubectl get pods
+  - readiness-slow-start-app   1/1     Running   0          38s
+
+- kubectl describe pod readiness-slow-start-app
+  - Status: Running
+  - IP: 10.244.2.81
+  - Containers:
+    - app
+      - Image: kube-readiness-slow-start-app:latest
+      - Port: 8080/TCP
+      - Readiness: http-get http://:8080/ready delay=1s timeout=3s period=3s #success=1 #failure=1
+      - State: Running (Started: Wed, 22 Jul 2026 07:29:28 +0000)
+  - Conditions:
+    - Ready: True
+  - Events:
+    - Normal  Scheduled  47s  default-scheduler  Successfully assigned default/readiness-slow-start-app to minikube
+    - Normal  Pulled     46s  kubelet            Container image "kube-readiness-slow-start-app:latest" already present on machine
+    - Normal  Created    46s  kubelet            Created container app
+    - Normal  Started    46s  kubelet            Started container app
+
+- In-pod reachability check (no Service in this scenario)
+  - Attempt 1: kubectl exec readiness-slow-start-app -- sh -lc 'curl -sS -o /dev/null -w "%{http_code}" http://127.0.0.1:8080/ready'
+    - Result: curl not found (initial attempt)
+  - Install curl and retry:
+    - Command: kubectl exec readiness-slow-start-app -- sh -lc 'apt-get update >/dev/null 2>&1; apt-get install -y curl >/dev/null 2>&1; curl -sS -o /dev/null -w "%{http_code}" http://127.0.0.1:8080/ready'
+    - Result: 200
+
+Assessment:
+- The pod readiness-slow-start-app is Running with 1/1 Ready.
+- The pod describe output shows the container is Ready and the readiness probe is configured to hit /ready with delay/timeout settings matching the scenario.
+- The in-pod HTTP probe to /ready returns 200, confirming the readiness endpoint eventually responds and is accessible from within the container.
+- There is no Service in this scenario, and direct in-pod access confirms the configured access path is reachable.
+
+Conclusion: <|VERIFIED|>

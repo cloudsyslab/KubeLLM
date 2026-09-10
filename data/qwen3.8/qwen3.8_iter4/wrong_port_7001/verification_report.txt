@@ -1,0 +1,53 @@
+
+Running:
+ - run_shell_command(command=kubectl get pods -A)
+
+
+Running:
+ - run_shell_command(command=kubectl describe pod kube-wrong-port-7001)
+
+
+Running:
+ - run_shell_command(command=kubectl get pod kube-wrong-port-7001 -o wide)
+
+
+Running:
+ - run_shell_command(command=...)
+
+
+Running:
+ - run_shell_command(command=...)
+
+
+Running:
+ - run_shell_command(command=...)
+
+- Verification steps and results
+
+  1) kubectl get pods -A
+     - default kube-wrong-port-7001       1/1 Running   0
+     - kube-system components (DNS etcd, etc.) Running
+     Observation: The target pod kube-wrong-port-7001 exists and is Running.
+
+  2) kubectl describe pod kube-wrong-port-7001
+     - Pod status: Running
+     - IP: 10.244.3.108
+     - Container: kube-wrong-port-7001
+       - Port: 7001/TCP
+       - State: Running, Ready: True
+     - Events: Scheduled and Started successfully; container pulled and started
+     Observation: Pod is Ready with the expected container port 7001 exposed.
+
+  3) In-pod HTTP reachability test (direct pod access, no Service)
+     - Command: kubectl exec kube-wrong-port-7001 -- python3 -c "import urllib.request; print(urllib.request.urlopen('http://127.0.0.1:7001/').getcode())"
+     - Result: 200
+     - Command: kubectl exec kube-wrong-port-7001 -- python3 -c "import urllib.request; print(urllib.request.urlopen('http://10.244.3.108:7001/').getcode())"
+     - Result: 200
+     Observation: The application listening on port 7001 inside the container responds with HTTP 200. Direct in-pod access to 127.0.0.1:7001 works as expected.
+
+- Summary against the verification criteria
+  - Pod is Running and Ready: Yes (kube-wrong-port-7001 is Running, 1/1 ready).
+  - Container port 7001 is exposed and listener is reachable inside the pod: Yes (HTTP 200 responses from 127.0.0.1:7001 and 10.244.3.108:7001).
+  - No Kubernetes Service was required for this scenario; direct in-pod access works, which matches the verification goal for this setup.
+
+Final verdict: <|VERIFIED|>

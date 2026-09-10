@@ -1,0 +1,57 @@
+
+Running:
+ - run_shell_command(command=kubectl get pods -o wide)
+
+
+Running:
+ - run_shell_command(command=kubectl describe pod port-mismatch-wrong-interface-app)
+
+
+Running:
+ - run_shell_command(command=kubectl get service -o wide)
+
+
+Running:
+ - run_shell_command(command=minikube -p minikube service port-mismatch-app-service --url)
+
+
+Running:
+ - run_shell_command(command=curl -sS -o /dev/null -w "%{http_code}\n" http://192.168.94.2:30118/)
+
+Verification results
+
+1) Pod status
+- Command: kubectl get pods -o wide
+- Output:
+  NAME                                READY   STATUS    RESTARTS   AGE     IP            NODE       NOMINATED NODE   READINESS GATES
+  port-mismatch-wrong-interface-app   1/1     Running   0          4m45s   10.244.3.25   minikube   <none>           <none>
+
+- Command: kubectl describe pod port-mismatch-wrong-interface-app
+- Key status indicators:
+  - Status: Running
+  - Containers: app - Ready: True
+  - Events show normal scheduling, pulling, creating, and starting the container
+
+2) Service existence and endpoints
+- Command: kubectl get service -o wide
+- Output:
+  NAME                        TYPE        CLUSTER-IP       EXTERNAL-IP   PORT(S)          AGE     SELECTOR
+  kube-wrong-interface-svc    ClusterIP   10.106.250.218   <none>        8765/TCP         23d     app=kube-wrong-interface
+  kube-wrong-port-5000-svc    NodePort    10.109.113.45    <none>        5000:30080/TCP   23d     app=kube-wrong-port-5000
+  kube-wrong-port-svc         ClusterIP   10.99.207.143    <none>        8765/TCP         22d     app=kube-wrong-port
+  kubernetes                  ClusterIP   10.96.0.1       <none>        443/TCP          23d     <none>
+  port-mismatch-app-service   NodePort    10.102.97.0      <none>        80:30118/TCP     4m48s   app=port-mismatch-wrong-interface-app
+
+3) Accessing the service via Minikube
+- Command: minikube -p minikube service port-mismatch-app-service --url
+- Output: http://192.168.94.2:30118
+
+4) Reachability check
+- Command: curl -sS -o /dev/null -w "%{http_code}\n" http://192.168.94.2:30118/
+- Output: 200
+
+Conclusion
+- The pod is Running and Ready.
+- The Service port-mismatch-app-service is exposed as a NodePort (80 -> 30118) and is reachable via the Minikube node IP at port 30118. The curl test returns HTTP 200, indicating successful connectivity to the app through the service.
+
+ verdict: <|VERIFIED|>

@@ -1,0 +1,88 @@
+
+Running:
+ - run_shell_command(command=kubectl get pods)
+
+
+Running:
+ - run_shell_command(command=kubectl describe pod kube-wrong-port-5000)
+
+
+Running:
+ - run_shell_command(command=kubectl get pod kube-wrong-port-5000 -o jsonpath='{.spec.containers[0].ports[0].containerPort}')
+
+
+Running:
+ - run_shell_command(command=...)
+
+
+Running:
+ - run_shell_command(command=...)
+
+
+Running:
+ - run_shell_command(command=kubectl get svc)
+
+
+Running:
+ - run_shell_command(command=minikube -p minikube service kube-wrong-port-5000-svc --url)
+
+
+Running:
+ - run_shell_command(command=curl -s -I http://192.168.94.2:30080/ | head -n 5)
+
+Verification results
+
+1) Pods status
+- kubectl get pods
+  - kube-wrong-port-5000   1/1     Running   0          2m56s
+
+2) Pod description and readiness
+- kubectl describe pod kube-wrong-port-5000
+  - Status: Running
+  - IP: 10.244.3.157
+  - Containers:
+    - kube-wrong-port-5000
+      - Port: 5000/TCP
+      - Ready: True
+  - Conditions: PodReadyToStartContainers True, Initialized True, Ready True, ContainersReady True, PodScheduled True
+  - Events (relevant):
+    - Normal  Scheduled  Successfully assigned default/kube-wrong-port-5000 to minikube
+    - Normal  Pulled     Container image "kube-wrong-port-5000-app" already present on machine
+    - Normal  Created    Created container kube-wrong-port-5000
+    - Normal  Started    Started container kube-wrong-port-5000
+
+3) Container port exposure inside the pod
+- kubectl get pod kube-wrong-port-5000 -o jsonpath='{.spec.containers[0].ports[0].containerPort}'
+  - 5000
+
+4) In-pod accessibility check (direct access to port 5000)
+- kubectl exec kube-wrong-port-5000 -- python3 -c "import urllib.request; r=urllib.request.urlopen('http://127.0.0.1:5000/'); print(r.getcode())"
+  - 200
+
+5) Service status (to confirm any Service counterpart and its exposure)
+- kubectl get svc
+  - kube-wrong-port-5000-svc   NodePort    10.109.113.45    <none>        5000:30080/TCP   24d
+  - (Other services listed for context)
+
+6) External access via Minikube service URL (when a corresponding Service manifest exists)
+- minikube -p minikube service kube-wrong-port-5000-svc --url
+  - http://192.168.94.2:30080
+
+7) External reachability test via the NodePort
+- curl -I http://192.168.94.2:30080/ | head -n 5
+  - HTTP/1.0 200 OK
+  - Server: SimpleHTTP/0.6 Python/3.8.10
+  - Date: Thu, 27 Aug 2026 17:34:23 GMT
+  - Content-type: text/html; charset=utf-8
+  - Content-Length: 340
+
+8) In-pod port binding confirmation (optional cross-check)
+- The container port is 5000, and the in-pod request to 127.0.0.1:5000 returned HTTP 200, confirming the application is indeed bound to port 5000 inside the pod.
+
+Conclusion
+- The pod kube-wrong-port-5000 is Running with the container port 5000 exposed.
+- In-pod HTTP requests to 127.0.0.1:5000 succeed (200 OK).
+- There is a NodePort service (kube-wrong-port-5000-svc) exposing port 5000 on the node at 30080, and the external URL http://192.168.94.2:30080 also returns HTTP 200 OK.
+- Therefore, direct pod access at port 5000 and external access via the NodePort are functioning as expected.
+
+<|VERIFIED|>
