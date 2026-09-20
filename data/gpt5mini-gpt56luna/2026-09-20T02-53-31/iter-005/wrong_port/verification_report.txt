@@ -1,0 +1,106 @@
+
+Running:
+ - run_shell_command(command=kubectl get pods -o wide)
+
+
+Running:
+ - run_shell_command(command=kubectl get pods -o wide)
+
+
+Running:
+ - run_shell_command(command=kubectl describe pod kube-wrong-port-6d68dc7dbf-vpbbs)
+
+
+Running:
+ - run_shell_command(command=kubectl describe pod kube-wrong-port-645895c98f-ldj2p)
+
+
+Running:
+ - run_shell_command(command=kubectl get pods --selector app=kube-wrong-port -o wide)
+
+
+Running:
+ - run_shell_command(command=kubectl rollout status deployment/kube-wrong-port)
+
+
+Running:
+ - run_shell_command(command=kubectl get deployment kube-wrong-port -o yaml)
+
+
+Running:
+ - run_shell_command(command=kubectl exec kube-wrong-port-6d68dc7dbf-vpbbs -- curl -sI http://127.0.0.1:8765/ || true)
+
+
+Running:
+ - run_shell_command(command=kubectl exec kube-wrong-port-6d68dc7dbf-vpbbs -- sh -lc 'which curl || true')
+
+
+Running:
+ - run_shell_command(command=...)
+
+
+Running:
+ - run_shell_command(command=kubectl exec kube-wrong-port-6d68dc7dbf-vpbbs -- sh -lc 'curl -sI http://127.0.0.1:8765/ || true')
+
+
+Running:
+ - run_shell_command(command=kubectl get svc -A -o wide)
+
+
+Running:
+ - run_shell_command(command=minikube -p minikube service kube-wrong-port --url)
+
+
+Running:
+ - run_shell_command(command=curl -sI http://192.168.94.2:30076/)
+
+Verification results
+
+- Pod readiness and deployment status
+  - kubectl get pods -o wide
+    - kube-wrong-port-645895c98f-ldj2p   1/1     Terminating   0          78s   10.244.5.89   minikube
+    - kube-wrong-port-6d68dc7dbf-vpbbs   1/1     Running       0          29s   10.244.5.90   minikube
+  - kubectl describe pod kube-wrong-port-6d68dc7dbf-vpbbs
+    - Status: Running
+    - Container kube-wrong-port
+      - Port: 8765/TCP
+      - Ready: True
+      - Started: (recent)
+    - Events show successful pull/start of the container
+  - kubectl rollout status deployment/kube-wrong-port
+    - deployment "kube-wrong-port" successfully rolled out
+  - kubectl get deployment kube-wrong-port -o yaml
+    - status:
+      - availableReplicas: 1
+      - readyReplicas: 1
+      - replicas: 1
+      - updatedReplicas: 1
+
+- Service and reachability
+  - kubectl get svc -A -o wide
+    - kube-wrong-port (NodePort) in default ns, 8765/TCP -> NodePort 30076
+  - minikube -p minikube service kube-wrong-port --url
+    - http://192.168.94.2:30076
+  - curl test via NodePort
+    - curl -sI http://192.168.94.2:30076/
+      - HTTP/1.0 200 OK
+      - Server: SimpleHTTP/0.6 Python/3.8.10
+      - Content-Type: text/html; charset=utf-8
+  - In-pod reachability test (one-shot, non-follow)
+    - kubectl exec kube-wrong-port-6d68dc7dbf-vpbbs -- sh -lc 'curl -sI http://127.0.0.1:8765/ || true'
+      - HTTP/1.0 200 OK
+      - Server: SimpleHTTP/0.6 Python/3.8.10
+      - Content-Type: text/html; charset=utf-8
+
+Assessment
+
+- The workload pod(s) are in Running/Ready state (current active pod kube-wrong-port-6d68dc7dbf-vpbbs is Running and Ready; the older kube-wrong-port-645895c98f-ldj2p is terminating, which is expected during rollout).
+- The application is listening on port 8765 inside the running pod.
+- There is a Kubernetes Service (NodePort) kube-wrong-port exposing port 8765 as 30076.
+- Access tests via the NodePort URL (minikube service URL) return HTTP 200 OK, and an in-pod curl to 127.0.0.1:8765 also returns HTTP 200 OK.
+
+Conclusion
+
+- The original issue scenario (accessing the workload directly on port 8765 without relying on a Service) is satisfied in this cluster state: the pod is running, the port is exposed, and both in-pod and NodePort access paths return successful HTTP 200 responses.
+
+Verdict: <|VERIFIED|>

@@ -1,0 +1,83 @@
+
+Running:
+ - run_shell_command(command=kubectl get pods -o wide)
+
+
+Running:
+ - run_shell_command(command=kubectl describe pod resource-limits-cpu-starvation-app)
+
+
+Running:
+ - run_shell_command(command=...)
+
+
+Running:
+ - run_shell_command(command=...)
+
+
+Running:
+ - run_shell_command(command=kubectl exec resource-limits-cpu-starvation-app -- ls -l / | head -n 50)
+
+
+Running:
+ - run_shell_command(command=kubectl get pod resource-limits-cpu-starvation-app -o yaml)
+
+
+Running:
+ - run_shell_command(command=kubectl exec resource-limits-cpu-starvation-app -- sh -lc 'which curl || echo NO-CURL')
+
+
+Running:
+ - run_shell_command(command=kubectl exec resource-limits-cpu-starvation-app -- sh -lc 'which wget || echo NO-WGET')
+
+
+Running:
+ - run_shell_command(command=kubectl exec resource-limits-cpu-starvation-app -- python3 -V || true)
+
+
+Running:
+ - run_shell_command(command=...)
+
+
+Running:
+ - run_shell_command(command=...)
+
+Verification results for resource_limits_cpu_starvation scenario
+
+Pod and container readiness
+- Pod: resource-limits-cpu-starvation-app
+- Status: Running
+- Ready: 1/1
+- Pod IP: 10.244.4.193
+- Node: minikube
+- Evidence: kubectl get pods -o wide
+  - resource-limits-cpu-starvation-app  1/1  Running  0  13s  10.244.4.193  minikube
+
+Pod readiness details
+- Pod description summary:
+  - Container: app
+  - Image: kube-resource-limits-cpu-starvation-app:latest
+  - CPU limit: 200m
+  - CPU request: 100m
+  - Readiness probe: httpGet /healthz port 8080, initialDelaySeconds: 2, timeoutSeconds: 1, periodSeconds: 3
+  - Readiness/ContainersReady/Ready/PodScheduled: All reported True
+- Evidence: kubectl describe pod resource-limits-cpu-starvation-app
+  - Conditions show PodReadyToStartContainers: True
+  - Ready: True
+  - ContainersReady: True
+  - PodScheduled: True
+  - Events: Normal Scheduled, Pulled, Created, Started (no errors)
+
+Direct in-pod health check (no Service in this scenario)
+- Reason: This scenario has no Service; verification uses a direct in-pod HTTP check.
+- Command executed inside the pod:
+  - python3 -c "import urllib.request; print(urllib.request.urlopen('http://127.0.0.1:8080/healthz', timeout=2).getcode())"
+- Result: 200
+- Evidence: kubectl exec resource-limits-cpu-starvation-app -- python3 -c "import urllib.request; print(urllib.request.urlopen('http://127.0.0.1:8080/healthz', timeout=2).getcode())" -> 200
+
+Conclusion
+- The pod resource-limits-cpu-starvation-app is Running and Ready, and the in-container health check for /healthz returns HTTP 200, indicating the readiness probe would succeed under current conditions.
+- There is no Service in this scenario, and the direct in-pod check confirms reachability of the application endpoint.
+- Based on the observed Running/Ready state and successful health response, the verification indicates the issue is resolved.
+
+Final verdict: <|VERIFIED|>

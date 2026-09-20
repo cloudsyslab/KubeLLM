@@ -1,0 +1,87 @@
+
+Running:
+ - run_shell_command(command=kubectl get pods)
+
+
+Running:
+ - run_shell_command(command=kubectl describe pod selector-env-app)
+
+
+Running:
+ - run_shell_command(command=kubectl get service selector-env-app-service -o yaml)
+
+
+Running:
+ - run_shell_command(command=kubectl get pods -l app=selector-env-app -o wide)
+
+
+Running:
+ - run_shell_command(command=minikube service selector-env-app-service --url)
+
+
+Running:
+ - run_shell_command(command=curl -sI http://192.168.94.2:30746/ | head -n 5)
+
+
+Running:
+ - run_shell_command(command=curl -s http://192.168.94.2:30746/ | head -n 5)
+
+
+Running:
+ - run_shell_command(command=kubectl get endpoints selector-env-app-service -o yaml)
+
+Verification steps and results
+
+1) Pods status
+- Command: kubectl get pods
+- Result: 
+  - selector-env-app   1/1     Running   0          7s
+
+Verdict: Pod exists and is Running.
+
+2) Pod details and events
+- Command: kubectl describe pod selector-env-app
+- Key observations:
+  - Container app: State: Running, Ready: True
+  - Environment: APP_MESSAGE: Hello from env
+  - Events: 
+    - Scheduled to minikube
+    - Container image already present, Created, Started
+
+Verdict: Pod is healthy and container started without errors. APP_MESSAGE env is set.
+
+3) Service existence and configuration
+- Command: kubectl get service selector-env-app-service -o yaml
+- Key observations:
+  - Name: selector-env-app-service
+  - Type: NodePort
+  - Ports: port 80 -> targetPort 8080
+  - NodePort: 30746
+  - Selector: app: selector-env-app
+  - ClusterIP assigned: 10.107.174.67
+
+Verdict: Service exists and is correctly configured to route to pods with label app=selector-env-app.
+
+4) Service accessibility via Minikube
+- Command: minikube service selector-env-app-service --url
+- Result: http://192.168.94.2:30746
+
+- Additional reachability check:
+  - Command: curl -s http://192.168.94.2:30746/ | head -n 5
+  - Result: Hello from env (from env var)
+
+Verdict: Service is reachable and routes traffic to the pod.
+
+5) Endpoints check
+- Command: kubectl get endpoints selector-env-app-service -o yaml
+- Key observations:
+  - Endpoints include IP 10.244.4.197 (pod selector-env-app) with port 8080
+
+Verdict: Service has endpoints pointing to the running pod.
+
+Overall conclusion
+
+- The pod selector-env-app is Running and Ready.
+- The service selector-env-app-service exists, has endpoints, and is reachable via NodePort 30746. Curling the accessible URL returns the expected response "Hello from env (from env var)", confirming correct behavior and that the KeyError issue (env var access) is resolved in practice since APP_MESSAGE is properly set.
+
+<|VERIFIED|>

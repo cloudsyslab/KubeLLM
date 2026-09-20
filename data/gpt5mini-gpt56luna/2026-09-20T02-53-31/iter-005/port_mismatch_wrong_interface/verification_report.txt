@@ -1,0 +1,59 @@
+
+Running:
+ - run_shell_command(command=kubectl get pods -A)
+
+
+Running:
+ - run_shell_command(command=kubectl describe pod port-mismatch-wrong-interface-app -n default)
+
+
+Running:
+ - run_shell_command(command=kubectl get service port-mismatch-app-service -n default -o wide)
+
+
+Running:
+ - run_shell_command(command=minikube -p minikube service port-mismatch-app-service --url)
+
+
+Running:
+ - run_shell_command(command=curl -sS -o /dev/null -w "%{http_code}\n" http://192.168.94.2:30974)
+
+### Verification steps and evidence
+
+1) kubectl get pods -A
+- default: port-mismatch-wrong-interface-app 1/1 Running
+- kube-system: coredns-6f6b679f8f-5zkx6 1/1 Running
+- kube-system: etcd-minikube 1/1 Running
+- kube-system: kube-apiserver-minikube 1/1 Running
+- kube-system: kube-controller-manager-minikube 1/1 Running
+- kube-system: kube-proxy-28xkt 1/1 Running
+- kube-system: kube-scheduler-minikube 1/1 Running
+- kube-system: storage-provisioner 1/1 Running
+
+2) kubectl describe pod port-mismatch-wrong-interface-app -n default
+- Status: Running
+- IP: 10.244.5.55
+- Containers: app - Ready: True
+- Events: 
+  - Normal  Scheduled: Successfully assigned default/port-mismatch-wrong-interface-app to minikube
+  - Normal  Pulled: Container image "kube-port-mismatch-wrong-interface-app" already present
+  - Normal  Created: Created container app
+  - Normal  Started: Started container app
+
+3) kubectl get service port-mismatch-app-service -n default -o wide
+- NAME: port-mismatch-app-service
+- TYPE: NodePort
+- CLUSTER-IP: 10.104.36.216
+- PORT(S): 80:30974/TCP
+- SELECTOR: app=port-mismatch-wrong-interface-app
+
+4) minikube service URL for the NodePort service
+- URL: http://192.168.94.2:30974
+
+5) Reachability test
+- curl -sS -o /dev/null -w "%{http_code}\n" http://192.168.94.2:30974
+- Result: 200
+
+Conclusion: The pod is running, the service is reachable via the NodePort, and the app responds correctly to HTTP requests. The original issue (inability to access the service despite the pod running) appears resolved in this cluster state.
+
+<|VERIFIED|>

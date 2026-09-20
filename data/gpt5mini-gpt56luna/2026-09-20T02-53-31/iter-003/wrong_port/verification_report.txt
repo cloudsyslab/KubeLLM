@@ -1,0 +1,127 @@
+
+Running:
+ - run_shell_command(command=kubectl get pods -o wide --no-headers)
+
+
+Running:
+ - run_shell_command(command=kubectl describe pod kube-wrong-port-645895c98f-ddp6c)
+
+
+Running:
+ - run_shell_command(command=kubectl describe pod kube-wrong-port-6d68dc7dbf-pr8kb)
+
+
+Running:
+ - run_shell_command(command=kubectl describe pod kube-wrong-port-7b685ddfff-pgfq2)
+
+
+Running:
+ - run_shell_command(command=kubectl get svc -A --no-headers)
+
+
+Running:
+ - run_shell_command(command=minikube -p minikube service kube-wrong-port --url)
+
+
+Running:
+ - run_shell_command(command=...)
+
+
+Running:
+ - run_shell_command(command=kubectl describe pod kube-wrong-port-7b685ddfff-pgfq2)
+
+
+Running:
+ - run_shell_command(command=...)
+
+
+Running:
+ - run_shell_command(command=...)
+
+
+Running:
+ - run_shell_command(command=...)
+
+
+Running:
+ - run_shell_command(command=...)
+
+
+Running:
+ - run_shell_command(command=...)
+
+
+Running:
+ - run_shell_command(command=kubectl rollout status deployment kube-wrong-port -n default)
+
+
+Running:
+ - run_shell_command(command=kubectl get pod kube-wrong-port-7b685ddfff-pgfq2 -o jsonpath='{.status.containerStatuses[0].ready}')
+
+
+Running:
+ - run_shell_command(command=kubectl get pod kube-wrong-port-7b685ddfff-pgfq2 -o jsonpath='{.status.podIP}')
+
+
+Running:
+ - run_shell_command(command=...)
+
+
+Running:
+ - run_shell_command(command=...)
+
+
+Running:
+ - run_shell_command(command=curl -sS http://192.168.94.2:30076/ -I)
+
+Verification results
+
+1) Pods status
+- kubectl get pods -o wide --no-headers
+  kube-wrong-port-645895c98f-ddp6c   1/1   Terminating   0     43s   10.244.4.217   minikube
+  kube-wrong-port-6d68dc7dbf-pr8kb   1/1   Terminating   0     14s   10.244.4.218   minikube
+  kube-wrong-port-7b685ddfff-pgfq2   1/1   Running       0     14s   10.244.4.219   minikube
+- Current active pod for the workload: kube-wrong-port-7b685ddfff-pgfq2 (Running)
+
+2) Pod details (current running pod)
+- kubectl describe pod kube-wrong-port-7b685ddfff-pgfq2
+  - Status: Running
+  - IP: 10.244.4.219
+  - Port: 8765/TCP (containerPort configured as 8765)
+  - ContainersReady: True
+  - Events show successful pull/start of image marioutsa/kube-wrong-port-app
+
+3) Service discovery (related to port exposure)
+- kubectl get svc -A --no-headers
+  default kube-wrong-interface-svc  ClusterIP  10.106.250.218   <none>  8765/TCP
+  default kube-wrong-port            NodePort   10.97.128.125    <none>  8765:30076/TCP
+  default kube-wrong-port-5000-svc   NodePort   10.109.113.45    <none>  5000:30080/TCP
+  default kube-wrong-port-svc        ClusterIP  10.99.207.143   <none>  8765/TCP
+  kubernetes service definitions exist; kube-wrong-port is exposed as a NodePort (8765 -> 30076)
+
+4) External access via Minikube (NodePort)
+- minikube -p minikube service kube-wrong-port --url
+  Result: http://192.168.94.2:30076
+
+- External reachability test (curl)
+  curl -sS http://192.168.94.2:30076/ -I
+  HTTP/1.0 200 OK
+  Server: SimpleHTTP/0.6 Python/3.8.10
+  Date: ...
+  Content-type: text/html; charset=utf-8
+  Content-Length: 340
+
+5) In-pod direct access test (no service required)
+- kubectl exec kube-wrong-port-7b685ddfff-pgfq2 -- python3 -c 'import urllib.request; print(urllib.request.urlopen("http://127.0.0.1:8765/").getcode())'
+  Result: 200
+
+- (Optional cross-check) kubectl get pod kube-wrong-port-7b685ddfff-pgfq2 -o jsonpath='{.status.containerStatuses[0].ready}'
+  true
+
+Conclusion
+
+- The current deployment has a running and ready pod for kube-wrong-port (pod 7b685ddfff-pgfq2).
+- The application inside the pod exposes port 8765 and responds to HTTP requests (HTTP 200) both from inside the pod and via the NodePort external access (8765 -> 30076) on the Minikube node IP.
+- Therefore, direct port access (8765) to the workload is reachable, and the issue described as “debug direct workload access at port 8765” appears resolved in the current cluster state.
+
+Result: <|VERIFIED|>

@@ -1,0 +1,63 @@
+
+Running:
+ - run_shell_command(command=kubectl get pods -o wide)
+
+
+Running:
+ - run_shell_command(command=kubectl describe pod kube-port-mismatch)
+
+
+Running:
+ - run_shell_command(command=kubectl get service -A -o wide)
+
+
+Running:
+ - run_shell_command(command=kubectl describe service app-service)
+
+
+Running:
+ - run_shell_command(command=minikube -p minikube service app-service --url)
+
+
+Running:
+ - run_shell_command(command=curl -sS -I http://192.168.94.2:30865 | head -n 20)
+
+Verification steps executed and observations
+
+1) pods status
+- Command: kubectl get pods -o wide
+- Output (selected): kube-port-mismatch 1/1 Running 0 14s ...
+- Status: Running, 1/1 containers ready
+
+2) pod details and events
+- Command: kubectl describe pod kube-port-mismatch
+- Key observations:
+  - Status: Running
+  - Container kube-port-mismatch: Ready
+  - Endpoints/Events indicate container started successfully (Pulled, Created, Started)
+
+3) service status and endpoints
+- Command: kubectl get service -A -o wide
+- Observations:
+  - Service: app-service (Type: NodePort), Port 8000 -> NodePort 30865
+  - Selector: app=kube-port-mismatch
+  - Endpoints: 10.244.5.48:8765
+- Command: kubectl describe service app-service
+  - Cluster IP: 10.108.207.210
+  - Port: 8000/TCP, TargetPort: 8765/TCP
+  - NodePort: 30865/TCP
+  - Endpoints: 10.244.5.48:8765
+
+4) access path and reachability
+- Command: minikube -p minikube service app-service --url
+- URL returned: http://192.168.94.2:30865
+- Command: curl -I http://192.168.94.2:30865
+- Result: HTTP/1.0 200 OK
+  - Server: SimpleHTTP/0.6 Python/3.8.10
+  - Date/Content-Type headers present
+- Conclusion from reachability: The service is reachable through the NodePort and responds with 200 OK, indicating the HTTP endpoint is functioning as expected.
+
+Conclusion
+- The original 502 Bad Gateway issue appears resolved. The app-port-mismatch pod is running, the app-service is correctly routing to the pod, and the endpoint responds with HTTP 200 OK when accessed via the NodePort on Minikube.
+
+Result: <|VERIFIED|>

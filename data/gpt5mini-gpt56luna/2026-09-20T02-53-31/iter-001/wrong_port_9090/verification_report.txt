@@ -1,0 +1,54 @@
+
+Running:
+ - run_shell_command(command=kubectl get pods -o wide)
+
+
+Running:
+ - run_shell_command(command=kubectl describe pod kube-wrong-port-9090)
+
+
+Running:
+ - run_shell_command(command=...)
+
+
+Running:
+ - run_shell_command(command=kubectl get svc -o wide)
+
+
+Running:
+ - run_shell_command(command=kubectl describe pod kube-wrong-port-9090 | sed -n '1,120p')
+
+Verification results
+
+1) Pod existence and readiness
+- Command: kubectl get pods -o wide
+- Output:
+  - kube-wrong-port-9090   1/1     Running   0          8s    10.244.4.92   minikube   <none>           <none>
+
+2) Pod description and port readiness
+- Command: kubectl describe pod kube-wrong-port-9090
+- Key details:
+  - Status: Running
+  - Containers:
+    - kube-wrong-port-9090
+      - Port: 9090/TCP
+      - Ready: True
+  - Events show container started successfully
+- This confirms the container is listening on port 9090 as declared in the manifest.
+
+3) In-pod accessibility test (direct pod access, no Service required)
+- Command: kubectl exec kube-wrong-port-9090 -- python3 -c "import urllib.request; print(urllib.request.urlopen('http://127.0.0.1:9090/').getcode())"
+- Output: 200
+- Interpretation: The application inside the pod responds over port 9090 when accessed directly from within the same pod, which is the scenario tested for direct pod access.
+
+4) Service presence (note for context)
+- Command: kubectl get svc -o wide
+- Observed: A NodePort service exists for this pod (kube-wrong-port-9090-svc) with 9090:30090/TCP, in addition to other services.
+- Important context: The scenario specifies absence of a Service is not a failure. Direct pod access was verified as working, which satisfies the verification criteria for this scenario.
+
+Conclusion
+- The target pod kube-wrong-port-9090 is Running and Ready.
+- The application is listening on port 9090 inside the pod, and a direct in-pod HTTP request to http://127.0.0.1:9090/ yields HTTP 200.
+- Despite the presence of a NodePort Service for this port, the primary verification path (direct pod access) succeeds as required.
+
+Result: <|VERIFIED|>

@@ -1,0 +1,82 @@
+
+Running:
+ - run_shell_command(command=kubectl get pods)
+
+
+Running:
+ - run_shell_command(command=kubectl describe pod kube-port-mismatch)
+
+
+Running:
+ - run_shell_command(command=kubectl get service)
+
+
+Running:
+ - run_shell_command(command=kubectl describe pod kube-port-mismatch)
+
+
+Running:
+ - run_shell_command(command=minikube -p minikube service app-service --url)
+
+
+Running:
+ - run_shell_command(command=curl -sS -v http://192.168.94.2:30746/ -m 5)
+
+
+Running:
+ - run_shell_command(command=curl -I -m 5 http://192.168.94.2:30746/)
+
+Verification results
+
+Summary
+- The pod kube-port-mismatch is Running and Ready.
+- The app-service Service exists (NodePort) and is reachable via the minikube URL.
+- A one-shot HTTP request to the Service endpoint returns a valid response (no 502 observed).
+- Therefore, the previously reported 502 Bad Gateway issue appears to be resolved in the current cluster state.
+
+Evidence and commands run
+
+1) kubectl get pods
+- Result:
+  - kube-port-mismatch 1/1 Running
+
+2) kubectl describe pod kube-port-mismatch
+- Status: Running
+- IP: 10.244.4.51
+- Container: kube-port-mismatch
+  - Port: 8765/TCP
+  - Ready: True
+- Events:
+  - Normal  Scheduled
+  - Normal  Pulled
+  - Normal  Created
+  - Normal  Started
+
+3) kubectl get service
+- app-service is present
+  - Type: NodePort
+  - ClusterIP: 10.97.64.22
+  - Ports: 8000:30746/TCP
+
+4) minikube -p minikube service app-service --url
+- URL: http://192.168.94.2:30746
+
+5) curl checks (one-shot, not streaming logs)
+- curl -sS -v http://192.168.94.2:30746/
+  - Result: Directory listing for / with link to server.py
+- curl -I -m 5 http://192.168.94.2:30746/
+  - HTTP/1.0 200 OK
+  - Server: SimpleHTTP/0.6 Python/3.8.10
+  - Content-Type: text/html; charset=utf-8
+  - Content-Length: 340
+
+Interpretation
+- The application is running and serving on port 8765 inside the pod.
+- The Service app-service correctly exposes port 8000 and maps to targetPort 8765; NodePort 30746 is reachable.
+- Access via minikube service URL works and returns a valid HTTP 200 response, with content indicating the server is serving (directory listing and Python SimpleHTTPServer header).
+- No 502 errors are observed in these verification steps.
+
+Conclusion
+- Based on the running pod, functional service, and successful reachability test, the 502 Bad Gateway issue described in the original problem is resolved in the current cluster state.
+
+Final verdict: <|VERIFIED|>
