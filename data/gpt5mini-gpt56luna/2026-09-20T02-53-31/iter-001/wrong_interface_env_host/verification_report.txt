@@ -1,0 +1,95 @@
+
+Running:
+ - run_shell_command(command=kubectl get pods -o wide)
+
+
+Running:
+ - run_shell_command(command=kubectl describe pod kube-wrong-interface-env-host)
+
+
+Running:
+ - run_shell_command(command=kubectl get service -A --no-headers)
+
+
+Running:
+ - run_shell_command(command=kubectl get pods -o wide)
+
+
+Running:
+ - run_shell_command(command=minikube -p minikube service wrong-interface-env-host-service --url)
+
+
+Running:
+ - run_shell_command(command=curl -sS -o /tmp/curl_output.txt -w '%{http_code}\n' http://192.168.94.2:30495/ -k)
+
+
+Running:
+ - run_shell_command(command=curl -sS -D - http://192.168.94.2:30495/ | head -n 20)
+
+
+Running:
+ - run_shell_command(command=curl -sS http://192.168.94.2:30495/ -I)
+
+Verification results summary:
+- Pod status: kube-wrong-interface-env-host is Running with 1/1 containers Ready.
+- Service status: wrong-interface-env-host-service exists as a NodePort service (8000:30495) and exposes port 8765 on the Pod.
+- Access path: The Minikube service URL for wrong-interface-env-host-service is reachable and returns a successful HTTP response.
+
+Evidence and commands run:
+
+1) Check pods
+- Command:
+  kubectl get pods -o wide
+- Output:
+  NAME                            READY   STATUS    RESTARTS   AGE   IP            NODE       NOMINATED NODE   READINESS GATES
+  kube-wrong-interface-env-host   1/1     Running   0          16s   10.244.4.84   minikube   <none>           <none>
+
+2) Describe pod for issues
+- Command:
+  kubectl describe pod kube-wrong-interface-env-host
+- Key details:
+  - Status: Running
+  - IP: 10.244.4.84
+  - Containers: kube-wrong-interface-env-host
+  - Environment: APP_HOST: 0.0.0.0
+  - Ports: 8765/TCP
+  - ContainersReady: True
+  - Events show successful scheduling, pulling, creation, and start
+
+3) Check service
+- Command:
+  kubectl get service -A --no-headers
+- Output (relevant entry):
+  default   wrong-interface-env-host-service   NodePort    10.103.243.228   <none>   8000:30495/TCP           78s
+
+4) Service URL via Minikube
+- Command:
+  minikube -p minikube service wrong-interface-env-host-service --url
+- Output:
+  http://192.168.94.2:30495
+
+5) Reachability test via Service URL
+- Command (initial curl attempt encountered a write error; retry not needed here due to available alternative):
+  curl -sS -D - http://192.168.94.2:30495/ | head -n 20
+- Output:
+  HTTP/1.0 200 OK
+  Server: SimpleHTTP/0.6 Python/3.8.10
+  Date: Sun, 20 Sep 2026 03:47:23 GMT
+  Content-type: text/html; charset=utf-8
+  Content-Length: 340
+  ... (HTML directory listing)
+- Command (HEAD-like check):
+  curl -sS http://192.168.94.2:30495/ -I
+- Output:
+  HTTP/1.0 200 OK
+  Server: SimpleHTTP/0.6 Python/3.8.10
+  Date: Sun, 20 Sep 2026 03:47:23 GMT
+  Content-type: text/html; charset=utf-8
+  Content-Length: 340
+
+Conclusion:
+- The application pod is Running and Ready.
+- The Service exists and is reachable via NodePort 30495, with Minikube exposing URL http://192.168.94.2:30495.
+- An HTTP request to the Service URL returns 200 OK with the expected Python SimpleHTTPServer directory listing, indicating the HTTP endpoint is reachable through the Service.
+
+Result: <|VERIFIED|>

@@ -1,0 +1,63 @@
+
+Running:
+ - run_shell_command(command=kubectl get pods -o wide)
+
+
+Running:
+ - run_shell_command(command=kubectl describe pod kube-incorrect-selector)
+
+
+Running:
+ - run_shell_command(command=kubectl get service -A -o wide)
+
+
+Running:
+ - run_shell_command(command=kubectl get service app-service -o wide)
+
+
+Running:
+ - run_shell_command(command=minikube -p minikube service app-service --url)
+
+
+Running:
+ - run_shell_command(command=curl -sS -o /dev/null -w "%{http_code}\n" http://192.168.94.2:31631/)
+
+
+Running:
+ - run_shell_command(command=kubectl get endpoints app-service -o wide)
+
+Verification results
+
+- Step 1: kubectl get pods
+  - kube-incorrect-selector is Running (1/1 ready)
+
+- Step 2: kubectl describe pod kube-incorrect-selector
+  - Status: Running
+  - Container kube-incorrect-selector: Running and Ready
+  - Events show successful pod scheduling and container start (no errors)
+
+- Step 3: kubectl get service app-service
+  - app-service exists
+  - Type: NodePort
+  - ClusterIP: 10.107.56.125
+  - Port(s): 8000:31631/TCP
+  - Selector: app=kube-incorrect-selector
+
+- Step 4: minikube -p minikube service app-service --url
+  - URL: http://192.168.94.2:31631
+
+- Step 5: curl test via service URL
+  - curl http://192.168.94.2:31631/ -> HTTP 200 (OK)
+
+- Step 6: kubectl get endpoints app-service
+  - Endpoints: 10.244.4.232:8765 (matches pod IP and container port)
+
+Assessment
+- The pod is Running and Ready.
+- The Service app-service has a bound NodePort and a valid endpoint (the pod IP:port 10.244.4.232:8765).
+- The service is reachable via the minikube service URL and returns HTTP 200, indicating functional connectivity through the service to the pod.
+
+Conclusion
+The original problem (service endpoints not being listed) appears resolved. The Endpoints object now correctly lists the pod endpoint, and the service URL is reachable with a successful response.
+
+<|VERIFIED|>

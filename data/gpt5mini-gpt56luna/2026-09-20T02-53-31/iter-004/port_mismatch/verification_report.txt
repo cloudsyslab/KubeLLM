@@ -1,0 +1,68 @@
+
+Running:
+ - run_shell_command(command=kubectl get pods -o wide)
+
+
+Running:
+ - run_shell_command(command=kubectl describe pod kube-port-mismatch)
+
+
+Running:
+ - run_shell_command(command=kubectl get service -o wide)
+
+
+Running:
+ - run_shell_command(command=kubectl describe service app-service)
+
+
+Running:
+ - run_shell_command(command=minikube -p minikube service app-service --url)
+
+
+Running:
+ - run_shell_command(command=curl -sS -m 5 http://192.168.94.2:30274/ -i)
+
+Verification results
+
+1) Pod status
+- Command: kubectl get pods -o wide
+- Found pod: kube-port-mismatch
+- Status: Running
+- Ready: 1/1
+- IP: 10.244.4.244
+- Node: minikube
+Observation: The kube-port-mismatch pod is up and ready.
+
+2) Pod details and events
+- Command: kubectl describe pod kube-port-mismatch
+- Status: Running
+- ContainersReady: True
+- Port: 8765/TCP (container port)
+- Endpoints/Events: No crashes or errors reported; container started successfully
+Observation: No crash or image pull issues; container is running and listening on 8765 as expected.
+
+3) Service status
+- Command: kubectl describe service app-service
+- Service name: app-service
+- Type: NodePort
+- Port: 8000 -> TargetPort 8765
+- NodePort: 30274
+- Endpoints: 10.244.4.244:8765
+Observation: Service is configured to forward to container port 8765 and has a NodePort 30274; endpoints point to the running pod 10.244.4.244:8765.
+
+4) Access path validation via Minikube
+- Command: minikube -p minikube service app-service --url
+- URL returned: http://192.168.94.2:30274
+Observation: Service is accessible via the NodePort (30274) on the minikube VM IP.
+
+5) Reachability test
+- Command: curl -sS -m 5 http://192.168.94.2:30274/ -i
+- HTTP response: 200 OK
+- Server: SimpleHTTP/0.6 Python/3.8.10
+- Content: Directory listing for / with link to server.py
+Observation: The application is reachable through the service URL and responds successfully.
+
+Conclusion
+The original 502 Bad Gateway issue is resolved in the current cluster state. The kube-port-mismatch pod is Running and Ready, the app-service NodePort forwards to the container port 8765, and the service is reachable at the test URL with a successful HTTP 200 response.
+
+<|VERIFIED|>

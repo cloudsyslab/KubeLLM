@@ -1,0 +1,61 @@
+
+Running:
+ - run_shell_command(command=kubectl get pods -o wide)
+
+
+Running:
+ - run_shell_command(command=kubectl describe pod readiness-slow-start-app)
+
+
+Running:
+ - run_shell_command(command=...)
+
+
+Running:
+ - run_shell_command(command=kubectl get pods -o wide)
+
+
+Running:
+ - run_shell_command(command=kubectl describe pod readiness-slow-start-app)
+
+
+Running:
+ - run_shell_command(command=kubectl get svc)
+
+
+Running:
+ - run_shell_command(command=minikube -p minikube service kube-wrong-interface-svc --url)
+
+
+Running:
+ - run_shell_command(command=minikube -p minikube service kube-wrong-port --url)
+
+
+Running:
+ - run_shell_command(command=kubectl exec readiness-slow-start-app -- curl -sS http://127.0.0.1:8080/ready | cat)
+
+- kubectl get pods -o wide
+  - readiness-slow-start-app 1/1 Running 0 36s 10.244.4.182 minikube …
+
+- kubectl describe pod readiness-slow-start-app
+  - Status: Running
+  - IP: 10.244.4.182
+  - Containers:
+    - app
+      - Ready: True
+      - Readiness: http-get http://:8080/ready delay=5s timeout=3s period=3s #success=1 #failure=1
+  - Events (relevant excerpts):
+    - Normal  Unhealthy  4s (x2 over 25s)  kubelet  readiness probe failed: Get "http://10.244.4.182:8080/ready": context deadline exceeded (Client.Timeout exceeded while awaiting headers)
+    - Prior to that, container was Created and Started successfully.
+  - Note: Initial unhealthy probe observed earlier, but current pod status shows Ready = True and ContainersReady = True.
+
+- kubectl exec readiness-slow-start-app -- python3 -c "import urllib.request; print(urllib.request.urlopen('http://127.0.0.1:8080/ready').getcode())"
+  - Output: 200
+
+Assessment:
+- Pod readiness-slow-start-app is Running with 1/1 Ready container.
+- The in-pod readiness endpoint /ready responds with HTTP 200 when accessed from within the container, confirming the service logic is functioning as expected inside the pod.
+- There was a temporary readiness probe failure observed in the events, but the current state shows the pod as Ready, and the endpoint is reachable from inside the pod.
+
+Conclusion:
+<|VERIFIED|>

@@ -124,6 +124,14 @@ def is_gemini_chat_model(model_name: str) -> bool:
     return normalized.lower().startswith(GEMINI_PROVIDER)
 
 
+def openai_chat_requires_reasoning_effort_none(model_name: str) -> bool:
+    """gpt-5.6-luna rejects function tools on Chat Completions unless reasoning_effort is none."""
+    normalized = _normalize_model_name(model_name)
+    if normalized is None:
+        return False
+    return normalized.lower().startswith("gpt-5.6-luna")
+
+
 def infer_chat_provider(model_name: str) -> str:
     normalized = _normalize_model_name(model_name)
     if normalized is None:
@@ -222,6 +230,12 @@ def build_chat_model(model_name: str, temperature=None):
     if provider == OPENAI_PROVIDER:
         require_openai_api_key(model_name)
         openai_chat = _import_symbol("phi.model.openai", "OpenAIChat", install_hint="openai")
+        if openai_chat_requires_reasoning_effort_none(model_name):
+            extra = dict(kwargs.get("request_params") or {})
+            body = dict(extra.get("extra_body") or {})
+            body.setdefault("reasoning_effort", "none")
+            extra["extra_body"] = body
+            kwargs["request_params"] = extra
         return openai_chat(id=model_name, **kwargs)
 
     if provider == GEMINI_PROVIDER:

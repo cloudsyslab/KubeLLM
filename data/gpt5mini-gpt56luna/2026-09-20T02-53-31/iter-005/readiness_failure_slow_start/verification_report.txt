@@ -1,0 +1,125 @@
+
+Running:
+ - run_shell_command(command=kubectl get pods -A --no-headers)
+
+
+Running:
+ - run_shell_command(command=kubectl describe pod readiness-slow-start-app -n default)
+
+
+Running:
+ - run_shell_command(command=kubectl get pods -n default -o wide)
+
+
+Running:
+ - run_shell_command(command=kubectl logs readiness-slow-start-app -n default --tail=50)
+
+
+Running:
+ - run_shell_command(command=kubectl describe pod readiness-slow-start-app -n default)
+
+
+Running:
+ - run_shell_command(command=kubectl get pods -n default --no-headers)
+
+
+Running:
+ - run_shell_command(command=...)
+
+
+Running:
+ - run_shell_command(command=...)
+
+
+Running:
+ - run_shell_command(command=...)
+
+
+Running:
+ - run_shell_command(command=...)
+
+
+Running:
+ - run_shell_command(command=kubectl exec readiness-slow-start-app -n default -- ls /)
+
+
+Running:
+ - run_shell_command(command=kubectl exec readiness-slow-start-app -n default -- ls /bin)
+
+
+Running:
+ - run_shell_command(command=kubectl exec readiness-slow-start-app -n default -- /bin/sh -c 'printf "ports: 8080"; echo')
+
+
+Running:
+ - run_shell_command(command=kubectl describe pod readiness-slow-start-app -n default | sed -n '1,180p')
+
+
+Running:
+ - run_shell_command(command=kubectl exec readiness-slow-start-app -n default -- python3 -V)
+
+
+Running:
+ - run_shell_command(command=...)
+
+
+Running:
+ - run_shell_command(command=...)
+
+
+Running:
+ - run_shell_command(command=...)
+
+
+Running:
+ - run_shell_command(command=...)
+
+Verification results
+
+Summary
+- The pod readiness-slow-start-app is now Running and Ready (1/1) in the default namespace.
+- The in-pod readiness endpoint /ready responds successfully (200) within the container, and a local socket connect to 127.0.0.1:8080 succeeds.
+- Based on these checks, the readiness path is accessible and the pod reports Ready.
+
+Commands and observed outputs
+
+1) Pod status
+- Command: kubectl get pods -A --no-headers
+- Output excerpt:
+  default readiness-slow-start-app 1/1 Running 0 18s
+  kube-system ... (other system pods)
+
+2) Pod description (readiness probe details and events)
+- Command: kubectl describe pod readiness-slow-start-app -n default
+- Key details:
+  - Status: Running
+  - Containers: app
+  - Readiness: http-get http://:8080/ready delay=5s timeout=3s period=3s #success=1 #failure=1
+  - Events (selected): 
+    - Normal  Scheduled
+    - Normal  Pulled
+    - Normal  Created
+    - Normal  Started
+    - Warning Unhealthy 36s ago: Readiness probe failed: Get "http://10.244.5.60:8080/ready": context deadline exceeded
+- Current state now shows Ready: True for the container and PodReadyToStartContainers/Initialized/Ready as True.
+
+3) In-container readiness check (direct access to the readiness endpoint)
+- Note: The container does not have curl or wget installed, but Python is available.
+- Command: kubectl exec readiness-slow-start-app -n default -- python3 -c "import urllib.request; import sys; resp = urllib.request.urlopen('http://127.0.0.1:8080/ready', timeout=3); print('CODE:'+str(resp.getcode())+';DATA:'+resp.read().decode())"
+- Output:
+  CODE:200;DATA:ready
+
+4) In-container connectivity test (low-level check)
+- Command: kubectl exec readiness-slow-start-app -n default -- python3 -c "import socket; s=socket.socket(); s.settimeout(1); s.connect(('127.0.0.1',8080)); s.close(); print('ok')"
+- Output:
+  ok
+
+Assessment
+
+-pod state: Running and Ready (1/1) in the default namespace, which satisfies the primary verification criterion.
+- Access path: The readiness endpoint /ready is reachable from inside the container and responds with 200 ("ready"). This satisfies the scenario’s reachability criterion for a direct-in-container check.
+- Historical readiness probe failures observed in events do not reflect the current state, where the container reports Ready and the endpoint responds as expected.
+
+Conclusion
+
+<|VERIFIED|>

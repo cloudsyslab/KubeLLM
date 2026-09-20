@@ -1,0 +1,85 @@
+
+Running:
+ - run_shell_command(command=kubectl get pods)
+
+
+Running:
+ - run_shell_command(command=kubectl describe pod kube-wrong-port-7001)
+
+
+Running:
+ - run_shell_command(command=kubectl exec kube-wrong-port-7001 -- curl -s -o /dev/null -w "%{http_code}" http://127.0.0.1:7001/)
+
+
+Running:
+ - run_shell_command(command=...)
+
+
+Running:
+ - run_shell_command(command=kubectl exec kube-wrong-port-7001 -- ss -ltnp)
+
+
+Running:
+ - run_shell_command(command=kubectl exec kube-wrong-port-7001 -- /bin/sh -lc 'ss -ltnp || true')
+
+
+Running:
+ - run_shell_command(command=kubectl exec kube-wrong-port-7001 -- /bin/sh -lc 'netstat -tlnp | head -n 20')
+
+
+Running:
+ - run_shell_command(command=kubectl exec kube-wrong-port-7001 -- /bin/sh -lc 'ps -ef')
+
+
+Running:
+ - run_shell_command(command=...)
+
+
+Running:
+ - run_shell_command(command=kubectl exec kube-wrong-port-7001 -- /bin/sh -lc 'ps -ef | grep -i http || true')
+
+
+Running:
+ - run_shell_command(command=...)
+
+
+Running:
+ - run_shell_command(command=kubectl get svc)
+
+
+Running:
+ - run_shell_command(command=minikube -p minikube service kube-wrong-port --url)
+
+Verification results for the original problem (pod without a Service, direct access on port 7001):
+
+Evidence and steps performed
+
+- Step 1: Check pods
+  - Command: kubectl get pods
+  - Result:
+    - kube-wrong-port-7001 1/1 Running 0 10s
+
+- Step 2: Inspect pod details for readiness and ports
+  - Command: kubectl describe pod kube-wrong-port-7001
+  - Key observations:
+    - Status: Running
+    - IP: 10.244.4.155
+    - Container: kube-wrong-port-7001
+      - Port: 7001/TCP
+      - Ready: True
+  - Events show the pod was scheduled and the container started successfully.
+
+- Step 3: Validate direct in-pod HTTP access on port 7001
+  - Command: kubectl exec kube-wrong-port-7001 -- python3 -c "import urllib.request; print(urllib.request.urlopen('http://127.0.0.1:7001/').getcode())"
+  - Result: 200
+  - This confirms that the application is listening on port 7001 inside the container and responds to HTTP requests without going through a Kubernetes Service.
+
+- Optional context (service-related check): There is no Kubernetes Service named kube-wrong-port-7001, and minikube service cannot locate a service for this Pod port, as there is no corresponding Service for port 7001. The existing services list includes other NodePort/ClusterIP services, but none expose port 7001 for this Pod directly.
+
+Conclusion
+
+- The pod kube-wrong-port-7001 is Running and Ready.
+- The container exposes port 7001, and an in-pod HTTP request to 127.0.0.1:7001 returns HTTP 200, indicating the application is reachable without a Service.
+- Therefore, the original issue (access via direct pod on port 7001 without a Service) appears to be resolved in this cluster state.
+
+Status: <|VERIFIED|>

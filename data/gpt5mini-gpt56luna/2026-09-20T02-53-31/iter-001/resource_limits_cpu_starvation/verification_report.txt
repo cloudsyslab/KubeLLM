@@ -1,0 +1,101 @@
+
+Running:
+ - run_shell_command(command=kubectl get pods)
+
+
+Running:
+ - run_shell_command(command=kubectl describe pod resource-limits-cpu-starvation-app)
+
+
+Running:
+ - run_shell_command(command=kubectl exec resource-limits-cpu-starvation-app -- curl -sS http://127.0.0.1:8080/healthz || true)
+
+
+Running:
+ - run_shell_command(command=...)
+
+
+Running:
+ - run_shell_command(command=...)
+
+
+Running:
+ - run_shell_command(command=...)
+
+
+Running:
+ - run_shell_command(command=...)
+
+
+Running:
+ - run_shell_command(command=...)
+
+
+Running:
+ - run_shell_command(command=...)
+
+
+Running:
+ - run_shell_command(command=...)
+
+
+Running:
+ - run_shell_command(command=kubectl exec resource-limits-cpu-starvation-app -- /bin/sh -lc 'which wget || echo notfound')
+
+
+Running:
+ - run_shell_command(command=...)
+
+
+Running:
+ - run_shell_command(command=...)
+
+
+Running:
+ - run_shell_command(command=kubectl describe pod resource-limits-cpu-starvation-app | sed -n '1,160p')
+
+
+Running:
+ - run_shell_command(command=...)
+
+
+Running:
+ - run_shell_command(command=kubectl get svc)
+
+- Verification results for pod: resource-limits-cpu-starvation-app
+
+Evidence summary (collected in order per guidelines)
+
+- Step 1: kubectl get pods
+  - Result: resource-limits-cpu-starvation-app 1/1 Running 0 16s
+
+- Step 2: kubectl describe pod resource-limits-cpu-starvation-app
+  - Container: app
+    - Image: kube-resource-limits-cpu-starvation-app:latest
+    - Port: 8080/TCP
+    - Limits: cpu: 100m, memory: 128Mi
+    - Requests: cpu: 100m, memory: 64Mi
+    - Readiness: http-get http://:8080/healthz delay=2s timeout=2s period=3s
+    - State: Running, Ready: True
+  - Conditions: Ready True, ContainersReady True
+  - Events: Normal Scheduled, Pulled, Created, Started (no errors reported)
+
+- Step 3: Service check (no Service manifest for this Pod)
+  - Command: kubectl get svc
+  - Observed: Several services exist, but none correspond to resource-limits-cpu-starvation-app. This scenario specifies no Service is expected; absence is not a failure.
+
+- Step 5 (reachability test within Pod): healthz endpoint responsiveness
+  - Command attempted to reach health endpoint inside the Pod:
+    - kubectl exec resource-limits-cpu-starvation-app -- they ultimately executed a Python in-Pod check:
+      - Result: 200 (HTTP 200 OK) from http://127.0.0.1:8080/healthz
+  - Note: curl/wget were not available in the container; Python-based check confirmed a healthy response.
+
+Assessment
+- The pod resource-limits-cpu-starvation-app is Running and Ready (1/1). The container readiness probe is defined and the in-pod health check returns HTTP 200, indicating the readiness endpoint is responsive even under the CPU limit.
+- There is no Kubernetes Service for this Pod, which aligns with the provided scenario guidance.
+- No errors were observed in kubectl describe pod events (no crashes, OOM, image pull issues, etc.).
+
+Conclusion
+- Based on the current cluster state and verified in-pod health checks, the original issue (pod unready due to readiness probe timeouts under low CPU limit) appears resolved.
+
+<|VERIFIED|>
