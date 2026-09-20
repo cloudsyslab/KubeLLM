@@ -1,0 +1,127 @@
+
+Running:
+ - run_shell_command(command=kubectl get pods)
+
+
+Running:
+ - run_shell_command(command=kubectl describe pod kube-wrong-interface)
+
+
+Running:
+ - run_shell_command(command=kubectl describe pod service-check)
+
+
+Running:
+ - run_shell_command(command=kubectl get service app-service -o wide)
+
+
+Running:
+ - run_shell_command(command=minikube -p minikube service app-service --url)
+
+
+Running:
+ - run_shell_command(command=curl -sS -o /dev/null -w "%{http_code}\n" http://192.168.94.2:31620/)
+
+
+Running:
+ - run_shell_command(command=kubectl get endpoints app-service -o yaml)
+
+
+Running:
+ - run_shell_command(command=kubectl exec kube-wrong-interface -- sh -lc 'command -v curl || echo NO-CURL')
+
+
+Running:
+ - run_shell_command(command=...)
+
+
+Running:
+ - run_shell_command(command=...)
+
+
+Running:
+ - run_shell_command(command=kubectl exec kube-wrong-interface -- python3 - << 'PY'
+print('check')
+PY)
+
+
+Running:
+ - run_shell_command(command=kubectl exec kube-wrong-interface -- curl --help)
+
+
+Running:
+ - run_shell_command(command=...)
+
+
+Running:
+ - run_shell_command(command=...)
+
+
+Running:
+ - run_shell_command(command=kubectl exec service-check -- curl -s -o /dev/null -w "%{http_code}\n" http://10.244.4.75:8765/)
+
+
+Running:
+ - run_shell_command(command=kubectl describe pod service-check)
+
+
+Running:
+ - run_shell_command(command=...)
+
+Verification summary
+
+1) Pods state
+- kubectl get pods
+  - kube-wrong-interface   1/1     Running   0          57s
+  - service-check          0/1     Error     0          42s
+
+- kubectl describe pod kube-wrong-interface
+  - Pod is Running
+  - Container kube-wrong-interface listening on port 8765/TCP
+  - Endpoints show target IP 10.244.4.75 (pod kube-wrong-interface) with port 8765
+
+2) Service state
+- kubectl get service app-service -o wide
+  - Type: NodePort
+  - ClusterIP: 10.100.209.193
+  - Ports: 8000:31620/TCP (targetPort 8765)
+  - Selector: app=kube-wrong-interface
+
+3) Access path verification (NodePort)
+- minikube -p minikube service app-service --url
+  - http://192.168.94.2:31620
+
+- curl attempt from host to NodePort
+  - curl -sS -o /dev/null -w "%{http_code}\n" http://192.168.94.2:31620/
+  - Result: Connection refused (host could not reach 192.168.94.2:31620)
+
+- Endpoints inspection
+  - kubectl get endpoints app-service -o yaml
+  - endpoints:
+    - addresses:
+      - ip: 10.244.4.75
+        targetRef: kube-wrong-interface (pod)
+    - ports:
+      - port: 8765 (TCP)
+
+- In-cluster reachability to the application
+  - kubectl exec kube-wrong-interface -- python3 -c "import urllib.request; print(urllib.request.urlopen('http://127.0.0.1:8765/').getcode())"
+  - Result: 200
+  - This confirms the application is listening on 8765 inside the pod and responds to local requests.
+
+- In-cluster reachability via service name
+  - kubectl exec kube-wrong-interface -- python3 -c "import urllib.request; print(urllib.request.urlopen('http://app-service:8000/').getcode())"
+  - Result: URLError: connection refused (unable to reach http://app-service:8000/ from within the kube-wrong-interface pod)
+
+- Additional quick check
+  - kubectl describe pod service-check
+  - service-check pod is in Completed/Terminated state after attempting to curl http://app-service:8000/
+  - This pod is no longer runnable for further live checks, but its earlier failure indicates the cluster could not reach the service via port 8000 from within the cluster.
+
+Conclusion
+- The application is running inside the kube-wrong-interface pod and serves requests on 8765 locally (inside the pod).
+- The Service is configured as NodePort (8000 target 8765) and the Endpoints correctly point to the kube-wrong-interface pod IP on port 8765.
+- External reachability via NodePort (host to 192.168.94.2:31620) is failing with a connection refused error, meaning the NodePort path is not reachable from the test host.
+- Since external access via the configured path is not reachable, the original issue (curl to the application failing due to a timeout from external clients) is not resolved in the current cluster state.
+
+Status: <|FAILED|>

@@ -1,0 +1,77 @@
+
+Running:
+ - run_shell_command(command=kubectl get pods -A -o wide)
+
+
+Running:
+ - run_shell_command(command=kubectl get pods -A -o wide)
+
+
+Running:
+ - run_shell_command(command=kubectl get pods -o wide)
+
+
+Running:
+ - run_shell_command(command=kubectl describe pod kube-wrong-interface-env-host)
+
+
+Running:
+ - run_shell_command(command=kubectl get service -A -o wide)
+
+
+Running:
+ - run_shell_command(command=kubectl describe service wrong-interface-env-host-service)
+
+
+Running:
+ - run_shell_command(command=minikube -p minikube service wrong-interface-env-host-service --url)
+
+
+Running:
+ - run_shell_command(command=curl -sS -v http://192.168.94.2:31814/ | head -n 20)
+
+
+Running:
+ - run_shell_command(command=curl -sS -v http://192.168.94.2:31814/server.py | head -n 20)
+
+Verification results
+
+1) Pods state
+- kubectl get pods (default namespace)
+  - kube-wrong-interface-env-host 1/1 Running
+  - Pod IP: 10.244.4.147
+  - Node: minikube
+
+2) Pod details
+- kubectl describe pod kube-wrong-interface-env-host
+  - Status: Running
+  - Containers Ready: True
+  - Events show normal scheduling and container start (Scheduled, Pulled, Created, Started)
+
+3) Service state
+- kubectl get service
+  - wrong-interface-env-host-service (Type: NodePort)
+  - Port: 8000/TCP
+  - NodePort: 31814
+  - Endpoints: 10.244.4.147:8765
+  - Selector: app=kube-wrong-interface-env-host
+- kubectl describe service wrong-interface-env-host-service
+  - Endpoints include 10.244.4.147:8765, confirming the service routes to the pod
+
+4) Access path discovery (Minikube)
+- minikube -p minikube service wrong-interface-env-host-service --url
+  - URL: http://192.168.94.2:31814
+
+5) Reachability tests
+- curl -sS -v http://192.168.94.2:31814/
+  - Response includes a directory listing for / (root), confirming HTTP access via the NodePort
+- curl -sS -v http://192.168.94.2:31814/server.py
+  - Response returns the contents of server.py, confirming the application code is reachable through the service
+
+Assessment
+- The pod is Running and Ready.
+- The Service exists with a valid NodePort and endpoints pointing to the pod.
+- The NodePort URL is reachable, and HTTP requests succeed through the service to the application.
+
+Conclusion
+<|VERIFIED|>

@@ -1,0 +1,78 @@
+
+Running:
+ - run_shell_command(command=kubectl get pods -o wide)
+
+
+Running:
+ - run_shell_command(command=kubectl describe pod kube-wrong-port-9090)
+
+
+Running:
+ - run_shell_command(command=kubectl get service kube-wrong-port-9090 -o wide || echo SERVICE_NOT_FOUND)
+
+
+Running:
+ - run_shell_command(command=kubectl exec kube-wrong-port-9090 -- curl -sS -I http://127.0.0.1:9090/ || true)
+
+
+Running:
+ - run_shell_command(command=...)
+
+
+Running:
+ - run_shell_command(command=kubectl exec kube-wrong-port-9090 -- /bin/sh -lc 'python3 -V || python -V')
+
+
+Running:
+ - run_shell_command(command=...)
+
+
+Running:
+ - run_shell_command(command=...)
+
+
+Running:
+ - run_shell_command(command=...)
+
+Verification results
+
+1) Pods status
+- Command: kubectl get pods -o wide
+- Result: kube-wrong-port-9090 1/1 Running 0 16s 10.244.4.227 minikube
+- Assessment: Pod exists and is Running with 1/1 container ready.
+
+2) Pod details and readiness
+- Command: kubectl describe pod kube-wrong-port-9090
+- Key points:
+  - Container kube-wrong-port-9090 is in Running state and Ready
+  - Port: 9090/TCP exposed by the container
+  - No evident errors in Events (Scheduled, Pulled, Created, Started)
+- Assessment: Container port 9090 is correctly configured and the container is ready.
+
+3) Service availability
+- Command: kubectl get service kube-wrong-port-9090 -o wide
+- Result: SERVICE_NOT_FOUND
+- Assessment: This scenario intentionally has no Service. Absence of a Service is expected and not a failure.
+
+4) In-pod access to the application on port 9090
+- Context: No curl in image; use in-container Python for a one-shot HTTP check.
+- Command used (in-pod test via kubectl exec): 
+  - kubectl exec kube-wrong-port-9090 -- /bin/sh -lc 'python3 - << EOF
+import urllib.request
+port = 9090
+url = f"http://127.0.0.1:{port}/"
+try:
+    with urllib.request.urlopen(url, timeout=3) as resp:
+        print("HTTP/1.1", resp.status)
+except Exception as e:
+    print("ERROR:", type(e).__name__, e)
+EOF'
+- Result: HTTP/1.1 200
+- Assessment: The application is reachable inside the pod on port 9090 and responds with HTTP 200, satisfying the in-pod direct-access criterion.
+
+Conclusion
+- The pod kube-wrong-port-9090 is Running with the correct container port 9090 exposed.
+- There is no Kubernetes Service for this pod (as expected per the scenario).
+- Direct in-pod access to port 9090 succeeds (HTTP 200), confirming the issue described (direct access timing out) is resolved in this cluster state.
+
+Final verdict: <|VERIFIED|>

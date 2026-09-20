@@ -1,0 +1,59 @@
+
+Running:
+ - run_shell_command(command=kubectl get pods -o wide --context=minikube)
+
+
+Running:
+ - run_shell_command(command=kubectl describe pod kube-wrong-interface-container-args --context=minikube)
+
+
+Running:
+ - run_shell_command(command=kubectl get service -o wide --context=minikube)
+
+
+Running:
+ - run_shell_command(command=minikube -p minikube service wrong-interface-container-args-service --url)
+
+
+Running:
+ - run_shell_command(command=curl -sS -o /dev/null -w "%{http_code}\n" http://192.168.94.2:30529)
+
+Verification log
+
+- Pod status
+  - kubectl get pods -o wide --context=minikube
+    - kube-wrong-interface-container-args   1/1     Running   0          11s   10.244.4.81   minikube
+  - kubectl describe pod kube-wrong-interface-container-args --context=minikube
+    - Status: Running
+    - IP: 10.244.4.81
+    - Containers: kube-wrong-interface-container-args
+      - Image: kube-wrong-interface-container-args-app:latest
+      - Port: 8765/TCP
+      - State: Running
+      - Ready: True
+    - Events show normal scheduling, image pull, container creation and start (no errors)
+
+- Service status
+  - kubectl get service -o wide --context=minikube
+    - wrong-interface-container-args-service   NodePort    10.97.19.24      <none>        8000/TCP         78s    app=kube-wrong-interface-container-args
+    - (Other services exist, but we verify the one from the manifest)
+  - The service is named wrong-interface-container-args-service with:
+    - Type: NodePort
+    - Port: 8000/TCP
+    - NodePort: 30529
+    - Selector: app=kube-wrong-interface-container-args
+
+- Service access URL
+  - minikube -p minikube service wrong-interface-container-args-service --url
+    - http://192.168.94.2:30529
+
+- Reachability test
+  - curl -sS -o /dev/null -w "%{http_code}\n" http://192.168.94.2:30529
+    - 200
+
+Conclusion
+- The pod kube-wrong-interface-container-args is running and Ready.
+- The Service wrong-interface-container-args-service exists and is reachable via NodePort 30529.
+- An HTTP GET to http://192.168.94.2:30529 returns HTTP 200, indicating the application is reachable through the Service/NodePort path.
+
+Result: <|VERIFIED|>

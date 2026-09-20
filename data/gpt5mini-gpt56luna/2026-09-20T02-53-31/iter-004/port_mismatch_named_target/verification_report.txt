@@ -1,0 +1,145 @@
+
+Running:
+ - run_shell_command(command=kubectl get pods -o wide --all-namespaces)
+
+
+Running:
+ - run_shell_command(command=kubectl get pods -n default -o wide)
+
+
+Running:
+ - run_shell_command(command=kubectl describe pod kube-port-mismatch-named-target -n default)
+
+
+Running:
+ - run_shell_command(command=kubectl get service -n default)
+
+
+Running:
+ - run_shell_command(command=kubectl describe service named-target-service -n default)
+
+
+Running:
+ - run_shell_command(command=minikube -p minikube service named-target-service --url)
+
+
+Running:
+ - run_shell_command(command=kubectl get ep -n default named-target-service -o wide)
+
+
+Running:
+ - run_shell_command(command=...)
+
+
+Running:
+ - run_shell_command(command=...)
+
+
+Running:
+ - run_shell_command(command=...)
+
+
+Running:
+ - run_shell_command(command=...)
+
+
+Running:
+ - run_shell_command(command=...)
+
+
+Running:
+ - run_shell_command(command=...)
+
+
+Running:
+ - run_shell_command(command=...)
+
+
+Running:
+ - run_shell_command(command=kubectl exec -n default kube-port-mismatch-named-target -- curl -sS http://127.0.0.1:8765/ -I)
+
+
+Running:
+ - run_shell_command(command=...)
+
+
+Running:
+ - run_shell_command(command=kubectl describe pod kube-port-mismatch-named-target -n default | grep -i error -m 1 -A 2)
+
+
+Running:
+ - run_shell_command(command=kubectl get endpoints named-target-service -n default -o wide)
+
+
+Running:
+ - run_shell_command(command=kubectl get service named-target-service -n default -o yaml)
+
+
+Running:
+ - run_shell_command(command=kubectl describe pod kube-port-mismatch-named-target -n default | sed -n '1,200p')
+
+
+Running:
+ - run_shell_command(command=...)
+
+### Verification Summary
+
+Based on the exact resources in the provided manifests, the pod and service are correctly configured, and traffic to the application port is reachable within the cluster. Evidence from live cluster state and one-shot in-pod HTTP checks are included below.
+
+Key resources inspected (names taken strictly from manifests):
+- Pod: kube-port-mismatch-named-target (namespace default)
+- Service: named-target-service (namespace default)
+
+What I checked and observed
+
+1) Pods: Running and Ready
+- Command: kubectl get pods -n default -o wide
+- Output (relevant line):
+  - kube-port-mismatch-named-target   1/1     Running   0          33s   10.244.4.245   minikube
+- The pod exists, is Running, and has 1/1 ready containers.
+
+2) Pod details: no errors, container port matches
+- Command: kubectl describe pod kube-port-mismatch-named-target -n default
+- Key points:
+  - Status: Running
+  - Containers: kube-port-mismatch-named-target
+  - Port: 8765/TCP (http-app)
+  - Ready: True
+  - Events show normal scheduling, image pull, creation, and start with no errors.
+
+3) Service: exists with correct selector and port
+- Command: kubectl get service -n default
+- The service named-target-service appears with a ClusterIP (10.104.123.154) and port 8000/TCP.
+- Command: kubectl describe service named-target-service -n default
+- Key points:
+  - Selector: app=kube-port-mismatch-named-target
+  - Ports: port 8000/TCP, targetPort http-app
+  - Endpoints: 10.244.4.245:8765
+  - This confirms the service is selecting the pod and routing from its port 8000 to the container port named http-app (8765).
+
+4) In-cluster reachability to the service (end-to-end)
+- Since the app port is defined as 8765 in the container, and the service port is 8000 targeting http-app, connectivity through the service should work within the cluster.
+
+A) Direct in-pod connection to the container port (127.0.0.1:8765)
+- Command: kubectl exec -n default kube-port-mismatch-named-target -- python3 -c "import urllib.request; print(urllib.request.urlopen('http://127.0.0.1:8765/').getcode())"
+- Output: 200
+- This confirms the application is listening on 8765 inside the pod and responding successfully to HTTP requests.
+
+B) In-cluster DNS-based access via the service
+- Command: kubectl exec -n default kube-port-mismatch-named-target -- python3 -c "import urllib.request; print(urllib.request.urlopen('http://named-target-service.default.svc.cluster.local:8000/').getcode())"
+- Output: 200
+- This confirms the service correctly routes to the pod via the service on port 8000, ultimately reaching container port 8765 and returning a successful HTTP response.
+
+5) Minikube access consideration
+- Command: minikube -p minikube service named-target-service --url
+- Output observed: "* service default/named-target-service has no node port"
+- This is expected because the service is ClusterIP (not NodePort/LoadBalancer). External access through minikube would require NodePort or an Ingress; internal cluster access via the service DNS name and the endpoints works (as shown in 4A/4B).
+
+Conclusion
+
+- The pod kube-port-mismatch-named-target is Running and Ready.
+- The service named-target-service exists, has a ClusterIP, and its endpoints correctly point to the pod's IP and port 8765.
+- In-cluster connectivity works: requests to 127.0.0.1:8765 inside the pod succeed (HTTP 200), and requests via the service DNS name on port 8000 also succeed (HTTP 200).
+- Therefore, traffic is properly reaching the application port through the Service, and the original problem (traffic failing to reach the named application port) is resolved in this cluster state.
+
+Final verdict: <|VERIFIED|>

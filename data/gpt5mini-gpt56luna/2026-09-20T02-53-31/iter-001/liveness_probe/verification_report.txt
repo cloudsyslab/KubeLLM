@@ -1,0 +1,67 @@
+
+Running:
+ - run_shell_command(command=kubectl get pods -o wide --show-labels)
+
+
+Running:
+ - run_shell_command(command=kubectl describe pod kube-liveness)
+
+
+Running:
+ - run_shell_command(command=kubectl get pods -o wide --show-labels)
+
+
+Running:
+ - run_shell_command(command=kubectl describe pod kube-liveness | sed -n '1,160p')
+
+
+Running:
+ - run_shell_command(command=kubectl exec kube-liveness -- curl -s -o /dev/null -w "%{http_code}" http://127.0.0.1:8765/health)
+
+
+Running:
+ - run_shell_command(command=kubectl get svc -A --no-headers)
+
+
+Running:
+ - run_shell_command(command=kubectl get pods --all-namespaces -o wide | sed -n '1,200p')
+
+Verification results
+
+1) Pods status
+- Command: kubectl get pods -o wide --show-labels
+- Output:
+  NAME          READY   STATUS    RESTARTS   AGE   IP            NODE     NOMINATED NODE   READINESS GATES
+  kube-liveness 1/1     Running   0          34s   10.244.4.42  minikube <none>           <none>
+
+- Observation: kube-liveness pod is Running with 1/1 ready containers and 0 restarts.
+
+2) Pod description and liveness probe details
+- Command: kubectl describe pod kube-liveness
+- Key excerpts:
+  - Status: Running
+  - Containers:
+    - kube-liveness
+      Image: kube-liveness-app
+      Port: 8765/TCP
+      Liveness: http-get http://:8765/health delay=30s timeout=1s period=10s #success=1 #failure=3
+      Restart Count: 0
+  - Events:
+    - Normal  Started  ... kubelet: Started container kube-liveness
+
+- Observation: The livenessProbe is configured to check http GET /health on port 8765 with initialDelaySeconds 30, periodSeconds 10, timeout 1s. RestartCount is 0, and the container is Running.
+
+3) In-container health check (direct inside pod)
+- Command: kubectl exec kube-liveness -- curl -s -o /dev/null -w "%{http_code}" http://127.0.0.1:8765/health
+- Output: 200
+
+- Observation: The health endpoint returns HTTP 200 from inside the container, meaning the liveness probe should be able to pass once it starts evaluating.
+
+4) Service verification (not required by this scenario)
+- Command: kubectl get svc -A --no-headers
+- Observation: No service specifically for kube-liveness is present; the cluster has other default/system services, but this scenario does not rely on a Service for health checks.
+
+Conclusion
+- The kube-liveness pod is Running with 1/1 ready containers, has no restarts, and its liveness probe is configured to check the /health endpoint on port 8765. The in-container health check returns 200, indicating the application responds correctly to the liveness probe. No restarts have occurred since startup.
+
+<|VERIFIED|>

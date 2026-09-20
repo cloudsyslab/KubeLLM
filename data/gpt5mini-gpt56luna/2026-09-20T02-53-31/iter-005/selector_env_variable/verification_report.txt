@@ -1,0 +1,80 @@
+
+Running:
+ - run_shell_command(command=kubectl get pods -o wide --all-namespaces)
+
+
+Running:
+ - run_shell_command(command=kubectl describe pod selector-env-app)
+
+
+Running:
+ - run_shell_command(command=kubectl get service selector-env-app-service -o wide)
+
+
+Running:
+ - run_shell_command(command=minikube -p minikube service selector-env-app-service --url)
+
+
+Running:
+ - run_shell_command(command=curl -sS -i http://127.0.0.1:8080)
+
+
+Running:
+ - run_shell_command(command=kubectl get endpoints selector-env-app-service -o wide)
+
+
+Running:
+ - run_shell_command(command=curl -sS -i http://192.168.94.2:32426/)
+
+Verification summary
+
+Tested resources (exact names from manifests)
+- Pod: selector-env-app (in default namespace)
+- Service: selector-env-app-service (NodePort)
+
+1) Pods status
+- Command: kubectl get pods -o wide --all-namespaces
+- Observed: The pod selector-env-app (default namespace) is Running with 1/1 ready containers.
+  - default | selector-env-app | Running | 0 restarts | 7s | 10.244.5.71 | minikube
+
+- Also observed system pods in kube-system (not part of the problem scope).
+
+2) Pod description for issues
+- Command: kubectl describe pod selector-env-app
+- Observed: Status Running, container app in Running, Ready: True, Restart Count: 0
+- Events indicate successful scheduling, pulling, creating and starting the container.
+
+3) Service status and endpoints
+- Command: kubectl get service selector-env-app-service -o wide
+- Observed: NodePort service
+  - Name: selector-env-app-service
+  - Type: NodePort
+  - ClusterIP: 10.109.5.40
+  - Port(s): 80:32426/TCP
+  - Selector: app=selector-env-app
+
+- Command: kubectl get endpoints selector-env-app-service -o wide
+- Observed: ENDPOINTS -> 10.244.5.71:8080
+  - This confirms the service has an endpoint associated with the running pod.
+
+4) Accessing the service
+- Command: minikube -p minikube service selector-env-app-service --url
+- Observed URL: http://192.168.94.2:32426
+
+- Command: curl -sS -i http://192.168.94.2:32426/
+- Observed response:
+  - HTTP/1.0 200 OK
+  - Content-type: text/html
+  - Body: Hello from env (from env var)
+
+5) Optional direct localhost check
+- Command: curl -sS -i http://127.0.0.1:8080
+- Observed: Connection refused (as expected when not via the NodePort path in this environment)
+
+Conclusion
+- The pod selector-env-app is Running with 1/1 containers ready.
+- The service selector-env-app-service has an endpoint pointing to the running pod.
+- The NodePort URL exposed by the service (http://192.168.94.2:32426) is reachable and returns the expected application response: "Hello from env (from env var)".
+- This indicates the original startup KeyError issue is resolved and endpoints are now correctly exposed and reachable.
+
+Status: <|VERIFIED|>

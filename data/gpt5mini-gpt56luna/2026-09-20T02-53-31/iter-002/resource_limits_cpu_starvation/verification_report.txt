@@ -1,0 +1,43 @@
+
+Running:
+ - run_shell_command(command=kubectl get pods)
+
+
+Running:
+ - run_shell_command(command=kubectl describe pod resource-limits-cpu-starvation-app)
+
+
+Running:
+ - run_shell_command(command=kubectl get nodes -o wide)
+
+
+Running:
+ - run_shell_command(command=kubectl describe pod resource-limits-cpu-starvation-app | sed -n '1,200p')
+
+
+Running:
+ - run_shell_command(command=...)
+
+- Pod verification
+  - kubectl get pods
+    - resource-limits-cpu-starvation-app 1/1 Running
+  - kubectl describe pod resource-limits-cpu-starvation-app
+    - Container app is Running and Ready (Ready: True, ContainersReady: True)
+    - Resources: limits cpu: 200m, memory: 128Mi; requests cpu: 100m, memory: 64Mi
+    - Readiness probe: httpGet /healthz on port 8080 with delay=2s, timeout=2s, period=3s
+    - Events show the container was scheduled, pulled, created, and started without errors
+- Node status (to confirm cluster is healthy)
+  - kubectl get nodes -o wide
+    - minikube: Ready
+- In-container health check (direct access to the application)
+  - kubectl exec resource-limits-cpu-starvation-app -- python3 -c "import urllib.request, time; t0=time.time(); resp=urllib.request.urlopen('http://127.0.0.1:8080/healthz', timeout=15); print(resp.getcode()); print('elapsed', time.time()-t0)"
+    - Result: 200
+    - elapsed ~0.8s
+- Assessment
+  - The pod is Running and Ready, with no errors in describe output.
+  - The in-container health endpoint /healthz responds with HTTP 200, indicating readiness path is functioning despite the workload pattern.
+  - No Service is defined per scenario guidance, which is acceptable.
+- Conclusion
+  - Based on the commands and observed outputs, the pod is healthy and the readiness path is responsive. The original issue (readiness probe timeouts due to very low CPU limits) does not appear to be occurring in this state.
+
+<|VERIFIED|>
