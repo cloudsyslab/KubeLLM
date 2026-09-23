@@ -125,11 +125,12 @@ def is_gemini_chat_model(model_name: str) -> bool:
 
 
 def openai_chat_requires_reasoning_effort_none(model_name: str) -> bool:
-    """gpt-5.6-luna rejects function tools on Chat Completions unless reasoning_effort is none."""
+    """Luna models reject function tools on Chat Completions unless reasoning_effort is none."""
     normalized = _normalize_model_name(model_name)
     if normalized is None:
         return False
-    return normalized.lower().startswith("gpt-5.6-luna")
+    lowered = normalized.lower()
+    return lowered.startswith("gpt-5.6-luna") or lowered.startswith("gpt-6-luna")
 
 
 def infer_chat_provider(model_name: str) -> str:

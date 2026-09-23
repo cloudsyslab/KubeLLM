@@ -1,0 +1,67 @@
+
+Running:
+ - run_shell_command(command=kubectl get pods)
+
+
+Running:
+ - run_shell_command(command=kubectl describe pod kube-liveness)
+
+
+Running:
+ - run_shell_command(command=kubectl exec kube-liveness -- curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:8765/health)
+
+
+Running:
+ - run_shell_command(command=kubectl get svc --all-namespaces)
+
+
+Running:
+ - run_shell_command(command=kubectl logs kube-liveness)
+
+- Verification objective: Confirm that the kube-liveness pod remains Running and Ready with a healthy liveness probe (no restarts) and that the liveness endpoint is reachable from within the pod.
+
+Evidence and results
+
+1) Pod existence and state
+- Command: kubectl get pods
+- Result:
+  - kube-liveness 1/1 Running 0 14s
+
+2) Pod description and probe configuration
+- Command: kubectl describe pod kube-liveness
+- Key details observed:
+  - Container: kube-liveness
+  - State: Running (Started 21s ago)
+  - Ready: True
+  - Restart Count: 0
+  - Liveness: http-get http://:8765/health delay=30s timeout=1s period=10s #success=1 #failure=3
+  - No errors in Events; container was Scheduled, Pulled, Created and Started successfully
+- Interpretation: Liveness probe is configured with a 30-second initial delay, HTTP GET on /health:8765, 1-second timeout, 10-second period, and no restarts observed so far.
+
+3) In-pod health endpoint reachability
+- Command: kubectl exec kube-liveness -- curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:8765/health
+- Result: 200
+- Interpretation: The /health endpoint responds OK from within the container, matching the app’s behavior and enabling the liveness probe to succeed once it starts.
+
+4) Pod logs (verification of endpoint responses)
+- Command: kubectl logs kube-liveness
+- Relevant lines:
+  - 127.0.0.1 - - [22/Sep/2026 21:15:36] "GET /health HTTP/1.1" 200 -
+  - 127.0.0.1 - - [22/Sep/2026 21:15:59] "GET /health HTTP/1.1" 200 -
+  - 10.244.0.1 - - [22/Sep/2026 21:16:02] "GET /health HTTP/1.1" 200 -
+  - 10.244.0.1 - - [22/Sep/2026 21:16:12] "GET /health HTTP/1.1" 200 -
+- Interpretation: The application consistently returns 200 for health checks in logs, corroborating a healthy endpoint.
+
+5) Service state (relevant to this scenario)
+- Command: kubectl get svc --all-namespaces
+- Observations: No Service resource is named kube-liveness; the cluster contains other services (some unrelated kube-wrong-*/kube-system), but none specifically for kube-liveness.
+- Interpretation: This scenario does not rely on a Service to verify reachability. Absence of a dedicated Service is expected and not a failure for this check. Reachability is demonstrated via in-pod curl to 127.0.0.1:8765.
+
+Conclusion
+- All relevant pods are Running/Ready.
+- The kube-liveness pod responds to its liveness probe’s health check (internal HTTP /health responds with 200).
+- There are no restart events for the kube-liveness container.
+- The direct in-pod health check succeeds, and logs corroborate healthy responses.
+- No Service is required for this scenario, and reachability is confirmed via in-pod access.
+
+Final status: <|VERIFIED|>

@@ -1,0 +1,42 @@
+
+Running:
+ - run_shell_command(command=kubectl get pods -o wide)
+
+
+Running:
+ - run_shell_command(command=kubectl describe pod kube-liveness)
+
+
+Running:
+ - run_shell_command(command=kubectl exec kube-liveness -- curl -sS http://127.0.0.1:8765/health)
+
+### Verification steps and results
+
+1) Verified pod existence and status
+- Command: kubectl get pods -o wide
+- Result: kube-liveness   1/1     Running   0          10s   10.244.6.95   minikube
+- Conclusion: Pod exists and is Running with 1/1 containers Ready and 0 restarts.
+
+2) Inspected pod details for liveness probe configuration and events
+- Command: kubectl describe pod kube-liveness
+- Key details:
+  - Container kube-liveness
+  - Liveness: http-get http://:8765/health delay=30s period=10s
+  - State: Running, Ready: True
+  - Restart Count: 0
+- Events: Pod scheduled and container started successfully; no errors reported
+- Conclusion: Liveness probe is configured as expected and no failures observed in events.
+
+3) Service verification (not applicable)
+- There is no Service manifest for this scenario, as expected per the guidance.
+
+4) In-pod health check to confirm application responds on the expected port/path
+- Command: kubectl exec kube-liveness -- curl -sS http://127.0.0.1:8765/health
+- Result: OK
+- Conclusion: The application responds with 200 OK on /health when accessed from inside the pod, indicating the endpoint is healthy.
+
+Overall assessment:
+- The kube-liveness pod is Running and Ready with 0 restarts.
+- The liveness probe is configured to check /health on port 8765 and would pass once the initialDelay elapses; given the current state, there have been no restarts, and the in-pod health endpoint responds correctly.
+
+Final verdict: <|VERIFIED|>

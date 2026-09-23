@@ -1,0 +1,64 @@
+
+Running:
+ - run_shell_command(command=kubectl get pods -o wide)
+
+
+Running:
+ - run_shell_command(command=kubectl describe pod kube-incorrect-selector)
+
+
+Running:
+ - run_shell_command(command=kubectl get service -A)
+
+
+Running:
+ - run_shell_command(command=kubectl describe service app-service)
+
+
+Running:
+ - run_shell_command(command=minikube -p minikube service app-service --url)
+
+
+Running:
+ - run_shell_command(command=curl -sS -o /dev/null -w "%{http_code}\n" http://192.168.94.2:32410)
+
+Verification results:
+
+1) Pods
+- Command: kubectl get pods -o wide
+- Output: 
+  - kube-incorrect-selector  1/1 Running 0 37s 10.244.6.1 minikube
+
+- Command: kubectl describe pod kube-incorrect-selector
+- Key details:
+  - Status: Running
+  - IP: 10.244.6.1
+  - Containers: kube-incorrect-selector - Ready: True
+  - Events show successful scheduling, pulling, creating, and starting the container
+
+2) Service existence and Endpoints
+- Command: kubectl get service -A
+- Output shows:
+  - default/app-service: Type NodePort, ClusterIP 10.103.13.140, Ports 8000:32410/TCP
+- Command: kubectl describe service app-service
+- Key detail:
+  - Endpoints: 10.244.6.1:8765
+  - Selector: app=kube-incorrect-selector
+  - Port: 8000/TCP (TargetPort: 8765)
+
+3) Reachability test
+- Command: minikube -p minikube service app-service --url
+- Output: http://192.168.94.2:32410
+
+- Command: curl -sS -o /dev/null -w "%{http_code}\n" http://192.168.94.2:32410
+- Output: 200
+
+Summary:
+- The pod kube-incorrect-selector is Running with Ready=True.
+- The service app-service exists and has an Endpoint (10.244.6.1:8765) that matches the pod’s container port (8765) via targetPort.
+- The NodePort mapping (32410) is functional; the service URL resolves and curl returns HTTP 200, indicating end-to-end connectivity to the application.
+
+Conclusion:
+The original issue described as “no endpoints listed for the service” is resolved in this cluster state. The Endpoints for app-service exist and are reachable via the NodePort URL.
+
+<|VERIFIED|>

@@ -1,0 +1,64 @@
+
+Running:
+ - run_shell_command(command=kubectl get pods -A)
+
+
+Running:
+ - run_shell_command(command=kubectl describe pod resource-limits-oom-app -n default)
+
+
+Running:
+ - run_shell_command(command=kubectl exec resource-limits-oom-app -n default -- curl --version)
+
+
+Running:
+ - run_shell_command(command=...)
+
+
+Running:
+ - run_shell_command(command=...)
+
+Verification results
+
+Commands run and evidence
+
+1) Check all pods in cluster
+- Command: kubectl get pods -A
+- Output (relevant line):
+  - default resource-limits-oom-app 1/1 Running 0 16s
+  - other system pods are Running
+- Interpretation: The target pod resource-limits-oom-app exists and is Running with 1/1 containers ready and 0 restarts.
+
+2) Describe the target pod to inspect status and events
+- Command: kubectl describe pod resource-limits-oom-app -n default
+- Key excerpts:
+  - Status: Running
+  - IP: 10.244.5.158
+  - Containers: app
+  - State: Running
+  - Ready: True
+  - Restart Count: 0
+  - Events:
+    - Normal  Scheduled: Successfully assigned default/resource-limits-oom-app to minikube
+    - Normal  Pulled: Container image "kube-resource-limits-oom-app" already present on machine
+    - Normal  Created: Created container app
+    - Normal  Started: Started container app
+- Additional observations: No events indicating OOMKilled or crashes. RestartCount is 0.
+
+3) In-pod functionality check (HTTP server reachable)
+- The expected behavior is that the application starts and serves HTTP on port 8080, and the scenario guide suggests in-pod reachability checks when no Service exists.
+- Command: kubectl exec resource-limits-oom-app -n default -- python3 -c 'import urllib.request; print(urllib.request.urlopen("http://127.0.0.1:8080/").getcode())'
+- Output:
+  - 200
+- Interpretation: The in-pod HTTP server is reachable at 127.0.0.1:8080 and responds with HTTP 200, confirming the application is serving requests.
+
+Notes about Service/Ingress
+- The provided manifests describe a Pod (resource-limits-oom-app) with explicit image kube-resource-limits-oom-app and no Service manifest. As per the guidance for this scenario, absence of a Service is acceptable; reachability is validated directly inside the pod.
+
+Conclusion
+- The pod resource-limits-oom-app is currently Running with 1/1 containers Ready and RestartCount 0.
+- No OOMKilled or crash events observed in the pod description.
+- The in-pod HTTP server is reachable and returns 200 on a direct in-pod request.
+- Based on the evidence, the original problem (CrashLoopBackOff / OOMKilled) appears to be resolved in the current cluster state.
+
+Final verdict: <|VERIFIED|>

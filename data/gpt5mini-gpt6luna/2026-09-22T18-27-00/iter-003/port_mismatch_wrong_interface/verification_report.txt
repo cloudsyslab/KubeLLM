@@ -1,0 +1,72 @@
+
+Running:
+ - run_shell_command(command=kubectl get pods)
+
+
+Running:
+ - run_shell_command(command=kubectl describe pod port-mismatch-wrong-interface-app)
+
+
+Running:
+ - run_shell_command(command=kubectl get service)
+
+
+Running:
+ - run_shell_command(command=minikube -p minikube service port-mismatch-app-service --url)
+
+
+Running:
+ - run_shell_command(command=curl -sS -I http://192.168.94.2:31649/ -m 5)
+
+
+Running:
+ - run_shell_command(command=kubectl get endpoints port-mismatch-app-service -o wide)
+
+
+Running:
+ - run_shell_command(command=curl -sS http://192.168.94.2:31649/)
+
+Verification log and evidence
+
+- Pod status
+  - Command: kubectl get pods
+  - Output:
+    - port-mismatch-wrong-interface-app   1/1     Running   0          104s
+
+- Pod details and readiness
+  - Command: kubectl describe pod port-mismatch-wrong-interface-app
+  - Key findings:
+    - Status: Running
+    - IP: 10.244.6.31
+    - Container app: Ready: True
+    - Events show the container was scheduled, pulled, created, and started successfully.
+
+- Service existence and port mapping
+  - Command: kubectl get service
+  - Output shows the relevant Service:
+    - port-mismatch-app-service   NodePort    10.99.97.26      <none>        80:31649/TCP     106s
+
+- Access URL via Minikube
+  - Command: minikube -p minikube service port-mismatch-app-service --url
+  - URL returned: http://192.168.94.2:31649
+
+- Service reachability (endpoint resolution)
+  - Command: kubectl get endpoints port-mismatch-app-service -o wide
+  - Output:
+    - port-mismatch-app-service   10.244.6.31:8765   114s
+
+- Functional test (GET request to the app)
+  - Command: curl -sS http://192.168.94.2:31649/
+  - Output:
+    - Hello from port_mismatch_wrong_interface test!
+
+What this demonstrates
+- The pod port-mismatch-wrong-interface-app is Running and Ready.
+- The service port-mismatch-app-service exists as a NodePort service, exposing port 80 and forwarding to targetPort 8765 on the pod.
+- The NodePort service is reachable at the Minikube node IP (192.168.94.2) on port 31649.
+- A GET request to http://192.168.94.2:31649/ successfully returns the expected application response, indicating a working route to the app through the service.
+
+Conclusion
+- The original issue (service access errors / no working route) appears to be resolved. The app is reachable via the NodePort service and responds correctly.
+
+<|VERIFIED|>

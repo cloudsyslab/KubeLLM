@@ -1,0 +1,54 @@
+
+Running:
+ - run_shell_command(command=kubectl get pods -o wide --all-namespaces)
+
+
+Running:
+ - run_shell_command(command=kubectl describe pod kube-port-mismatch)
+
+
+Running:
+ - run_shell_command(command=kubectl get service app-service -o yaml)
+
+
+Running:
+ - run_shell_command(command=minikube -p minikube service app-service --url)
+
+
+Running:
+ - run_shell_command(command=curl -sS http://192.168.94.2:30897/ -I)
+
+Verification results
+
+- Pods overview
+  - kube-port-mismatch (default) is Running with 1/1 containers Ready.
+  - Other system pods (kube-system) are also Running.
+  - Evidence (kubectl get pods -o wide --all-namespaces):
+    - default/kube-port-mismatch: 1/1 Ready, Status Running, IP 10.244.6.109, Node minikube
+    - kube-system pods: Running
+
+- Pod description for kube-port-mismatch
+  - Status: Running
+  - Container kube-port-mismatch: Running, Ready: True
+  - Events show successful scheduling, image pull, creation, and start (no errors)
+  - Evidence (kubectl describe pod kube-port-mismatch)
+
+- Service verification
+  - Service manifest exists: app-service (default)
+  - ClusterIP: 10.110.58.6
+  - NodePort: 30897
+  - Ports: 8000 TCP -> targetPort 8765
+  - Evidence (kubectl get service app-service -o yaml)
+
+- Access path reachability
+  - minikube service URL: http://192.168.94.2:30897
+  - curl test: HTTP/1.0 200 OK from http://192.168.94.2:30897/
+  - Server: SimpleHTTP/0.6 Python/3.8.10
+  - Status indicates successful response from the backend app listening on port 8765 (container), routed via NodePort 30897 to port 8000 on the Service
+  - Evidence (minikube -p minikube service app-service --url) and curl -I to the URL
+
+Conclusion
+- The application is reachable through the existing NodePort path (port 30897) and returns HTTP 200 OK, indicating the underlying HTTP service is functioning as expected.
+- All required pods are Running and Ready, and the service is exposed and reachable.
+
+Result: <|VERIFIED|>

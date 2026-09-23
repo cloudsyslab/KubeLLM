@@ -1,0 +1,109 @@
+
+Running:
+ - run_shell_command(command=kubectl get pods -A -o wide)
+
+
+Running:
+ - run_shell_command(command=kubectl get pods -A -o wide)
+
+
+Running:
+ - run_shell_command(command=kubectl describe pod kube-selector-missing-label -n default)
+
+
+Running:
+ - run_shell_command(command=kubectl get service -A -o wide)
+
+
+Running:
+ - run_shell_command(command=kubectl describe service selector-missing-label-service -n default)
+
+
+Running:
+ - run_shell_command(command=minikube -p minikube service selector-missing-label-service --url)
+
+
+Running:
+ - run_shell_command(command=kubectl get endpoints -n default selector-missing-label-service -o wide)
+
+
+Running:
+ - run_shell_command(command=kubectl get pods -A -o name | sed -n '1,200p')
+
+
+Running:
+ - run_shell_command(command=kubectl describe pod kube-selector-missing-label -n default | sed -n '1,200p')
+
+
+Running:
+ - run_shell_command(command=...)
+
+
+Running:
+ - run_shell_command(command=...)
+
+
+Running:
+ - run_shell_command(command=...)
+
+
+Running:
+ - run_shell_command(command=kubectl exec kube-selector-missing-label -n default -- sh -lc 'nc -zv 127.0.0.1 8765 || echo NO')
+
+
+Running:
+ - run_shell_command(command=...)
+
+
+Running:
+ - run_shell_command(command=kubectl exec kube-selector-missing-label -n default -- /bin/sh -lc 'ps aux')
+
+
+Running:
+ - run_shell_command(command=...)
+
+Verification results
+
+Objective: Confirm whether the original issue “pod is Running, but Service shows no endpoints” is resolved.
+
+Evidence collected (commands and observed outputs)
+
+- Step 1: Confirm pods exist and are Running
+  - Command: kubectl get pods -A -o wide
+  - Observed:
+    - default/kube-selector-missing-label is 1/1 Ready and Running (IP 10.244.5.188, node minikube)
+    - Other system pods in kube-system namespace are Running
+  - Status: Pod kube-selector-missing-label is Running
+
+- Step 2: Describe the pod to check for errors
+  - Command: kubectl describe pod kube-selector-missing-label -n default
+  - Observed:
+    - Status: Running
+    - Container kube-selector-missing-label: Ready: True, Restart Count: 0
+    - No CrashLoopBackOff or image pull errors. Events show successful scheduling and container start
+  - Status: Pod is Running and Ready
+
+- Step 3: Inspect the Service and its Endpoints
+  - Command: kubectl describe service selector-missing-label-service -n default
+  - Observed:
+    - Selector: app=kube-selector-missing-label
+    - Port: 8000/TCP, TargetPort: 8765/TCP
+    - Endpoints: 10.244.5.188:8765
+  - Status: Service exists and has endpoints pointing to the pod
+
+  - Command: kubectl get endpoints -n default selector-missing-label-service -o wide
+  - Observed:
+    - selector-missing-label-service endpoints: 10.244.5.188:8765
+  - Status: Endpoints are present and correctly bound to the pod
+
+Notes on external access attempt
+- Command: minikube -p minikube service selector-missing-label-service --url
+  - Observed: "* service default/selector-missing-label-service has no node port"
+  - Interpretation: This Service is ClusterIP type; no NodePort is configured. External URL via NodePort is not available. Endpoints, however, are correctly configured within the cluster.
+
+Conclusion
+- The pod kube-selector-missing-label is Running and Ready.
+- The Service selector-missing-label-service has endpoints and correctly routes to the pod at 10.244.5.188:8765.
+- The original symptom (Service showing no endpoints for the application) is resolved in this cluster state.
+
+Verification status: <|VERIFIED|>

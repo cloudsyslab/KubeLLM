@@ -1,0 +1,71 @@
+
+Running:
+ - run_shell_command(command=kubectl get pods)
+
+
+Running:
+ - run_shell_command(command=kubectl describe pod resource-limits-cpu-starvation-app)
+
+
+Running:
+ - run_shell_command(command=kubectl get pod resource-limits-cpu-starvation-app -o wide)
+
+
+Running:
+ - run_shell_command(command=...)
+
+
+Running:
+ - run_shell_command(command=...)
+
+
+Running:
+ - run_shell_command(command=...)
+
+
+Running:
+ - run_shell_command(command=...)
+
+
+Running:
+ - run_shell_command(command=...)
+
+Verification steps and results
+
+1) Pod existence and general status
+- Command: kubectl get pods
+- Result: 
+  resource-limits-cpu-starvation-app   1/1     Running   0          14s
+
+2) Pod description and readiness events
+- Command: kubectl describe pod resource-limits-cpu-starvation-app
+- Key observations:
+  - IP: 10.244.5.224
+  - Containers:
+    - app
+      - State: Running (Started: Tue, 22 Sep 2026 20:39:11 +0000)
+      - Ready: True
+      - Readiness: http-get http://:8080/healthz delay=2s timeout=2s period=3s
+  - Readiness/Ready status: ContainersReady True, Ready True
+  - Events include: 
+    - Normal Scheduled
+    - Normal Pulled
+    - Normal Created
+    - Normal Started
+- Interpretation: Pod scheduled and container started successfully; readiness checks configured with no evident errors in events.
+
+3) In-pod reachability of the readiness endpoint
+- Context: No Service is defined for this scenario; verification uses in-pod direct access.
+- Command: kubectl exec resource-limits-cpu-starvation-app -- /bin/sh -c 'python3 -c "import urllib.request; print(urllib.request.urlopen(\"http://127.0.0.1:8080/healthz\", timeout=2).getcode())"'
+- Result: 200
+- Interpretation: The /healthz readiness endpoint responds with HTTP 200 within the container, indicating the application is healthy and the endpoint is reachable despite the CPU constraints.
+
+Summary
+- The pod resource-limits-cpu-starvation-app is Running and Ready (1/1).
+- The container reports readiness as True, and there are no error events in the pod description.
+- The in-container health check endpoint (/healthz) responds with HTTP 200, demonstrating the readiness probe path is reachable and functioning in the current cluster state.
+
+Conclusion
+- Based on the current cluster state and the evidence collected, the previously observed readiness probe timeouts due to CPU limits do not appear to be present now. The pod is Running/Ready and the health endpoint is reachable as tested.
+
+<|VERIFIED|>

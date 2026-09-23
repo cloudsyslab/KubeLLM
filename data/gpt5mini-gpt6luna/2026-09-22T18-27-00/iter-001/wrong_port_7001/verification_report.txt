@@ -1,0 +1,81 @@
+
+Running:
+ - run_shell_command(command=kubectl get pods -A -o wide)
+
+
+Running:
+ - run_shell_command(command=kubectl describe pod kube-wrong-port-7001)
+
+
+Running:
+ - run_shell_command(command=kubectl exec kube-wrong-port-7001 -- curl -sI http://127.0.0.1:7001/)
+
+
+Running:
+ - run_shell_command(command=kubectl exec kube-wrong-port-7001 -- ss -tlnp)
+
+
+Running:
+ - run_shell_command(command=...)
+
+
+Running:
+ - run_shell_command(command=...)
+
+
+Running:
+ - run_shell_command(command=kubectl get svc -n default)
+
+
+Running:
+ - run_shell_command(command=kubectl describe pod kube-wrong-port-7001 -n default)
+
+Verification results for the pod described in wrong_port_7001.yaml (Pod: kube-wrong-port-7001)
+
+What I checked and outputs
+
+1) Pods status
+- Command: kubectl get pods -A -o wide
+- Result (relevant line from default namespace):
+  - default kube-wrong-port-7001 1/1 Running 0 13s 10.244.5.180 minikube
+- Observations:
+  - The pod kube-wrong-port-7001 exists in default, and its READY is 1/1 with STATUS Running.
+
+2) Pod details for kube-wrong-port-7001
+- Command: kubectl describe pod kube-wrong-port-7001
+- Key details:
+  - Status: Running
+  - IP: 10.244.5.180
+  - Port: 7001/TCP
+  - Container kube-wrong-port-7001: image kube-wrong-port-7001-app, Port 7001/TCP, Ready: True
+  - Events show the container was scheduled, pulled, created, and Started successfully
+- Observations:
+  - The container is running and listening on port 7001 as per manifest (containerPort: 7001).
+
+3) In-pod accessibility test (direct access to port 7001)
+- Command: kubectl exec kube-wrong-port-7001 -- python3 -c "import urllib.request; print(urllib.request.urlopen('http://127.0.0.1:7001/').getcode())"
+- Result:
+  - 200
+- Command: kubectl exec kube-wrong-port-7001 -- python3 -c "import urllib.request; import sys; print(urllib.request.urlopen('http://127.0.0.1:7001/').read()[:200].decode('utf-8'))"
+- Result (first 200 chars of response):
+  - <!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01//EN" "http://www.w3.org/TR/html4/strict.dtd">
+  - <html>
+  - <head>
+  - <meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+  - <title>Directory listing fo
+- Observations:
+  - A local HTTP request to 127.0.0.1:7001 from inside the container returns HTTP 200 and a valid HTML response (directory listing), demonstrating the application is serving on port 7001 inside the pod.
+
+4) Service existence (contextual, not required for this scenario)
+- Command: kubectl get svc -n default
+- Result includes multiple services, e.g. kube-wrong-interface-svc, kube-wrong-port, kube-wrong-port-5000-svc, kube-wrong-port-9090-svc, kube-wrong-port-svc, kubernetes
+- Observations:
+  - There are several services in default, but the scenario intentionally has no Service required for direct pod access. The direct in-pod test remains valid and successful.
+
+Conclusion
+
+- The kube-wrong-port-7001 pod is Running and Ready.
+- The application inside the pod is listening on port 7001, and a direct in-container HTTP request to http://127.0.0.1:7001/ returns HTTP 200 with a valid HTML response.
+- No Kubernetes Service is required for this verification path, and direct pod access succeeds as expected.
+
+Verdict: <|VERIFIED|>

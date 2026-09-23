@@ -1,0 +1,62 @@
+
+Running:
+ - run_shell_command(command=kubectl get pods)
+
+
+Running:
+ - run_shell_command(command=kubectl describe pod resource-limits-oom-app)
+
+
+Running:
+ - run_shell_command(command=kubectl exec resource-limits-oom-app -- curl -sS http://127.0.0.1:8080/)
+
+
+Running:
+ - run_shell_command(command=...)
+
+
+Running:
+ - run_shell_command(command=...)
+
+
+Running:
+ - run_shell_command(command=...)
+
+
+Running:
+ - run_shell_command(command=kubectl logs resource-limits-oom-app --since=1m)
+
+Verification findings:
+
+- Pod status
+  - kubectl get pods
+    - resource-limits-oom-app 1/1 Running 0 16s
+
+- Pod details and events
+  - kubectl describe pod resource-limits-oom-app
+    - Status: Running
+    - Containers:
+      - app: Running, Ready, Restart Count: 0
+      - Resource limits: cpu 200m, memory 256Mi; Requests: cpu 100m, memory 32Mi
+    - Events:
+      - Normal  Scheduled: Successfully assigned default/resource-limits-oom-app to minikube
+      - Normal  Pulled: Container image "kube-resource-limits-oom-app" already present on machine
+      - Normal  Created: Created container app
+      - Normal  Started: Started container app
+    - No OOMKilled events observed
+
+- In-container application health
+  - kubectl logs resource-limits-oom-app --since=1m
+    - 2026-09-23 00:23:16,087 - INFO - Starting server and allocating memory...
+    - 2026-09-23 00:23:16,285 - INFO - Memory allocated. List size: 80.00 MB
+    - 2026-09-23 00:23:16,501 - INFO - Server running on 0.0.0.0:8080
+    - 127.0.0.1 - - [23/Sep/2026 00:23:22] "GET / HTTP/1.1" 200 -
+
+Observations summary:
+- The pod is now Running with 1/1 ready and has 0 restarts.
+- There are no OOMKilled-related events in the pod describe output.
+- The in-pod HTTP server starts successfully and responds with HTTP 200 to a GET /, indicating the service is healthy and reachable within the pod.
+
+Given the above, the original CrashLoopBackOff due to OOMKilled appears resolved in the current cluster state.
+
+<|VERIFIED|>

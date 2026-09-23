@@ -1,0 +1,49 @@
+
+Running:
+ - run_shell_command(command=kubectl get pods -o wide)
+
+
+Running:
+ - run_shell_command(command=kubectl describe pod readiness-slow-start-app)
+
+
+Running:
+ - run_shell_command(command=...)
+
+Verification results
+
+1) Pods status
+- Command: kubectl get pods -o wide
+- Output (relevant line):
+  readiness-slow-start-app   1/1     Running   0          17s   IP: 10.244.6.118  NODE: minikube
+- Status: Pod is present and in Running state with 1/1 container ready.
+
+2) Pod description and readiness setup
+- Command: kubectl describe pod readiness-slow-start-app
+- Key details:
+  - Status: Running
+  - Containers:
+    - app
+      - Port: 8080/TCP
+      - Readiness: http-get http://:8080/ready delay=3s timeout=3s period=3s
+      - Ready: True
+      - ContainersReady: True
+  - Events show the container was Scheduled, Created, and Started successfully.
+- Interpretation: The readiness probe is configured with initialDelaySeconds=3, timeoutSeconds=3, periodSeconds=3, and it reports Ready=True for the container, indicating the probe succeeds.
+
+3) In-pod readiness endpoint test
+- Context: The scenario has no Service; we verify reachability via in-container access.
+- Command: kubectl exec readiness-slow-start-app -- python3 -c "import urllib.request; print(urllib.request.urlopen('http://127.0.0.1:8080/ready').getcode())"
+- Output:
+  200
+- Interpretation: The /ready endpoint responds with HTTP 200 from inside the container, confirming the readiness path is reachable inside the pod.
+
+4) Service/Ingress verification
+- No Service manifest exists for this pod; scenario guidance indicates absence of a Service is not a failure.
+- Therefore, no minikube service URL, endpoint, or Ingress checks were performed or required.
+
+Conclusion
+- The pod readiness condition is satisfied: the pod is Running with 1/1 ready containers, and the in-pod readiness endpoint responds with 200 at /ready.
+- No Service is defined as per the provided manifests, which is expected for this scenario and does not indicate a failure.
+
+Final result: <|VERIFIED|>

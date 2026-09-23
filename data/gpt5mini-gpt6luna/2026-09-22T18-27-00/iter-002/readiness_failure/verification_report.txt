@@ -1,0 +1,40 @@
+
+Running:
+ - run_shell_command(command=kubectl get pods -A)
+
+
+Running:
+ - run_shell_command(command=kubectl describe pod readiness-http -n default)
+
+
+Running:
+ - run_shell_command(command=kubectl exec readiness-http -n default -- curl -sS http://127.0.0.1:8080/)
+
+**Verification result: <|VERIFIED|>**
+
+Evidence summary
+
+1) Pod status check
+- Command: kubectl get pods -A
+- Result (relevant line):
+  - default readiness-http 1/1 Running 0 …
+- Interpretation: The pod readiness-http exists and is Running with its single container ready.
+
+2) Pod descriptor for readiness status
+- Command: kubectl describe pod readiness-http -n default
+- Key outputs:
+  - Status: Running
+  - Readiness: True
+  - ContainersReady: True
+  - Events: Normal Scheduled, Pulled, Created, Started (no errors)
+- Interpretation: The pod is fully up, and the container is Ready according to the readinessProbe configured in the manifest.
+
+3) In-pod reachability check (direct access, no Service)
+- Command: kubectl exec readiness-http -n default -- curl -sS http://127.0.0.1:8080/
+- Result: NOW: 2026-09-22 20:25:04.354478409 +0000 UTC m=+27.779573268
+- Interpretation: The in-pod HTTP server on port 8080 responds successfully to a local HTTP request, confirming the readinessProbe endpoint is reachable from inside the container.
+
+Conclusion
+- The readiness issue described (pod Ready condition showing False) has been resolved in this cluster state for the pod readiness-http. The pod is Running, the container is Ready, and the in-pod HTTP server is reachable on the expected port, aligning with the readinessProbe configuration.
+
+Status: <|VERIFIED|>

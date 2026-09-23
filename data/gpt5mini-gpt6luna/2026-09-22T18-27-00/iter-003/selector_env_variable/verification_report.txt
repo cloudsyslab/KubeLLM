@@ -1,0 +1,52 @@
+
+Running:
+ - run_shell_command(command=kubectl get pods -A -o wide)
+
+
+Running:
+ - run_shell_command(command=kubectl get pods -n default -o wide)
+
+
+Running:
+ - run_shell_command(command=kubectl describe pod selector-env-app -n default)
+
+
+Running:
+ - run_shell_command(command=kubectl get service -n default -o wide)
+
+
+Running:
+ - run_shell_command(command=kubectl describe service selector-env-app-service -n default)
+
+
+Running:
+ - run_shell_command(command=minikube -p minikube service selector-env-app-service --url)
+
+
+Running:
+ - run_shell_command(command=curl -sS http://192.168.94.2:31697/ -m 5 -i)
+
+Verification findings
+
+- Pods verification
+  - kubectl get pods -A shows a single pod of interest: default/selector-env-app with READY 1/1 and STATUS Running.
+  - kubectl describe pod selector-env-app -n default confirms the container is Running and Ready (Container app started successfully). No crash events observed.
+
+- Service verification
+  - kubectl get service -n default shows selector-env-app-service as a NodePort service.
+  - kubectl describe service selector-env-app-service -n default shows:
+    - Endpoints: 10.244.6.50:8080 (the pod IP and container port mapping)
+    - Port mapping: 80 -> 8080 (targetPort 8080)
+    - NodePort: 31697
+
+- Connectivity verification
+  - minikube -p minikube service selector-env-app-service --url returns http://192.168.94.2:31697
+  - curl -sS http://192.168.94.2:31697/ -m 5 -i yields:
+    - HTTP/1.0 200 OK
+    - Content: "Hello from selector-env-app (from env var)"
+
+Conclusion
+
+- The previously reported crash (KeyError on startup) does not appear in the current state. The pod selector-env-app is Running with 1/1 Ready, the service has a valid endpoint, and the application responds correctly via the service URL.
+
+<|VERIFIED|>

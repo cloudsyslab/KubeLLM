@@ -1,0 +1,39 @@
+
+Running:
+ - run_shell_command(command=kubectl get pods -A)
+
+
+Running:
+ - run_shell_command(command=kubectl describe pod kube-liveness -n default)
+
+
+Running:
+ - run_shell_command(command=kubectl exec kube-liveness -n default -- curl -sS http://127.0.0.1:8765/health || true)
+
+- Verification steps and results
+
+1) kubectl get pods -A
+- Observed pod:
+  - default/kube-liveness is Running with 1/1 containers Ready
+  - Restart count: 0
+- Interpretation: Pod exists and is in Running state with the expected container ready.
+
+2) kubectl describe pod kube-liveness -n default
+- Pod status: Running
+- Container: kube-liveness
+  - Image: kube-liveness-app
+  - Port: 8765/TCP
+  - LivenessProbe: httpGet on http://:8765/health with delay=30s, period=10s, timeout=1s
+  - Restart Count: 0
+- Events: Pod successfully scheduled, container created and started
+- Interpretation: Liveness probe is configured as per manifest and there have been no restarts observed for this container.
+
+3) In-pod reachability check
+- Command: kubectl exec kube-liveness -n default -- curl -sS http://127.0.0.1:8765/health
+- Result: OK
+- Interpretation: The in-container HTTP server responds 200 to /health, confirming the liveness probe endpoint is healthy and accessible within the pod.
+
+Conclusion:
+- The kube-liveness pod is Running with 0 restarts, the liveness probe is configured and successfully passes (health endpoint responds OK), and the container is Ready. All evidence indicates the issue described (unhealthy liveness probe causing restarts) is resolved in the current cluster state.
+
+<|VERIFIED|>

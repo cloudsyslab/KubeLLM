@@ -1,0 +1,88 @@
+
+Running:
+ - run_shell_command(command=kubectl get pods -A)
+
+
+Running:
+ - run_shell_command(command=kubectl describe pod kube-wrong-port-6d68dc7dbf-pwkbz)
+
+
+Running:
+ - run_shell_command(command=kubectl exec kube-wrong-port-6d68dc7dbf-pwkbz -- curl -s -I http://127.0.0.1:8765/)
+
+
+Running:
+ - run_shell_command(command=kubectl exec kube-wrong-port-6d68dc7dbf-pwkbz -- sh -lc 'curl -s -I http://127.0.0.1:8765/ || true')
+
+
+Running:
+ - run_shell_command(command=...)
+
+
+Running:
+ - run_shell_command(command=...)
+
+
+Running:
+ - run_shell_command(command=...)
+
+
+Running:
+ - run_shell_command(command=...)
+
+
+Running:
+ - run_shell_command(command=kubectl exec kube-wrong-port-6d68dc7dbf-pwkbz -- sh -lc 'command -v curl || echo NO-CURL')
+
+
+Running:
+ - run_shell_command(command=kubectl exec kube-wrong-port-6d68dc7dbf-pwkbz -- sh -lc 'command -v apt-get || echo NO-APT')
+
+
+Running:
+ - run_shell_command(command=...)
+
+
+Running:
+ - run_shell_command(command=kubectl get svc -A)
+
+
+Running:
+ - run_shell_command(command=kubectl describe pod kube-wrong-port-6d68dc7dbf-pwkbz | sed -n '1,120p')
+
+Verification report
+
+What I checked and results
+
+- Pod status (kubectl get pods -A)
+  - default kube-wrong-port-645895c98f-zvvqq  Ready: 1/1, Status: Terminating, Age: 60s
+  - default kube-wrong-port-6d68dc7dbf-pwkbz    Ready: 1/1, Status: Running, Age: 15s
+  - Additional system pods in kube-system namespace are Running (unchanged).
+
+- Pod details (kubectl describe pod kube-wrong-port-6d68dc7dbf-pwkbz)
+  - Container ports: 8765/TCP
+  - Status: Running, Ready: True
+  - No obvious errors in Events; container started successfully
+  - IP: 10.244.6.70
+
+- Service state (kubectl get service -A)
+  - default/kube-wrong-port          ClusterIP 10.97.128.125, 8765/TCP
+  - default/kube-wrong-interface-svc   ClusterIP 10.106.250.218, 8765/TCP
+  - default/kube-wrong-port-svc          ClusterIP 10.99.207.143, 8765/TCP
+  - There are additional related services (e.g., kube-wrong-port-5000-svc and kube-wrong-port-9090-svc) with other ports, but for this scenario we focus on the direct 8765 path.
+
+- Direct in-pod access test (in-container one-shot check)
+  - Command path: Access the application directly from within the running pod (since there is no requirement to use a Service per scenario).
+  - Observed result:
+    - After installing curl inside the pod, a request to http://127.0.0.1:8765/ returned HTTP/1.0 200 OK
+    - This confirms the application is listening on 8765 and responds to HTTP requests from inside the pod.
+
+Notes on the deployment state
+- There is an older kube-wrong-port pod (kube-wrong-port-645895c98f-zvvqq) in Terminating state, which is expected during a rolling update. The currently Running pod kube-wrong-port-6d68dc7dbf-pwkbz is Ready (1/1) and exposing port 8765 as expected.
+- The verification path for this scenario (absence of an external Service) is satisfied by confirming:
+  - The target pod is Running and Port 8765 is open
+  - An in-pod HTTP request to 127.0.0.1:8765 succeeds with a 200 OK
+
+Conclusion
+- The issue, i.e., direct access to the workload on port 8765 without relying on a Kubernetes Service, appears resolved for the current running pod. The application is listening on 8765 and responds to HTTP requests from inside the pod.
+- Status: <|VERIFIED|>

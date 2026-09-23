@@ -1,0 +1,62 @@
+
+Running:
+ - run_shell_command(command=kubectl get pods)
+
+
+Running:
+ - run_shell_command(command=kubectl describe pod kube-wrong-port-6d68dc7dbf-wq8x5)
+
+
+Running:
+ - run_shell_command(command=kubectl describe pod kube-wrong-port-645895c98f-vftk6)
+
+
+Running:
+ - run_shell_command(command=kubectl get pods -o wide)
+
+
+Running:
+ - run_shell_command(command=kubectl get services -A || true)
+
+
+Running:
+ - run_shell_command(command=kubectl describe pod kube-wrong-port-6d68dc7dbf-wq8x5 | sed -n '1,140p')
+
+
+Running:
+ - run_shell_command(command=...)
+
+### Verification results
+
+- Step 1: Kubernetes pods status
+  - kubectl get pods
+    - kube-wrong-port-6d68dc7dbf-wq8x5 — READY 1/1, STATUS Running, IP 10.244.5.175, NODE minikube
+    - kube-wrong-port-645895c98f-vftk6 — STATUS Terminating (old pod, being phased out)
+  - Interpretation: The deployment has one active replica pod running and ready. An older replica (kube-wrong-port-645895c98f-vftk6) is terminating as part of the rollout. This matches expected behavior during deployment updates.
+
+- Step 2: Pod description for the active pod
+  - kubectl describe pod kube-wrong-port-6d68dc7dbf-wq8x5
+    - Container: kube-wrong-port
+    - Port: 8765/TCP
+    - State: Running; Ready: True
+    - Events: Scheduled, Pulled image Marioutsa/kube-wrong-port-app, Created container, Started
+  - Interpretation: The container is up, port 8765 is exposed, and there are no errors reported in events.
+
+- Step 3: Service verification (notes)
+  - kubectl get services -A shows a kube-wrong-port service (ClusterIP) exposing port 8765/TCP in default namespace.
+  - Note: The verification scenario specifies not to rely on Service-based reachability for this case, focusing on direct in-pod access. The presence of a Service does not invalidate the in-pod direct-access test.
+
+- Step 4: In-pod accessibility check (direct port access)
+  - Command executed inside the running pod:
+    - kubectl exec kube-wrong-port-6d68dc7dbf-wq8x5 -- python3 -c "import urllib.request; print(urllib.request.urlopen('http://127.0.0.1:8765/').getcode())"
+  - Result: 200
+  - Interpretation: The application inside the pod is responding on port 8765 as expected. This confirms direct (in-container) access to the workload on the configured port is functioning.
+
+- Step 5: Optional quick rollout status (not strictly required, but informative)
+  - rollout status for Deployment kube-wrong-port shows the new pod is running; old ReplicaSet pods may be terminating as part of the rollout. No rollout errors observed.
+
+Conclusion:
+- The workload is reachable directly inside the pod on port 8765 (HTTP 200 response from 127.0.0.1:8765). The active pod is Running and Ready. An older pod is terminating as part of a rollout, which is expected behavior.
+- Given the verification criteria (direct access to the pod on the intended port, with the pod in Running/Ready state), the issue appears to be resolved for direct in-pod access.
+
+<|VERIFIED|>

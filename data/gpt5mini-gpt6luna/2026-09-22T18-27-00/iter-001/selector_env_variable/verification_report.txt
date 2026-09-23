@@ -1,0 +1,66 @@
+
+Running:
+ - run_shell_command(command=kubectl get pods -o wide --namespace default)
+
+
+Running:
+ - run_shell_command(command=kubectl describe pod selector-env-app --namespace default)
+
+
+Running:
+ - run_shell_command(command=kubectl get service -A --no-headers | sed -n '1,200p')
+
+
+Running:
+ - run_shell_command(command=kubectl get endpoints selector-env-app-service -n default -o wide)
+
+
+Running:
+ - run_shell_command(command=minikube -p minikube service selector-env-app-service --url)
+
+
+Running:
+ - run_shell_command(command=curl -sS -k -i http://192.168.94.2:31729/ | head -n 20)
+
+Verification steps and results
+
+1) Pods that should exist
+- Command: kubectl get pods -o wide --namespace default
+- Result: selector-env-app 1/1 Running 0 10s 10.244.5.160 minikube
+- Interpretation: Pod exists and is in Running state with 1/1 containers ready.
+
+2) Pod details for crash/log indicators
+- Command: kubectl describe pod selector-env-app --namespace default
+- Key lines:
+  - Status: Running
+  - Containers:
+    - app: State: Running, Ready: True, Restart Count: 0
+    - Environment: APP_MESSAGE: Hello from env var
+- Additional context: Events show normal lifecycle (Scheduled, Pulled, Created, Started). No CrashLoopBackOff or ImagePullBackOff observed.
+- Interpretation: Pod is healthy; no KeyError crash indicated by pod status and events.
+
+3) Service existence and endpoints
+- Command: kubectl get service -A --no-headers | sed -n '1,200p'
+- Result: 
+  - default selector-env-app-service   NodePort    10.97.69.2       <none>   80:31729/TCP
+- Command: kubectl get endpoints selector-env-app-service -n default -o wide
+- Result: selector-env-app-service   10.244.5.160:8080
+- Interpretation: Service exists (selector-env-app-service) and has endpoints, i.e., at least one Pod is registered behind the service with port 8080.
+
+4) Access path and reachability
+- Command: minikube -p minikube service selector-env-app-service --url
+- Result: http://192.168.94.2:31729
+- Command: curl -sS -k -i http://192.168.94.2:31729/ | head -n 20
+- Result:
+  - HTTP/1.0 200 OK
+  - Content-type: text/html
+  - Hello from env var (from env var)
+- Interpretation: The service is reachable via the NodePort on Minikube, and the application responds correctly, indicating the environment variable is correctly injected and the server is serving requests.
+
+Summary
+- The pod selector-env-app is Running with 1/1 Ready.
+- The service selector-env-app-service exists and has a valid endpoint (10.244.5.160:8080).
+- The Minikube service URL is accessible and returns the expected response, confirming the issue described (pod crash with KeyError and missing endpoints) no longer occurs in this cluster state.
+
+Conclusion
+<|VERIFIED|>

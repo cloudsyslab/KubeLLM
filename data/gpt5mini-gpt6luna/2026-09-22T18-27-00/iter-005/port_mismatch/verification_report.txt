@@ -1,0 +1,67 @@
+
+Running:
+ - run_shell_command(command=kubectl get pods -o wide)
+
+
+Running:
+ - run_shell_command(command=kubectl describe pod kube-port-mismatch)
+
+
+Running:
+ - run_shell_command(command=kubectl get service -A)
+
+
+Running:
+ - run_shell_command(command=kubectl describe pod kube-port-mismatch -n default)
+
+
+Running:
+ - run_shell_command(command=kubectl describe service app-service)
+
+
+Running:
+ - run_shell_command(command=minikube -p minikube service app-service --url)
+
+
+Running:
+ - run_shell_command(command=curl -s -o /dev/null -w "%{http_code}\n" http://192.168.94.2:31875)
+
+Verification report
+
+1) Pod status
+- Command: kubectl get pods -o wide
+- Result: kube-port-mismatch is Running with 1/1 ready
+
+- Command: kubectl describe pod kube-port-mismatch
+- Result: Pod kube-port-mismatch is Running, container kube-port-mismatch is Running and Ready, events show normal scheduling and startup
+
+2) Service status and endpoints
+- Command: kubectl get service -A
+- Result: Found app-service in default namespace, Type NodePort, Port 8000/TCP, NodePort 31875, ClusterIP 10.96.8.193
+  - Note: Other services are listed but not relevant to this verification
+
+- Command: kubectl describe service app-service
+- Result: 
+  - Selector matches app.kubernetes.io/name=app
+  - Port: 8000/TCP, TargetPort: 8765/TCP
+  - NodePort: 31875
+  - Endpoints: 10.244.6.186:8765
+  - This confirms the service is routing to the pod kube-port-mismatch on port 8765
+
+3) Access path verification (Minikube)
+- Command: minikube -p minikube service app-service --url
+- Result: http://192.168.94.2:31875
+
+- Command: curl -s -o /dev/null -w "%{http_code}\n" http://192.168.94.2:31875
+- Result: 200
+
+Interpretation
+- The kube-port-mismatch pod is Running and Ready.
+- The app-service exists, is NodePort type, and correctly forwards to targetPort 8765 on the pod.
+- The NodePort 31875 is reachable via the Minikube host (192.168.94.2).
+- A direct curl to http://192.168.94.2:31875 returns HTTP 200, indicating the application is reachable and serving requests as expected (no 502 gateway in this path).
+
+Conclusion
+All relevant pods are Running/Ready, the service is correctly configured, and the access path is reachable with a successful HTTP 200 response. Therefore, the issue described as 502 Bad Gateway appears resolved in the current cluster state.
+
+<|VERIFIED|>
