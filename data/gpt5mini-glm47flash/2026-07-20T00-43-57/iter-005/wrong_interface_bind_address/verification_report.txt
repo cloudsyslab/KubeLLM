@@ -1,0 +1,152 @@
+
+Running:
+ - run_shell_command(command=kubectl get pods -o wide)
+
+
+Running:
+ - run_shell_command(command=kubectl describe pod kube-wrong-interface-bind-address)
+
+
+Running:
+ - run_shell_command(command=kubectl get service -A --ignore-not-found)
+
+
+Running:
+ - run_shell_command(command=...)
+
+
+Running:
+ - run_shell_command(command=...)
+
+
+Running:
+ - run_shell_command(command=...)
+
+
+Running:
+ - run_shell_command(command=...)
+
+
+Running:
+ - run_shell_command(command=...)
+
+
+Running:
+ - run_shell_command(command=...)
+
+
+Running:
+ - run_shell_command(command=kubectl get service wrong-interface-bind-address-service -o yaml)
+
+
+Running:
+ - run_shell_command(command=kubectl get service kube-wrong-port-svc -o yaml)
+
+
+Running:
+ - run_shell_command(command=kubectl describe service kube-wrong-port-svc)
+
+
+Running:
+ - run_shell_command(command=kubectl get pods -l app=kube-wrong-port -o wide --ignore-not-found)
+
+
+Running:
+ - run_shell_command(command=kubectl get endpoints kube-wrong-port-svc -o yaml)
+
+
+Running:
+ - run_shell_command(command=...)
+
+Verification results
+
+Summary
+- The original problem (pod running but HTTP requests via pod IP or Service time out) is NOT resolved in the current cluster state.
+- Key blockers: the Service does not target the running Pod due to label/selector mismatch, and its Endpoints are empty. Local in-pod access to the app works, but external access via Service will fail.
+
+Evidence collected (commands and outputs)
+
+1) Pods state
+- Command:
+  kubectl get pods -o wide
+- Output:
+  NAME                                READY   STATUS    RESTARTS   AGE   IP             NODE       NOMINATED NODE   READINESS GATES
+  kube-wrong-interface-bind-address   1/1     Running   0          25s   10.244.1.205   minikube   <none>           <none>
+
+- Pod details (selected pod)
+- Command:
+  kubectl describe pod kube-wrong-interface-bind-address
+- Key points from output:
+  - Status: Running
+  - IP: 10.244.1.205
+  - Container kube-wrong-interface-bind-address: 8765/TCP, Ready: True
+  - Events show the pod was scheduled, image pulled, container started successfully
+
+2) Service state and alignment with the Pod
+- Command to list services (summary)
+  kubectl get service -A --ignore-not-found
+- Output (relevant lines):
+  NAMESPACE     NAME                  TYPE        CLUSTER-IP       EXTERNAL-IP   PORT(S)                  AGE
+  default       kube-wrong-port-svc   ClusterIP   10.101.175.135   <none>        8765/TCP                 2d11h
+  default       kubernetes            ClusterIP   10.96.0.1        <none>        443/TCP                  2d12h
+  kube-system   kube-dns              ClusterIP   10.96.0.10       <none>        53/UDP,53/TCP,9153/TCP   2d12h
+
+- The manifest you provided includes a service named wrong-interface-bind-address-service, but this service does not exist in the cluster. The existing service in Default namespace is kube-wrong-port-svc.
+
+- Command to inspect the kube-wrong-port-svc
+  kubectl get service kube-wrong-port-svc -o yaml
+- Key lines from output:
+  apiVersion: v1
+  kind: Service
+  metadata:
+    name: kube-wrong-port-svc
+  spec:
+    ports:
+      - port: 8765
+        protocol: TCP
+        targetPort: 8765
+    selector:
+      app: kube-wrong-port
+  status:
+    loadBalancer: {}
+
+- Command to describe the kube-wrong-port-svc
+  kubectl describe service kube-wrong-port-svc
+- Key line from output:
+  Endpoints: 
+
+  (Endpoints field is empty, indicating no pods are backing this service)
+
+- Additional note: The Pod has label app: kube-wrong-interface-bind-address, while the kube-wrong-port-svc selects app: kube-wrong-port. This mismatch explains why there are no Endpoints for the service.
+
+3) In-pod reachability test (app works inside the Pod)
+- The app inside the Pod binds to 0.0.0.0:8765 and serves HTTP.
+- Command (within the Pod) to verify local HTTP server responds on 127.0.0.1:8765:
+  kubectl exec kube-wrong-interface-bind-address -- python3 -c "import urllib.request; print(urllib.request.urlopen('http://127.0.0.1:8765/').getcode())"
+- Output:
+  200
+
+- Optional test attempt to fetch via Pod IP from within the Pod:
+  - Command:
+    kubectl exec kube-wrong-interface-bind-address -- python3 -c "import urllib.request; print(urllib.request.urlopen('http://127.0.0.1:8765/').getcode())"
+  - Output: 200 (as shown above)
+
+- Attempt to fetch via Pod IP from within the Pod to 10.244.1.205:8765 (to mimic cross-IP within the Pod namespace)
+  - Command:
+    kubectl exec kube-wrong-interface-bind-address -- python3 -c "import urllib.request; import socket; s=socket.socket(); s.settimeout(3); s.connect(('10.244.1.205',8765)); s.close(); import urllib.request; print(urllib.request.urlopen('http://10.244.1.205:8765/').getcode())"
+  - Output: ConnectionRefusedError (the attempt failed with a refused connection)
+
+4) Access via Service (expected path)
+- Because the service kube-wrong-port-svc has an empty Endpoints set and selects a different app label (kube-wrong-port), there is no backing pod for the service to route to. Therefore, access via service path is not reachable.
+- Attempt to test via service path directly via minikube service is not applicable here for this misconfigured service name (wrong-interface-bind-address-service). The existing service (kube-wrong-port-svc) is not wired to the running pod.
+
+Conclusion
+
+- The Pod kube-wrong-interface-bind-address is Running and its container is Ready.
+- However, the configured access path for this problem (the service meant to route to the Pod) is not reachable:
+  - The manifest service wrong-interface-bind-address-service does not exist in the cluster.
+  - The existing service kube-wrong-port-svc targets app=kube-wrong-port, which does not exist as a pod label, resulting in empty Endpoints.
+  - Thus, HTTP requests cannot be routed through the Service to the Pod.
+  - Local in-pod access to 127.0.0.1:8765 works (HTTP 200), but external access via Service would fail due to lack of Endpoints.
+
+Final result: <|FAILED|>

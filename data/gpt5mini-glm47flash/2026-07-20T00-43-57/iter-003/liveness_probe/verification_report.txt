@@ -1,0 +1,45 @@
+
+Running:
+ - run_shell_command(command=kubectl get pods --all-namespaces -o wide)
+
+
+Running:
+ - run_shell_command(command=kubectl describe pod kube-liveness)
+
+
+Running:
+ - run_shell_command(command=...)
+
+Verification results
+
+Pod and state evidence
+- Command: kubectl get pods --all-namespaces -o wide
+  - Found kube-liveness in default namespace
+  - kube-liveness 1/1 Ready, STATUS Running, RESTARTS 0, AGE 66s
+  - Other system pods (coredns, etcd, apiserver, etc.) are Running
+  - This confirms the kube-liveness pod exists and is at least currently Running
+
+- Command: kubectl describe pod kube-liveness
+  - Liveness probe configuration present in the pod spec:
+    - Liveness: http-get http://:8765/incorrect-health delay=30s timeout=1s period=10s
+  - Events show repeated unhealthy results:
+    - Warning Unhealthy: Liveness probe failed: HTTP probe failed with statuscode: 404
+    - Normal Killing: Container kube-liveness failed liveness probe, will be restarted
+  - Current container state: Running, Ready True, Restart Count 0
+  - Interpretation: The liveness probe is configured to check /incorrect-health, which returns 404 from the application server
+
+In-pod health check against the actual application
+- Command: kubectl exec kube-liveness -n default -- curl -s -o /dev/null -w "%{http_code}" http://127.0.0.1:8765/health
+  - Result: 200
+  - Interpretation: The application server exposes /health correctly and responds with 200 when accessed directly inside the pod
+
+Analysis
+- The application endpoint /health is healthy and returns 200, as shown by the in-pod curl test.
+- The liveness probe is misconfigured to check /incorrect-health, which the server does not serve (it returns 404 for any path other than /health), causing the liveness probe to fail and the kube-liveness container to be restarted.
+- There is no Service involved in this scenario (as per the guidance for this specific verification), so the verification focuses on the pod’s readiness and the in-pod access path.
+
+Conclusion
+- The issue is not fixed in the current state. The kube-liveness pod continues to be restarted due to the liveness probe path mismatch (/incorrect-health), even though the application’s /health endpoint is healthy.
+- To fix, update the livenessProbe.path in the kube-liveness pod spec (and re-apply the manifest) to /health so that the probe aligns with the actual application health endpoint.
+
+Result: <|FAILED|>

@@ -1,0 +1,100 @@
+
+Running:
+ - run_shell_command(command=kubectl get pods -A -o wide)
+
+
+Running:
+ - run_shell_command(command=kubectl describe pod kube-wrong-port-6d68dc7dbf-kchnp)
+
+
+Running:
+ - run_shell_command(command=kubectl get pods -A -o wide)
+
+
+Running:
+ - run_shell_command(command=...)
+
+
+Running:
+ - run_shell_command(command=kubectl get svc -A)
+
+
+Running:
+ - run_shell_command(command=kubectl describe pod kube-wrong-port-6d68dc7dbf-kchnp -n default | sed -n '1,200p')
+
+
+Running:
+ - run_shell_command(command=minikube -p minikube service kube-wrong-port-svc --url)
+
+Verification results
+
+Evidence and observations (using exact names from manifests)
+
+- Pods
+  - Namespace: default
+  - Running pod that matches the Deployment spec:
+    - kube-wrong-port-6d68dc7dbf-kchnp
+      - Status: Running
+      - Ready: 1/1
+      - IP: 10.244.1.19
+      - Container port: 8765/TCP
+      - Events:
+        - Normal  Scheduled: Successfully assigned default/kube-wrong-port-6d68dc7dbf-kchnp to minikube
+        - Normal  Pulling: Pulling image "marioutsa/kube-wrong-port-app"
+        - Normal  Pulled: Successfully pulled image
+        - Normal  Created: Created container kube-wrong-port
+        - Normal  Started: Started container kube-wrong-port
+  - Older pod (terminating, expected during rollout):
+    - kube-wrong-port-645895c98f-584b2
+      - Status: Terminating
+      - IP: 10.244.1.18
+  - Analysis: The Deployment requested replicas: 1. The previous ReplicaSet pod is terminating while the new pod is Running. This is acceptable per rollout verification guidance.
+
+- Pod describe details (selected pod: kube-wrong-port-6d68dc7dbf-kchnp)
+  - Container: kube-wrong-port
+  - Port: 8765/TCP
+  - Ready: True
+  - Start: 01:42:26 +0000
+  - Environment: none
+  - Mounts: serviceaccount token mounted
+  - Events: As listed above (Scheduled, Pulling, Pulled, Created, Started)
+  - Conclusion: Pod is Running and container is Ready
+
+- Service and access paths
+  - Service on default namespace: kube-wrong-port-svc
+    - ClusterIP: 10.101.175.135
+    - Ports: 8765/TCP
+  - Global view (kubectl get svc -A) showed:
+    - default kube-wrong-port-svc  ClusterIP 10.101.175.135  8765/TCP
+  - minikube service attempt for kube-wrong-port-svc:
+    - Command: minikube -p minikube service kube-wrong-port-svc --url
+    - Output: "* service default/kube-wrong-port-svc has no node port"
+    - Interpretation: This is expected because the Service is ClusterIP (not NodePort). The test scenario requires direct pod access, not Service exposure via NodePort. Still, the Service exists and has a ClusterIP as shown above.
+  - In-pod reachability (direct, within pod):
+    - Command executed: kubectl exec kube-wrong-port-6d68dc7dbf-kchnp -n default -- python3 -c "import urllib.request; print(urllib.request.urlopen('http://127.0.0.1:8765/').getcode())"
+    - Result: 200
+    - Conclusion: The application is listening on port 8765 inside the selected pod and responds successfully to an HTTP request to 127.0.0.1:8765.
+
+Assessment against verification rules
+
+- Step 1: kubectl get pods
+  - The target pod kube-wrong-port-6d68dc7dbf-kchnp is Running with 1/1 ready containers. An older Pod is Terminating as part of rollout. Meets readiness requirement.
+
+- Step 2: kubectl describe pod <pod-name> Events
+  - No errors detected (scheduling, pulling, starting). Events show normal lifecycle; no CrashLoopBackOff or ImagePullBackOff.
+
+- Step 3: Service existence and status
+  - Service kube-wrong-port-svc exists in default namespace with ClusterIP 10.101.175.135 and port 8765/TCP.
+  - The scenario’s guidance notes absence of a Service as a special case; here a Service exists, but for this verification we rely on direct in-pod reachability as per the scenario guidance.
+
+- Step 4: Service-based access (minikube service)
+  - minikube service kube-wrong-port-svc --url returned a message indicating there is no node port, which is expected for a ClusterIP service. Not required for this scenario since we verify direct pod access.
+
+- Step 5: Ingress (not applicable here)
+
+Conclusion
+
+- The targeted workload is deployed with a pod in Running state, exposing container port 8765, and the app responds successfully to a local HTTP request inside the pod (HTTP 200).
+- There is a terminating older pod during the rollout, which is acceptable per deployment rollout guidance.
+
+Final verdict: <|VERIFIED|>

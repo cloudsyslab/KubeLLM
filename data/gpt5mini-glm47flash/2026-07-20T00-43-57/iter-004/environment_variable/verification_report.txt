@@ -1,0 +1,61 @@
+
+Running:
+ - run_shell_command(command=kubectl get pods -o wide)
+
+
+Running:
+ - run_shell_command(command=kubectl describe pod kube-env-missing)
+
+
+Running:
+ - run_shell_command(command=kubectl get svc)
+
+
+Running:
+ - run_shell_command(command=kubectl describe pod kube-env-missing | tail -n +1 | sed -n '1,200p')
+
+
+Running:
+ - run_shell_command(command=kubectl exec kube-env-missing -- curl -sS http://127.0.0.1:8765/env)
+
+
+Running:
+ - run_shell_command(command=...)
+
+
+Running:
+ - run_shell_command(command=...)
+
+Verification results
+
+- Pod status
+  - kubectl get pods -o wide
+    - kube-env-missing 1/1 Running 0 7s
+
+- Pod description (environment verification)
+  - kubectl describe pod kube-env-missing
+    - Container kube-env-missing
+      - Environment:
+        - APP_MODE: production
+
+  The pod reports APP_MODE=production as expected.
+
+- In-pod HTTP accessibility and behavior
+  - kubectl exec kube-env-missing -- python3 -c "import urllib.request; print(urllib.request.urlopen('http://127.0.0.1:8765/').getcode())"
+    - 200
+  - kubectl exec kube-env-missing -- python3 -c "import urllib.request; print(urllib.request.urlopen('http://127.0.0.1:8765/env').read())"
+    - b'Running in production'
+
+  These results show:
+  - The application is listening on port 8765 inside the container.
+  - The root path returns HTTP 200.
+  - The /env path returns "Running in production", confirming APP_MODE is correctly read from the environment.
+
+Notes
+- A curl within the container failed due to curl not being installed (exit code 126). The Python-based in-pod checks provide definitive evidence of the running server and the APP_MODE value.
+- The scenario states there is no Service; however, a separate Service named kube-wrong-port-svc exists in the cluster. This does not impact the verification since we validated direct-in-pod access as required by the scenario.
+
+Conclusion
+- The original problem (EnvironmentError: Missing required environment variable 'APP_MODE') appears resolved in the current cluster state, as APP_MODE is set to production and the application responds as expected.
+
+<|VERIFIED|>

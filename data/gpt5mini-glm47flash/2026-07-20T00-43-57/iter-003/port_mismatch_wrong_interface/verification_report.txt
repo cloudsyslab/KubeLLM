@@ -1,0 +1,67 @@
+
+Running:
+ - run_shell_command(command=kubectl get pods)
+
+
+Running:
+ - run_shell_command(command=kubectl describe pod port-mismatch-wrong-interface-app)
+
+
+Running:
+ - run_shell_command(command=...)
+
+
+Running:
+ - run_shell_command(command=kubectl get service port-mismatch-app-service -o json)
+
+
+Running:
+ - run_shell_command(command=minikube -p minikube service port-mismatch-app-service --url)
+
+
+Running:
+ - run_shell_command(command=curl -sI http://192.168.58.2:30474)
+
+
+Running:
+ - run_shell_command(command=curl -s http://192.168.58.2:30474/)
+
+Verification results
+
+- Pod status
+  - kubectl get pods
+    - port-mismatch-wrong-interface-app  1/1  Running  0  113s
+  - kubectl describe pod port-mismatch-wrong-interface-app
+    - Status: Running
+    - Container app: Running, Ready: True
+    - Events: Pod scheduled, container created and started successfully
+  - Conclusion: Pod is Running and Ready
+
+- Service status
+  - kubectl get service port-mismatch-app-service -o json
+    - type: NodePort
+    - ports:
+      - port: 80
+      - targetPort: 8765
+      - nodePort: 30474
+    - clusterIP: 10.101.15.127
+    - selector: app=port-mismatch-wrong-interface-app
+  - minikube -p minikube service port-mismatch-app-service --url
+    - http://192.168.58.2:30474
+  - curl checks
+    - HEAD request to http://192.168.58.2:30474
+      - HTTP/1.0 501 Unsupported method ('HEAD')
+      - This is expected as HEAD is not implemented by the Python http.server in use
+    - GET request to http://192.168.58.2:30474/
+      - Response body: "Hello from port_mismatch_wrong_interface test!"
+  - Conclusion: The service is reachable via the NodePort, and the app responds over GET.
+
+Assessment against original problem
+- The pod is Running and Ready.
+- The service is configured with a NodePort (30474) mapping to targetPort 8765 on the pod.
+- The NodePort URL is reachable from the cluster host:
+  - minikube URL: http://192.168.58.2:30474
+  - curl GET to that URL returns the expected application response
+- Therefore, the previously observed connection issues (timeout/connection refused) are resolved for this setup, and the configured access path now works.
+
+Final verdict: <|VERIFIED|>

@@ -1,0 +1,88 @@
+
+Running:
+ - run_shell_command(command=kubectl get pods -o wide)
+
+
+Running:
+ - run_shell_command(command=kubectl describe pod kube-wrong-port-6d68dc7dbf-cq86w)
+
+
+Running:
+ - run_shell_command(command=kubectl rollout status deployment/kube-wrong-port)
+
+
+Running:
+ - run_shell_command(command=...)
+
+
+Running:
+ - run_shell_command(command=...)
+
+
+Running:
+ - run_shell_command(command=...)
+
+
+Running:
+ - run_shell_command(command=kubectl get all -l app=kube-wrong-port -o wide)
+
+
+Running:
+ - run_shell_command(command=kubectl get svc -A -o wide)
+
+
+Running:
+ - run_shell_command(command=...)
+
+
+Running:
+ - run_shell_command(command=kubectl exec kube-wrong-port-6d68dc7dbf-cq86w -- sh -lc 'python3 -V 2>&1 || true')
+
+
+Running:
+ - run_shell_command(command=...)
+
+Verification results
+
+Start state and pod readiness
+- kubectl get pods -o wide
+  - kube-wrong-port-645895c98f-9fdwj   1/1     Terminating   0          71s   10.244.1.210   minikube
+  - kube-wrong-port-6d68dc7dbf-cq86w   1/1     Running       0          30s   10.244.1.211   minikube
+  Observation: There is one Running pod (kube-wrong-port-6d68dc7dbf-cq86w) with 1/1 Ready containers. The older replica kube-wrong-port-645895c98f-9fdwj is terminating as part of the rollout.
+
+Deployment rollout status
+- kubectl rollout status deployment/kube-wrong-port
+  Output: deployment "kube-wrong-port" successfully rolled out
+
+Pod details (current running pod)
+- kubectl describe pod kube-wrong-port-6d68dc7dbf-cq86w
+  Key points:
+  - Status: Running
+  - Port: 8765/TCP
+  - Ready: True
+  - Containers:
+    - kube-wrong-port: containerPort 8765
+  - Events show successful scheduling, image pull, and container start
+
+Container port verification
+- kubectl get pod kube-wrong-port-6d68dc7dbf-cq86w -o jsonpath='{.spec.containers[0].ports[0].containerPort}'
+  Output: 8765
+
+- kubectl get pod kube-wrong-port-6d68dc7dbf-cq86w -o jsonpath='{range .status.containerStatuses[*]}{.name}:{.ready} {end}'
+  Output: kube-wrong-port:true
+
+In-pod HTTP reachability (direct access without using a Service)
+- Command executed inside the running pod to verify in-container HTTP response:
+  - Python-based check: urllib.request to http://127.0.0.1:8765/
+  - Result: HTTP 200
+
+Notes
+- There is a Service kube-wrong-port-svc of type ClusterIP exposing port 8765 in the default namespace, but per the verification guidance for this scenario, reachability was verified via in-pod direct access rather than Service routing. The in-pod test confirms the application is listening on port 8765 and responding successfully when accessed locally inside the pod.
+
+Conclusion
+- The relevant pod kube-wrong-port-6d68dc7dbf-cq86w is Running and Ready.
+- The container port 8765 is open as observed in the pod spec.
+- An in-pod HTTP request to 127.0.0.1:8765 returned HTTP 200, confirming local reachability to the application on the intended port.
+- Rollout is complete, with the current Deployment pod template in effect.
+
+ verdict: <|VERIFIED|>

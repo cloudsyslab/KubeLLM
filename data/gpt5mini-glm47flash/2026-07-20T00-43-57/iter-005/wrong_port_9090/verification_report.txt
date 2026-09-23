@@ -1,0 +1,91 @@
+
+Running:
+ - run_shell_command(command=kubectl get pods -o wide --all-namespaces)
+
+
+Running:
+ - run_shell_command(command=kubectl describe pod kube-wrong-port-9090 -n default)
+
+
+Running:
+ - run_shell_command(command=kubectl get -n default svc kube-wrong-port-9090 -o wide)
+
+
+Running:
+ - run_shell_command(command=kubectl get rs -n default -o wide)
+
+
+Running:
+ - run_shell_command(command=kubectl exec kube-wrong-port-9090 -n default -- curl -sS http://127.0.0.1:9090/ || true)
+
+
+Running:
+ - run_shell_command(command=...)
+
+
+Running:
+ - run_shell_command(command=...)
+
+
+Running:
+ - run_shell_command(command=...)
+
+Verification results for the wrong_port_9090 scenario
+
+Summary
+- The pod kube-wrong-port-9090 exists in default and is Running.
+- There is no Kubernetes Service exposing this pod (as expected for this scenario).
+- Direct in-pod access to port 9090 is not reachable. The container is not listening on 9090, and tests from inside the pod fail due to the port not being bound and/or missing HTTP client tooling.
+
+Evidence and steps taken
+
+1) List all pods
+- Command: kubectl get pods -o wide --all-namespaces
+- Result (relevant excerpt):
+  - default kube-wrong-port-9090 1/1 Running 0 57s 10.244.1.215 minikube
+  - Other system components are present (kube-system) but not relevant to this issue.
+
+2) Describe the target pod
+- Command: kubectl describe pod kube-wrong-port-9090 -n default
+- Key details:
+  - Status: Running
+  - IP: 10.244.1.215
+  - Port: 8080/TCP  <-- Note: This shows 8080, not 9090
+  - Container: kube-wrong-port-9090
+  - Port mapping in manifest suggested containerPort: 9090
+  - Events: Normal Pulled, Created, Started
+- Interpretation: The pod is running, but the container port listed as 8080/TCP contradicts the manifest (which defines containerPort 9090). This already indicates a potential misconfiguration between the app and the container port exposure.
+
+3) Check for a Service
+- Command: kubectl get service kube-wrong-port-9090 -n default
+- Result: NotFound
+- Interpretation: There is no Service exposing this pod, which aligns with the scenario’s constraint (no Kubernetes Service). This is expected, but it means direct pod access is the only route for testing reachability.
+
+4) Attempt to access the app from within the pod (direct port access)
+- Initial attempt: curl from inside the pod
+  - Command: kubectl exec kube-wrong-port-9090 -n default -- curl -sS http://127.0.0.1:9090/ || true
+  - Result: OCI runtime exec failed: exec failed: unable to start container process: exec: "curl": executable file not found in $PATH
+  - Interpretation: curl is not installed in the container, so the test cannot be completed this way. This confirms tooling unavailability rather than a port issue by itself, but we still need to test reachability via available means.
+
+- Alternative attempt: run inside shell with a curl check
+  - Command: kubectl exec kube-wrong-port-9090 -n default -- /bin/sh -lc 'command -v curl >/dev/null 2>&1 && curl -sS http://127.0.0.1:9090/ || echo FAIL'
+  - Result: FAIL
+  - Interpretation: Either curl is unavailable (as above) or the command path/test path determined a failure. Since curl is not present, this test cannot confirm a working HTTP response.
+
+- Another alternative: use a simple HTTP fetch utility (wget)
+  - Command: kubectl exec kube-wrong-port-9090 -n default -- /bin/sh -lc 'wget -q -O- http://127.0.0.1:9090/ || echo FAIL'
+  - Result: FAIL
+  - Interpretation: wget is not returning a successful fetch. Again, this test is inconclusive about port binding since wget might be unavailable or the service not listening.
+
+5) Check if the port is actually listening inside the container
+- Command: kubectl exec kube-wrong-port-9090 -n default -- /bin/sh -lc 'grep -q 9090 /proc/net/tcp 2>/dev/null && echo READY || echo NOT_READY'
+- Result: NOT_READY
+- Interpretation: The port 9090 is not bound/listening inside the container. This strongly indicates the application is not listening on the expected port, which explains the HTTP requests timing out.
+
+Additional observation
+- The manifest indicates containerPort: 9090, and the server code (server.py) is designed to listen on 9090. However, the describe output shows Port: 8080/TCP, which means the runtime environment may not be aligned with the manifest, or the image may not be using the expected port at runtime. The lack of a listening port on 9090 confirms the root cause: the application is not listening on the configured port, so direct access will fail.
+
+Conclusion
+- The issue is not fixed. The pod is Running, but the application is not listening on port 9090, and there is no Service to provide an alternate path. Direct access to port 9090 from within the pod is not reachable, and tests couldn’t confirm a successful HTTP response due to the port not binding and missing HTTP client tooling in the container.
+
+Final verdict: <|FAILED|>

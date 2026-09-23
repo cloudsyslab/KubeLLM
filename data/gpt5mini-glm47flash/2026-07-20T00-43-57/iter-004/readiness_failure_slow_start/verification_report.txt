@@ -1,0 +1,102 @@
+
+Running:
+ - run_shell_command(command=kubectl get pods -o wide)
+
+
+Running:
+ - run_shell_command(command=kubectl describe pod readiness-slow-start-app)
+
+
+Running:
+ - run_shell_command(command=kubectl get pods -o wide)
+
+
+Running:
+ - run_shell_command(command=...)
+
+
+Running:
+ - run_shell_command(command=...)
+
+
+Running:
+ - run_shell_command(command=...)
+
+
+Running:
+ - run_shell_command(command=kubectl exec readiness-slow-start-app -- cat /proc/1/environ | tr '\0' '\n' | head -n 50)
+
+
+Running:
+ - run_shell_command(command=...)
+
+
+Running:
+ - run_shell_command(command=...)
+
+
+Running:
+ - run_shell_command(command=...)
+
+
+Running:
+ - run_shell_command(command=...)
+
+
+Running:
+ - run_shell_command(command=...)
+
+
+Running:
+ - run_shell_command(command=...)
+
+
+Running:
+ - run_shell_command(command=...)
+
+
+Running:
+ - run_shell_command(command=...)
+
+Verification result
+
+Evidence collected from the cluster
+
+- Pod existence and status
+  - Command: kubectl get pods -o wide
+  - Output:
+    readiness-slow-start-app   1/1     Running   0          24s   10.244.1.137   minikube   <none> 
+
+- Pod description and readiness status
+  - Command: kubectl describe pod readiness-slow-start-app
+  - Key parts:
+    - Status: Running
+    - Containers:
+      - Name: app
+        Port: 8080/TCP
+        Ready: True
+        Readiness: http-get http://:8080/ready delay=1s timeout=3s period=3s #success=1 #failure=1
+    - Conditions show PodReadyToStartContainers: True, Initialized: True, Ready: True, ContainersReady: True
+  - Events: Pod scheduled, container created and started successfully
+
+- In-pod reachability to the readiness path
+  - The container image is kube-readiness-slow-start-app:latest and the readiness probe is configured to hit /ready on port 8080.
+  - There is no curl or wget installed in the container, so I verified reachability using Python (which is available in the container):
+    - Command: kubectl exec readiness-slow-start-app -- python3 -c 'import urllib.request; print(urllib.request.urlopen("http://127.0.0.1:8080/ready", timeout=3).getcode())'
+    - Output: 200
+    - Command: kubectl exec readiness-slow-start-app -- python3 -c 'import urllib.request; print(urllib.request.urlopen("http://127.0.0.1:8080/ready", timeout=3).read())'
+    - Output: b'ready'
+
+Observations aligned with the verification criteria
+
+- The pod readiness and status are healthy:
+  - Pod is Running and Ready (1/1).
+- The readiness probe is configured to hit /ready on port 8080 with a 2-second-ish readiness delay due to server behavior, and the endpoint responds successfully:
+  - In-pod test using Python confirms HTTP 200 on /ready and returns body "ready".
+- There is no Kubernetes Service in this scenario (as per guidance), so direct in-cluster access is the correct verification path, which succeeded.
+
+Conclusion
+
+- The issue described (pod staying at 0/1 Ready with readiness endpoint timing out) appears resolved in this cluster state. The pod is Running and Ready, and the in-pod readiness endpoint responds successfully as tested.
+
+<|VERIFIED|>

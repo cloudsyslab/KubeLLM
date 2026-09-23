@@ -1,0 +1,64 @@
+
+Running:
+ - run_shell_command(command=kubectl get pods --all-namespaces)
+
+
+Running:
+ - run_shell_command(command=kubectl describe pod resource-limits-cpu-starvation-app)
+
+
+Running:
+ - run_shell_command(command=...)
+
+
+Running:
+ - run_shell_command(command=...)
+
+
+Running:
+ - run_shell_command(command=...)
+
+**Verification results**
+
+1) kubectl get pods
+- NAMESPACE: default
+- Pod: resource-limits-cpu-starvation-app
+- READY: 1/1
+- STATUS: Running
+- RESTARTS: 0
+- AGE: 14s
+
+All expected pods exist and are in Running state with 1/1 containers ready.
+
+2) kubectl describe pod resource-limits-cpu-starvation-app
+- IP: 10.244.1.53
+- Container: app
+  - Image: kube-resource-limits-cpu-starvation-app:latest
+  - Port: 8080/TCP
+  - State: Running (Started Mon, 20 Jul 2026 02:28:27 +0000)
+  - Ready: True
+  - Limits: cpu 100m, memory 128Mi
+  - Requests: cpu 100m, memory 64Mi
+  - Readiness: http-get http://:8080/healthz, delay=2s, timeout=2s, period=3s
+- Events:
+  - Scheduled, Pulled, Created, Started (normal lifecycle)
+
+No errors (CrashLoopBackOff, ImagePullBackOff, OOM, etc.) observed. Readiness remains configured and container is ready.
+
+3) In-container reachability check
+- Attempted in-container health check via Python (no curl available):
+  Command path used inside pod:
+  - Python 3.8.10 is available
+  - In-container HTTP request to http://127.0.0.1:8080/healthz returned: b'healthy'
+- This confirms the in-pod path is reachable and responds successfully to a health check.
+
+Notes
+- There is no Service manifest for this scenario; the verification relies on in-pod access to the configured port.
+- The readiness probe is configured to hit /healthz with a timeout of 2s. The in-container health check succeeded, and the pod reports Ready and ContainersReady as True.
+
+Conclusion
+- The pod resource-limits-cpu-starvation-app is Running and Ready.
+- The in-pod health check path /healthz is reachable and returns a healthy response.
+- Based on the evidence, the original issue (readiness probe timeouts due to low CPU limit) appears resolved in this cluster state.
+
+<|VERIFIED|>

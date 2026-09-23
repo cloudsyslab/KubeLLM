@@ -1,0 +1,62 @@
+
+Running:
+ - run_shell_command(command=kubectl get pods -o wide)
+
+
+Running:
+ - run_shell_command(command=kubectl describe pod selector-env-app)
+
+
+Running:
+ - run_shell_command(command=kubectl get service -o wide)
+
+
+Running:
+ - run_shell_command(command=kubectl describe service selector-env-app-service)
+
+
+Running:
+ - run_shell_command(command=minikube -p minikube service selector-env-app-service --url)
+
+Verification results
+
+Observed resources and state (exact names from manifests):
+
+- Pod
+  - Name: selector-env-app
+  - Status: Running
+  - Ready: 1/1
+  - Evidence:
+    - kubectl get pods -o wide
+      - selector-env-app 1/1 Running
+- Pod details
+  - kubectl describe pod selector-env-app
+  - Container app: Running, Ready: True, Env APP_MESSAGE=Hello from env
+  - Events indicate successful scheduling, pulling, and starting the container
+- Service
+  - Name: selector-env-app-service
+  - Type: NodePort
+  - Selector: app=wrong-selector
+  - Port: 80/TCP, TargetPort: 8080
+  - Endpoints: (no endpoints listed)
+  - Evidence:
+    - kubectl get service -o wide
+      - selector-env-app-service NodePort 10.99.15.200:80 -> 31578
+      - SELECTOR shows app=wrong-selector
+    - kubectl describe service selector-env-app-service
+      - Endpoints: (blank)
+- Connectivity test via Minikube
+  - minikube -p minikube service selector-env-app-service --url
+    - Result: Error: X Exiting due to SVC_UNREACHABLE: service not available: no running pod for service selector-env-app-service found
+
+Interpretation
+
+- The pod selector-env-app is running and ready, so the crash-on-startup issue observed in the original problem is not occurring in the current pod (the container starts and serves as expected in isolation).
+- However, the service selector-env-app-service is configured with a selector of app=wrong-selector, which does not match the pod’s label app=selector-env-app. As a result, there are no Endpoints for the Service, and there is no reachable endpoint through the Service.
+- The minikube service URL command fails due to the lack of endpoints, confirming the Service is not routable to the running pod.
+
+Conclusion
+
+- The issue described as “The pod crashes on startup with a KeyError, and the service shows no endpoints” is NOT fixed in this cluster state because the Service has the wrong selector and thus has no endpoints to route traffic to the running pod.
+
+Result: <|FAILED|>

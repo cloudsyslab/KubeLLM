@@ -1,0 +1,68 @@
+
+Running:
+ - run_shell_command(command=kubectl get pods -o wide)
+
+
+Running:
+ - run_shell_command(command=kubectl describe pod resource-limits-cpu-starvation-app)
+
+
+Running:
+ - run_shell_command(command=...)
+
+
+Running:
+ - run_shell_command(command=...)
+
+
+Running:
+ - run_shell_command(command=...)
+
+
+Running:
+ - run_shell_command(command=...)
+
+
+Running:
+ - run_shell_command(command=kubectl get svc --all-namespaces)
+
+Verification results
+
+- Pod name (from manifest): resource-limits-cpu-starvation-app
+- Namespace: default
+
+1) Pod status check
+- Command: kubectl get pods -o wide
+- Output:
+  RESOURCE-LIMITS-CPU-STARVATION-APP  1/1     Running   0          4s    10.244.1.195   minikube   <none>
+
+2) Pod details and readiness
+- Command: kubectl describe pod resource-limits-cpu-starvation-app
+- Key excerpts:
+  - State: Running
+  - Ready: True
+  - Readiness: http-get http://:8080/healthz delay=2s timeout=2s period=3s #success=1 #failure=3
+  - ContainersReady: True
+  - Events show: Successfully assigned, Pulled, Created, Started
+
+3) In-pod health check (access path inside container)
+- Context: No Kubernetes Service exists for this scenario; access path is internal to the pod.
+- Attempt 1: curl from inside container failed due to absence of curl
+  - Command (example): kubectl exec resource-limits-cpu-starvation-app -- curl -sS -o /dev/null -w "%{http_code}" http://127.0.0.1:8080/healthz
+  - Result: curl not found
+- Attempt 2: curl again with sh -lc (still curl missing)
+  - Command: kubectl exec resource-limits-cpu-starvation-app -- sh -lc 'curl -sS -o /dev/null -w "%{http_code}" http://127.0.0.1:8080/healthz'
+  - Result: curl not found
+- Attempt 3: Use Python inside the container to perform the HTTP request
+  - Command: kubectl exec resource-limits-cpu-starvation-app -- python3 -c 'import urllib.request; print(urllib.request.urlopen("http://127.0.0.1:8080/healthz").getcode())'
+  - Result: 200
+
+Interpretation:
+- The pod resource-limits-cpu-starvation-app is Running and Ready (1/1 container ready).
+- The in-pod application responds with HTTP 200 on the healthz endpoint, confirming the readiness probe should pass under current CPU limits.
+- There is no Kubernetes Service involved in this scenario; reachability is validated via the in-container health check.
+
+Conclusion:
+- The original problem (pod unready due to readiness probe timeouts under CPU constraints) is not observed in the current state. The pod is Running and Ready, and the in-container health check indicates the readiness path is reachable and responding as expected.
+
+Final verdict: <|VERIFIED|>

@@ -1,0 +1,74 @@
+
+Running:
+ - run_shell_command(command=kubectl get pods -o wide)
+
+
+Running:
+ - run_shell_command(command=kubectl describe pod kube-port-mismatch)
+
+
+Running:
+ - run_shell_command(command=kubectl get service app-service -o wide)
+
+
+Running:
+ - run_shell_command(command=minikube -p minikube service app-service --url)
+
+
+Running:
+ - run_shell_command(command=kubectl get endpoints app-service -o wide)
+
+Summary of verification results
+
+1) pods state
+- Command: kubectl get pods -o wide
+- Output:
+  - kube-port-mismatch   1/1     Running   0          56s   10.244.1.84   minikube
+- Observation: The pod kube-port-mismatch exists and is Running with 1/1 ready containers.
+
+2) pod detail and events
+- Command: kubectl describe pod kube-port-mismatch
+- Key points:
+  - Status: Running
+  - Containers: kube-port-mismatch Running and Ready
+  - Events: Normal - Scheduled, Pulled, Created, Started
+- Observation: No errors observed in events; container is running.
+
+3) service state
+- Command: kubectl get service app-service -o wide
+- Output:
+  - NAME: app-service
+  - TYPE: NodePort
+  - CLUSTER-IP: 10.106.29.200
+  - PORT(S): 8000:30351/TCP
+  - SELECTOR: app=kube-port-mismatch
+- Observation: Service app-service exists with ClusterIP assigned and a NodePort 30351 mapping to port 8000. Selector is app=kube-port-mismatch.
+
+4) service endpoints
+- Command: kubectl get endpoints app-service -o wide
+- Output:
+  - app-service <none>
+- Observation: No endpoints are backing the service. This means there is no pod matching the service selector to route traffic to.
+
+5) minikube access attempt
+- Command: minikube -p minikube service app-service --url
+- Output: 
+  - Error: X Exiting due to SVC_UNREACHABLE: service not available: no running pod for service app-service found
+- Observation: Minikube cannot expose the service URL because there are no endpoints for the service.
+
+6) Relation to manifests (exact names)
+- Pod manifest (exact name): kube-port-mismatch
+- Service manifest (exact name): app-service
+- Pod labels from manifest: metadata.labels include app.kubernetes.io/name: app (not app: kube-port-mismatch)
+- Service selector from manifest: app: kube-port-mismatch
+- Consequence: The service selector does not match the pod label, so no endpoints are created (as observed).
+
+Conclusion
+
+- The original problem (HTTP 502 Bad Gateway) is not resolved. The service exists, and the pod is Running, but there are no endpoints because the Service selector (app=kube-port-mismatch) does not match the Pod’s labels (pod has label app.kubernetes.io/name: app). This prevents traffic from being routed to the application, explaining the inability to reach the app and the 502 vault.
+
+- Recommended fix (one of the correct approaches):
+  - Either update the Pod manifest to include a selector label that matches the service (for example, add label app: kube-port-mismatch to kube-port-mismatch pod), or
+  - Update the Service manifest to select the existing pod label (for example, change selector to app.kubernetes.io/name: app).
+
+Current verification result: <|FAILED|>

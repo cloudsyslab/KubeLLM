@@ -1,0 +1,66 @@
+
+Running:
+ - run_shell_command(command=kubectl get pods -o wide)
+
+
+Running:
+ - run_shell_command(command=kubectl describe pod kube-incorrect-selector)
+
+
+Running:
+ - run_shell_command(command=kubectl get service -A -o wide)
+
+
+Running:
+ - run_shell_command(command=kubectl get endpoints app-service -o wide)
+
+
+Running:
+ - run_shell_command(command=minikube -p minikube service app-service --url)
+
+
+Running:
+ - run_shell_command(command=curl -sS -o /dev/null -w "%{http_code}\n" http://192.168.58.2:30722)
+
+Verification report
+
+Commands executed and outcomes
+
+- kubectl get pods
+  - kube-incorrect-selector   1/1     Running   0          36s
+  - Status: Pod is Running with 1/1 container ready.
+
+- kubectl describe pod kube-incorrect-selector
+  - Status: Running
+  - Container kube-incorrect-selector: Running
+  - Events:
+    - Normal  Scheduled  ... Successfully assigned default/kube-incorrect-selector to minikube
+    - Normal  Pulled     ... Image kube-incorrect-selector-app:latest already present
+    - Normal  Created    ... Created container kube-incorrect-selector
+    - Normal  Started    ... Started container kube-incorrect-selector
+  - No errors reported in Events.
+
+- kubectl get service -A -o wide
+  - NAMESPACE  NAME          TYPE      CLUSTER-IP       EXTERNAL-IP   PORT(S)        AGE   SELECTOR
+  - default    app-service   NodePort  10.110.21.156    <none>        8000:30722/TCP 40s   app=kube-incorrect-selector
+  - Observation: Service app-service exists as NodePort with selector app=kube-incorrect-selector.
+
+- kubectl get endpoints app-service -o wide
+  - ENDPOINTS: 10.244.1.121:8765
+  - Observation: Endpoint exists for the service, and matches the pod IP 10.244.1.121 on port 8765.
+
+- minikube -p minikube service app-service --url
+  - URL: http://192.168.58.2:30722
+
+- curl test to service (one-shot)
+  - curl -sS -o /dev/null -w "%{http_code}\n" http://192.168.58.2:30722
+  - HTTP status code: 200
+
+Conclusion
+
+- The pod kube-incorrect-selector is Running and Ready.
+- The Service app-service exists and has a ClusterIP with a matching NodePort.
+- Endpoints for the service are present and point to the running pod.
+- The service is reachable via Minikube SSH/exposed NodePort URL (http://192.168.58.2:30722) and returns a 200 OK on a curl request.
+
+Verdict: <|VERIFIED|>

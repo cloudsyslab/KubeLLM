@@ -1,0 +1,87 @@
+
+Running:
+ - run_shell_command(command=kubectl get pods -o wide)
+
+
+Running:
+ - run_shell_command(command=kubectl describe pod selector-env-app)
+
+
+Running:
+ - run_shell_command(command=kubectl get service selector-env-app-service -o wide)
+
+
+Running:
+ - run_shell_command(command=kubectl get endpoints selector-env-app-service -o yaml)
+
+
+Running:
+ - run_shell_command(command=minikube -p minikube service selector-env-app-service --url)
+
+
+Running:
+ - run_shell_command(command=curl -sS http://192.168.58.2:30304/ -i)
+
+Verification results for selector-env-variable scenario
+
+Summary
+- The original issue (pod crash with KeyError and service endpoints missing) appears resolved in the current cluster state. All relevant pods are Running/Ready, the service has endpoints, and the service is reachable via Minikube.
+
+Evidence and steps performed
+
+1) Pods status
+- Command: kubectl get pods -o wide
+- Result:
+  - selector-env-app 1/1 Running 0 8s 10.244.1.5 minikube
+
+2) Pod details and environment
+- Command: kubectl describe pod selector-env-app
+- Key findings:
+  - Status: Running
+  - Container app: State Running, Ready True
+  - Environment: APP_MESSAGE = Hello from env var
+  - Events show successful scheduling, pull, creation, and start of container
+
+3) Service status
+- Command: kubectl get service selector-env-app-service -o wide
+- Result:
+  - Name: selector-env-app-service
+  - Type: NodePort
+  - ClusterIP: 10.107.230.53
+  - Ports: 80:30304/TCP
+  - Selector: app=selector-env-app
+
+4) Endpoints for the service
+- Command: kubectl get endpoints selector-env-app-service -o yaml
+- Result (subset):
+  - subsets:
+    - addresses:
+      - ip: 10.244.1.5
+        nodeName: minikube
+        targetRef:
+          kind: Pod
+          name: selector-env-app
+    - ports:
+      - port: 8080
+        protocol: TCP
+
+5) Access path via Minikube
+- Command: minikube -p minikube service selector-env-app-service --url
+- Result:
+  - http://192.168.58.2:30304
+
+6) Reachability test
+- Command: curl -sS http://192.168.58.2:30304/ -i
+- Result:
+  - HTTP/1.0 200 OK
+  - Server: BaseHTTP/0.6 Python/3.9.25
+  - Content-type: text/html
+  - Hello from env var (from env var)
+
+Conclusion
+- The pod selector-env-app is Running with Ready status.
+- The service selector-env-app-service has endpoints pointing to the running pod.
+- The Minikube service URL is reachable and returns the expected response, confirming the environment variable is correctly read and served.
+- Therefore, the original issue appears to be resolved in this cluster state.
+
+Final verdict: <|VERIFIED|>

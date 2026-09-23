@@ -1,0 +1,223 @@
+
+Running:
+ - run_shell_command(command=kubectl get pods -A -o wide)
+
+
+Running:
+ - run_shell_command(command=kubectl describe pod kube-port-mismatch-named-target -n default)
+
+
+Running:
+ - run_shell_command(command=kubectl get service -A -o wide)
+
+
+Running:
+ - run_shell_command(command=kubectl describe service named-target-service -n default)
+
+
+Running:
+ - run_shell_command(command=minikube -p minikube service named-target-service --url)
+
+
+Running:
+ - run_shell_command(command=kubectl get pod kube-port-mismatch-named-target -o yaml)
+
+
+Running:
+ - run_shell_command(command=...)
+
+
+Running:
+ - run_shell_command(command=...)
+
+
+Running:
+ - run_shell_command(command=...)
+
+
+Running:
+ - run_shell_command(command=kubectl exec kube-port-mismatch-named-target -n default -- curl -sS http://127.0.0.1:8765/)
+
+
+Running:
+ - run_shell_command(command=kubectl exec kube-port-mismatch-named-target -n default -- sh -lc 'nc -vz 127.0.0.1 8765 || true')
+
+
+Running:
+ - run_shell_command(command=...)
+
+
+Running:
+ - run_shell_command(command=kubectl get endpoints named-target-service -n default -o yaml)
+
+
+Running:
+ - run_shell_command(command=kubectl describe endpoints named-target-service -n default)
+
+
+Running:
+ - run_shell_command(command=kubectl describe pod kube-port-mismatch-named-target -n default | sed -n '1,200p')
+
+
+Running:
+ - run_shell_command(command=...)
+
+
+Running:
+ - run_shell_command(command=...)
+
+
+Running:
+ - run_shell_command(command=...)
+
+
+Running:
+ - run_shell_command(command=kubectl logs kube-port-mismatch-named-target -n default --since=1m || true)
+
+
+Running:
+ - run_shell_command(command=...)
+
+
+Running:
+ - run_shell_command(command=kubectl get svc named-target-service -n default -o yaml)
+
+
+Running:
+ - run_shell_command(command=kubectl describe pod kube-port-mismatch-named-target -n default | sed -n '1,200p')
+
+
+Running:
+ - run_shell_command(command=...)
+
+
+Running:
+ - run_shell_command(command=kubectl get endpoints named-target-service -n default -o json)
+
+
+Running:
+ - run_shell_command(command=kubectl describe endpoints named-target-service -n default)
+
+
+Running:
+ - run_shell_command(command=...)
+
+
+Running:
+ - run_shell_command(command=...)
+
+
+Running:
+ - run_shell_command(command=...)
+
+
+Running:
+ - run_shell_command(command=...)
+
+
+Running:
+ - run_shell_command(command=kubectl logs curl-test -n default)
+
+
+Running:
+ - run_shell_command(command=kubectl logs curl-test -n default --wait=false)
+
+
+Running:
+ - run_shell_command(command=kubectl get pod curl-test -n default -o json)
+
+
+Running:
+ - run_shell_command(command=kubectl delete pod curl-test -n default || true)
+
+
+Running:
+ - run_shell_command(command=...)
+
+
+Running:
+ - run_shell_command(command=kubectl logs curl-test -n default)
+
+
+Running:
+ - run_shell_command(command=kubectl describe pod curl-test -n default | sed -n '1,200p')
+
+
+Running:
+ - run_shell_command(command=kubectl delete pod curl-test -n default || true)
+
+
+Running:
+ - run_shell_command(command=...)
+
+
+Running:
+ - run_shell_command(command=kubectl logs curl-test -n default)
+
+
+Running:
+ - run_shell_command(command=kubectl describe pod curl-test -n default | sed -n '1,200p')
+
+
+Running:
+ - run_shell_command(command=...)
+
+
+Running:
+ - run_shell_command(command=...)
+
+
+Running:
+ - run_shell_command(command=kubectl get ep named-target-service -n default -o json)
+
+
+Running:
+ - run_shell_command(command=...)
+
+
+Running:
+ - run_shell_command(command=...)
+
+
+Running:
+ - run_shell_command(command=...)
+
+### Verification result
+
+Working directory: /home/minh/KubeLLM/debug_assistant_latest/troubleshooting/port_mismatch_named_target/
+
+Summary of findings:
+- Pod in question
+  - Pod: kube-port-mismatch-named-target (namespace: default)
+  - Status: Running
+  - Ready: 1/1
+  - Container port: 8765/TCP named http-app
+  - Pod readiness: Ready and ContainersReady are True
+- Service and endpoints
+  - Service: named-target-service (namespace: default)
+  - Spec:
+    - selector: app=kube-port-mismatch-named-target
+    - ports:
+      - port: 8000/TCP
+        targetPort: web
+  - Endpoints: 10.244.1.180 present for the service
+  - Observations:
+    - TargetPort is defined as "web", but the Pod container port is named "http-app" with containerPort 8765.
+    - There is a port-name mismatch: service expects targetPort "web" while the pod exposes port 8765 named "http-app".
+- Access tests performed
+  - Port connectivity within the Pod to the application port seems healthy:
+    - From inside kube-port-mismatch-named-target, a Python snippet successfully opened http://127.0.0.1:8765/ and returned HTTP 200.
+      - This confirms the application port 8765 inside the Pod is serving correctly.
+  - Service-level reachability via NodePort/ClusterIP path was attempted but not conclusively verified:
+    - minikube service named-target-service --url reports that the service has no node port (ClusterIP is used; NodePort path isn’t available).
+    - Attempts to curl via a test Pod to named-target-service.default.svc.cluster.local:8000/ faced environment-specific issues (several curl/curl-image attempts failed due to image pull issues or inheriting Pod readiness constraints). The available evidence does not demonstrate successful end-to-end reachability from a separate Pod through the Service to port 8765.
+  - The Endpoints object lists the Pod IP (10.244.1.180) as an endpoint, but given the targetPort mismatch, the traffic path via the Service is not correctly mapped to the container port.
+
+What this implies:
+- The root misconfiguration remains: Service named-target-service declares targetPort: web, but the container port is 8765 with port name http-app. Because the targetPort is not a valid port name on the container, traffic routed by the Service likely cannot reach the application port.
+- Although the Pod itself is Ready and serving on 8765, traffic through the Service is not guaranteed to reach that port due to the port-name mismatch.
+
+Conclusion
+- The issue is NOT fixed. The configured access path via the Service is not correctly wired to the application port due to the targetPort mismatch (web vs http-app/8765).
+
+Verification status: <|FAILED|>

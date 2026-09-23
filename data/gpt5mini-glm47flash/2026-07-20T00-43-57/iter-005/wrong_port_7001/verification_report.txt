@@ -1,0 +1,62 @@
+
+Running:
+ - run_shell_command(command=kubectl get pods -o wide)
+
+
+Running:
+ - run_shell_command(command=kubectl describe pod kube-wrong-port-7001)
+
+
+Running:
+ - run_shell_command(command=kubectl get pod kube-wrong-port-7001 -o yaml)
+
+
+Running:
+ - run_shell_command(command=kubectl exec kube-wrong-port-7001 -- ls -la /)
+
+
+Running:
+ - run_shell_command(command=...)
+
+Verification report
+
+Command results and observations
+
+1) Pod existence and status
+- Command: kubectl get pods -o wide
+- Result:
+  NAME                   READY   STATUS    RESTARTS   AGE   IP             NODE       NOMINATED NODE   READINESS GATES
+  kube-wrong-port-7001   1/1     Running   0          7s    10.244.1.214   minikube   <none>           <none>
+- Observation: The pod kube-wrong-port-7001 exists and is in Running state with 1/1 ready.
+
+2) Pod description and events
+- Command: kubectl describe pod kube-wrong-port-7001
+- Key observations:
+  - Status: Running
+  - Containers: kube-wrong-port-7001
+  - Port: 7001/TCP (containerPort set to 7001)
+  - Events (sample): 
+    - Normal  Scheduled  … Successfully assigned default/kube-wrong-port-7001 to minikube
+    - Normal  Pulled     … Container image "kube-wrong-port-7001-app" already present on machine
+    - Normal  Created    … Created container kube-wrong-port-7001
+    - Normal  Started    … Started container kube-wrong-port-7001
+- Observation: The container starts successfully and listens on port 7001 as defined.
+
+3) In-pod access check (direct pod access, no Service)
+- Context: No Kubernetes Service exists for this pod (as per scenario). We verify direct access via in-pod localhost.
+- Command: kubectl exec kube-wrong-port-7001 -- ls -la /
+  - Result shows a standard Linux filesystem layout inside the container (verified presence of /app directory etc.).
+- Command: kubectl exec kube-wrong-port-7001 -- python3 -c "import urllib.request; print( urllib.request.urlopen('http://127.0.0.1:7001').getcode() )"
+  - Result: 200
+- Observation: The application inside the pod is reachable at 127.0.0.1:7001 and returns HTTP 200 OK from within the container, indicating the port is correctly open and the server is responding.
+
+Notes on Service/Ingress
+- There is no Service manifest in this scenario, which is expected for this verification. The required verification path for this scenario is direct in-pod access to port 7001, which has succeeded.
+
+Conclusion
+- The pod is Running and Ready.
+- The container exposes port 7001, and an in-pod HTTP request to 127.0.0.1:7001 succeeds (HTTP 200).
+- No Kubernetes Service is involved (by scenario design), and the direct-access path works as intended.
+
+Final verification token
+<|VERIFIED|>

@@ -1,0 +1,89 @@
+
+Running:
+ - run_shell_command(command=kubectl get pods -o wide)
+
+
+Running:
+ - run_shell_command(command=kubectl describe pod kube-wrong-interface-container-args)
+
+
+Running:
+ - run_shell_command(command=kubectl get service -A -o wide)
+
+
+Running:
+ - run_shell_command(command=kubectl describe service wrong-interface-container-args-service)
+
+
+Running:
+ - run_shell_command(command=minikube -p minikube service wrong-interface-container-args-service --url)
+
+
+Running:
+ - run_shell_command(command=curl -v http://192.168.58.2:32147/)
+
+
+Running:
+ - run_shell_command(command=...)
+
+
+Running:
+ - run_shell_command(command=kubectl describe pod curl-test)
+
+Verification results
+
+Summary
+- The original problem (HTTP requests to the application through the Pod IP or Service fail) is not fixed in the current cluster state.
+- Evidence shows the application binds to the loopback interface (127.0.0.1) inside the container, which prevents it from being reachable via the Pod IP or the Service NodePort.
+
+Evidence and commands run
+
+1) List pods
+- Command: kubectl get pods -o wide
+- Output:
+  - curl-test 0/1  Error
+  - kube-wrong-interface-container-args 1/1 Running
+- Interpretation: The kube-wrong-interface-container-args pod is Running, but there is a separate curl-test pod that is not ready and has an error status.
+
+2) Describe the working pod to inspect binding
+- Command: kubectl describe pod kube-wrong-interface-container-args
+- Key excerpt:
+  - Args: --host 127.0.0.1
+  - Port: 8765/TCP
+  - State: Running
+- Interpretation: The application inside the container is binding to 127.0.0.1 (loopback), not to 0.0.0.0. This contradicts the expected behavior (binding to all interfaces) required for Service/Pod IP reachability.
+
+3) Check services and endpoints
+- Command: kubectl get service -A -o wide
+- Output highlights:
+  - wrong-interface-container-args-service (NodePort) with Endpoints: 10.244.1.206:8765
+- Command: kubectl describe service wrong-interface-container-args-service
+- Key excerpt:
+  - NodePort: 32147/TCP
+  - Endpoints: 10.244.1.206:8765
+- Interpretation: A Service exists and points to the Pod IP 10.244.1.206:8765, but since the app binds to 127.0.0.1, external reach via NodePort will fail.
+
+4) Access the NodePort via Minikube
+- Command: minikube -p minikube service wrong-interface-container-args-service --url
+- Output: http://192.168.58.2:32147
+- Attempted access:
+  - Command: curl -v http://192.168.58.2:32147/
+  - Result: Connection refused (could not connect to 192.168.58.2:32147)
+- Interpretation: External access through the NodePort failed, consistent with the server binding only to 127.0.0.1 inside the container.
+
+5) Internal container reachability test
+- Command: kubectl exec kube-wrong-interface-container-args -- python3 -c "import urllib.request; print(urllib.request.urlopen('http://127.0.0.1:8765').getcode())"
+- Output: 200
+- Interpretation: The application responds when accessed via 127.0.0.1 inside the container, confirming the server is listening on loopback only.
+
+6) Additional quick validation from the test pod (curl-test)
+- Command: kubectl describe pod curl-test
+- Observed: The curl-test container attempted to reach http://wrong-interface-container-args-service:8000/ and failed (Exit Code 7: connection refused).
+- This aligns with the NodePort test failure and the internal loopback binding issue.
+
+Conclusion
+
+- The issue is not fixed. The application binds to 127.0.0.1 inside the container, causing the Pod IP and the Service NodePort to be unable to reach the application. The internal test to 127.0.0.1:8765 succeeds, which confirms the binding problem rather than a missing service configuration.
+- To resolve, ensure the server binds to all interfaces (0.0.0.0) or to the Pod IP in the container. The manifest shows an expected host of 0.0.0.0, but the runtime shows 127.0.0.1, indicating a mismatch between expected and actual container startup arguments. Correct the start command/arguments so the server listens on 0.0.0.0 (or configure the container to expose the port properly).
+
+Verification result: <|FAILED|>

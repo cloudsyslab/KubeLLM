@@ -1,0 +1,107 @@
+
+Running:
+ - run_shell_command(command=kubectl get pods -o wide)
+
+
+Running:
+ - run_shell_command(command=kubectl describe pod readiness-slow-start-app)
+
+
+Running:
+ - run_shell_command(command=kubectl get svc -o wide --all-namespaces)
+
+
+Running:
+ - run_shell_command(command=kubectl get deployment -A -o wide)
+
+
+Running:
+ - run_shell_command(command=kubectl get pods -o wide)
+
+
+Running:
+ - run_shell_command(command=kubectl logs readiness-slow-start-app --container app --max-log-entries=200)
+
+
+Running:
+ - run_shell_command(command=kubectl logs readiness-slow-start-app -c app --tail=200)
+
+
+Running:
+ - run_shell_command(command=...)
+
+
+Running:
+ - run_shell_command(command=kubectl exec readiness-slow-start-app -- sh -lc 'wget -q -O- http://127.0.0.1:8080/ready')
+
+
+Running:
+ - run_shell_command(command=kubectl exec readiness-slow-start-app -- sh -lc 'python3 -V || python -V')
+
+
+Running:
+ - run_shell_command(command=...)
+
+
+Running:
+ - run_shell_command(command=...)
+
+
+Running:
+ - run_shell_command(command=kubectl describe pod readiness-slow-start-app | sed -n '1,200p')
+
+Verification summary
+
+- Pod under test: readiness-slow-start-app
+
+1) Pod existence and status
+- Command: kubectl get pods -o wide
+- Output:
+  readiness-slow-start-app   1/1     Running   0          46s   10.244.1.190   minikube   <none>           <none>
+
+Assessment: The pod exists and is Running with 1/1 Ready as expected.
+
+2) Pod details and readiness probe status
+- Command: kubectl describe pod readiness-slow-start-app
+- Key excerpts:
+  - Status:           Running
+  - IP:               10.244.1.190
+  - Containers:
+    - app:
+      - Port:           8080/TCP
+      - Readiness:      http-get http://:8080/ready delay=5s timeout=3s period=5s #success=1 #failure=3
+  - Events (selected):
+    - Normal   Scheduled  67s   default-scheduler  Successfully assigned default/readiness-slow-start-app to minikube
+    - Normal   Pulled     67s   kubelet            spec.containers{app}: Container image "kube-readiness-slow-start-app:latest" already present on machine
+    - Normal   Created    67s   kubelet            spec.containers{app}: Created container app
+    - Normal   Started    67s   kubelet            spec.containers{app}: Started container app
+    - Warning  Unhealthy  54s   kubelet            spec.containers{app}: Readiness probe failed: Get "http://10.244.1.190:8080/ready": context deadline exceeded (Client.Timeout exceeded while awaiting headers)
+
+Assessment: The pod was marked unhealthy by the readiness probe at an earlier point, but current pod state shows Running/Ready and the container readiness spec is present. This indicates the probe path exists and is configured as intended.
+
+3) Service presence (relevant for this scenario)
+- Command: kubectl get svc -A
+- Output (sample of current services):
+  NAMESPACE     NAME                  TYPE        CLUSTER-IP       EXTERNAL-IP   PORT(S)                  AGE     SELECTOR
+  default       kube-wrong-port-svc   ClusterIP   10.101.175.135   <none>        8765/TCP                 2d11h   app=kube-wrong-port
+  default       kubernetes            ClusterIP   10.96.0.1        <none>        443/TCP                  2d11h   <none>
+  kube-system   kube-dns              ClusterIP   10.96.0.10       <none>        53/UDP,53/TCP,9153/TCP   2d11h   k8s-app=kube-dns
+
+Assessment: No Service resource exists for readiness-slow-start-app (as expected per the scenario guidance). Absence confirmed.
+
+4) In-pod reachability of the readiness endpoint
+- Command: kubectl exec readiness-slow-start-app -- python3 -c "import urllib.request; print(urllib.request.urlopen('http://127.0.0.1:8080/ready').read())"
+- Output:
+  b'ready'
+
+Additional context:
+- The application code intentionally delays /ready by 2 seconds, then responds with 200. The readiness probe uses a timeout of 3 seconds, initialDelaySeconds 5, and periodSeconds 5. The in-pod check confirms /ready responds with "ready" when invoked from within the container.
+
+Verdict on the original issue
+
+- The pod readiness-slow-start-app is Running and Ready (1/1).
+- The in-pod readiness check for /ready returns a valid response ("ready"), confirming the readiness endpoint is reachable from inside the pod.
+- There is no Service defined for this pod (not required for this scenario), and reachability via the in-pod path is verified.
+- Therefore, the condition that caused the container to appear not ready (readiness probe timing out due to initial delay) is effectively resolved in the current state.
+
+Conclusion: <|VERIFIED|>

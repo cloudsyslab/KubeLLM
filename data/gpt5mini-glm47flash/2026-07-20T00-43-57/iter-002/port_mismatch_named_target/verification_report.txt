@@ -1,0 +1,144 @@
+
+Running:
+ - run_shell_command(command=kubectl get pods -A)
+
+
+Running:
+ - run_shell_command(command=kubectl describe pod kube-port-mismatch-named-target)
+
+
+Running:
+ - run_shell_command(command=kubectl get service named-target-service -o yaml)
+
+
+Running:
+ - run_shell_command(command=kubectl get endpoints -n default named-target-service -o yaml)
+
+
+Running:
+ - run_shell_command(command=kubectl describe pod kube-port-mismatch-named-target --namespace default)
+
+
+Running:
+ - run_shell_command(command=kubectl get endpoints named-target-service -n default -o wide)
+
+
+Running:
+ - run_shell_command(command=minikube -p minikube service named-target-service --url)
+
+
+Running:
+ - run_shell_command(command=kubectl get svc named-target-service -o jsonpath='{.spec.ports[0].port} {.spec.ports[0].targetPort}')
+
+
+Running:
+ - run_shell_command(command=curl -sS -v http://10.101.87.9:8000/)
+
+
+Running:
+ - run_shell_command(command=curl -sS -v http://10.101.87.9:8000/ -m 5)
+
+
+Running:
+ - run_shell_command(command=...)
+
+
+Running:
+ - run_shell_command(command=...)
+
+
+Running:
+ - run_shell_command(command=kubectl logs kube-port-mismatch-named-target -c kube-port-mismatch-named-target)
+
+
+Running:
+ - run_shell_command(command=...)
+
+
+Running:
+ - run_shell_command(command=...)
+
+
+Running:
+ - run_shell_command(command=kubectl logs curl-test2 -c curl -n default)
+
+
+Running:
+ - run_shell_command(command=kubectl get pods -n default)
+
+
+Running:
+ - run_shell_command(command=kubectl logs curl-test2 -n default)
+
+
+Running:
+ - run_shell_command(command=kubectl describe service named-target-service -n default)
+
+Verification results summary
+
+Objective
+- Confirm whether traffic from the Service named-target-service to the named application port (http-app) is functioning correctly, given the original problem description.
+
+What I checked
+- Pods status
+- Pod details (events and readiness)
+- Service and Endpoints configuration
+- Reachability from within the cluster using a one-shot curl test
+
+Evidence and results
+
+1) Pods
+- Command: kubectl get pods -A
+- Output (relevant part):
+  - default kube-port-mismatch-named-target 1/1 Running
+  - kube-system coredns-6f6b679f8f-vc7hm 1/1 Running
+- Interpretation: The target pod kube-port-mismatch-named-target exists and is Running with 1/1 ready container.
+
+2) Pod details
+- Command: kubectl describe pod kube-port-mismatch-named-target
+- Key lines:
+  - Status: Running
+  - Containers: kube-port-mismatch-named-target Ready: True
+  - Ports: 8765/TCP (http-app)
+- Interpretation: The pod is Ready and exposes containerPort 8765 named http-app, matching the service targetPort reference.
+
+3) Service and Endpoints
+- Command: kubectl get service named-target-service -n default -o yaml
+- Key lines:
+  - port: 8000/TCP
+  - targetPort: http-app/TCP
+  - selector: app: kube-port-mismatch-named-target
+  - clusterIP: 10.101.87.9
+- Command: kubectl get endpoints named-target-service -n default -o yaml
+- Key lines:
+  - Endpoints: 10.244.1.38:8765
+- Interpretation:
+  - The service is configured to forward port 8000 to port named http-app, which maps to 8765 in the pod.
+  - The endpoints list includes the Pod IP 10.244.1.38 on port 8765, confirming correct backend targeting.
+
+4) Service access tests
+
+- Attempt via minikube service URL:
+  - Command: minikube -p minikube service named-target-service --url
+  - Output: service default/named-target-service has no node port
+  - Interpretation: Since this is a ClusterIP service, there is no node port. This is expected behavior and does not indicate a failure.
+
+- In-cluster reachability test (preferred per verification guidance):
+  - Steps taken:
+    - Created a one-shot curl pod to hit the service DNS name: named-target-service.default.svc.cluster.local:8000
+    - Observed HTTP response body from the app.
+  - Commands and outcomes:
+    - Command: kubectl run curl-test2 --restart=Never --image=curlimages/curl -- curl -sS http://named-target-service.default.svc.cluster.local:8000/
+    - Result: The pod completed and the curl produced the app response body "ok" (as captured by kubectl logs).
+  - Command: kubectl logs curl-test2 -n default
+    - Output: ok
+  - Interpretation: The service successfully routes traffic to the named target port (http-app = 8765) and the application responds with "ok". This confirms end-to-end reachability through the Service to the named application port.
+
+Conclusion
+- The original issue description (traffic through the Service failing due to misalignment between the Service port and the named container port) is resolved:
+  - Pod exposes port 8765 named http-app, which the Service targets via targetPort http-app.
+  - Service port 8000 correctly forwards to http-app (8765) on the Pod.
+  - In-cluster reachability tests succeed, with the app responding as expected.
+
+Final verdict
+<|VERIFIED|>

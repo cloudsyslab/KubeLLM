@@ -1,0 +1,108 @@
+
+Running:
+ - run_shell_command(command=kubectl get pods -o wide --show-labels)
+
+
+Running:
+ - run_shell_command(command=kubectl describe pod readiness-slow-start-app)
+
+
+Running:
+ - run_shell_command(command=...)
+
+
+Running:
+ - run_shell_command(command=...)
+
+
+Running:
+ - run_shell_command(command=...)
+
+
+Running:
+ - run_shell_command(command=...)
+
+
+Running:
+ - run_shell_command(command=...)
+
+
+Running:
+ - run_shell_command(command=...)
+
+
+Running:
+ - run_shell_command(command=...)
+
+
+Running:
+ - run_shell_command(command=...)
+
+
+Running:
+ - run_shell_command(command=kubectl get svc --all-namespaces)
+
+
+Running:
+ - run_shell_command(command=kubectl get svc readiness-slow-start-app -n default --ignore-not-found -o wide)
+
+
+Running:
+ - run_shell_command(command=kubectl describe pod readiness-slow-start-app -n default)
+
+
+Running:
+ - run_shell_command(command=kubectl get pods -o wide --show-labels)
+
+Verification steps and results
+
+1) Verify pods exist and areRunning with ready containers
+- Command: kubectl get pods -o wide --show-labels
+- Expected and observed:
+  - readiness-slow-start-app is present and in Running state with 1/1 ready containers.
+- Observed output:
+  NAME                       READY   STATUS    RESTARTS   AGE   IP            NODE       NOMINATED NODE   READINESS GATES   LABELS
+  readiness-slow-start-app   1/1     Running   0          99s   10.244.1.48   minikube   <none>           <none>            app=readiness-slow-start-app
+
+Conclusion for step 1: Pod exists and is Running with 1/1 ready container.
+
+2) Inspect pod events for readiness issues
+- Command: kubectl describe pod readiness-slow-start-app
+- Observed notable details:
+  - Status: Running
+  - Containers: app, Port 8080/TCP, Ready: True
+  - Readiness: http-get http://:8080/ready delay=5s timeout=3s period=3s #success=1 #failure=1
+  - Events include a prior warning:
+    - Warning Unhealthy 26s (x2 over 41s) kubelet: Readiness probe failed: Get "http://10.244.1.48:8080/ready": context deadline exceeded (Client.Timeout exceeded while awaiting headers)
+- Observed output confirms there was a readiness probe failure in the recent past, but the container is currently reported as Running and Ready.
+
+Conclusion for step 2: There was a prior readiness probe failure, but the pod is currently Running with Ready=true. The previous probe failures are documented in the events.
+
+3) Check for a Kubernetes Service for this pod (scenario has no Service)
+- Command: kubectl get svc --all-namespaces
+- Observed output shows standard cluster services (kube-dns, kubernetes, etc.) and no readiness-slow-start-app service.
+- Observed output excerpt:
+  NAMESPACE     NAME                  TYPE        CLUSTER-IP       EXTERNAL-IP   PORT(S)                  AGE
+  default       kube-wrong-port-svc   ClusterIP   10.101.175.135   <none>        8765/TCP                 2d8h
+  default       kubernetes            ClusterIP   10.96.0.1        <none>        443/TCP                  2d8h
+  kube-system   kube-dns              ClusterIP   10.96.0.10       <none>        53/UDP,53/TCP,9153/TCP   2d8h
+
+Conclusion for step 3: No Service exists for this pod, consistent with the scenario guidance.
+
+4) Reachability test of the in-pod readiness endpoint
+- Context: There is no Service; access must be via in-cluster direct access.
+- Command: kubectl exec readiness-slow-start-app -- python3 -c "import http.client; conn=http.client.HTTPConnection('127.0.0.1',8080,timeout=5); conn.request('GET','/ready'); r=conn.getresponse(); print(r.status); print(r.read())"
+- Observed output:
+  200
+  b'ready'
+
+Alternative quick check (inside pod) using Python code directly confirms the endpoint responds with 200 and content "ready".
+
+Conclusion for step 4: The in-pod readiness endpoint /ready responds successfully (HTTP 200) with body "ready". This confirms the configured access path is reachable within the pod.
+
+Overall verification status
+- The pod readiness-slow-start-app is currently Running and Ready (1/1).
+- The in-pod readiness endpoint responds successfully (200 OK) on /ready.
+- There was a prior readiness probe failure observed in events, but there are no ongoing probe failures reported in the latest status.
+
+Final verdict: <|VERIFIED|>

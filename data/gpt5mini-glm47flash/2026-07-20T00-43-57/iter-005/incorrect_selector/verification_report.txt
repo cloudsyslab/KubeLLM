@@ -1,0 +1,80 @@
+
+Running:
+ - run_shell_command(command=kubectl get pods -o wide)
+
+
+Running:
+ - run_shell_command(command=kubectl describe pod kube-incorrect-selector)
+
+
+Running:
+ - run_shell_command(command=kubectl get service -A)
+
+
+Running:
+ - run_shell_command(command=kubectl describe service app-service -n default)
+
+
+Running:
+ - run_shell_command(command=kubectl get endpoints app-service -o wide -o yaml)
+
+
+Running:
+ - run_shell_command(command=kubectl get endpoints app-service -o=yaml)
+
+
+Running:
+ - run_shell_command(command=minikube -p minikube service app-service --url)
+
+
+Running:
+ - run_shell_command(command=kubectl exec kube-incorrect-selector -- curl -sS -I http://127.0.0.1:8765/)
+
+
+Running:
+ - run_shell_command(command=kubectl exec kube-incorrect-selector -- /bin/sh -lc 'curl -sS -I http://127.0.0.1:8765/')
+
+
+Running:
+ - run_shell_command(command=kubectl exec kube-incorrect-selector -- /bin/sh -lc 'wget -S -O- http://127.0.0.1:8765/')
+
+Verification results
+
+- Pod status
+  - kubectl get pods -o wide
+    - kube-incorrect-selector is Running (1/1 ready), IP 10.244.1.169, node minikube
+- Pod details
+  - kubectl describe pod kube-incorrect-selector
+    - Status: Running
+    - Container kube-incorrect-selector: image kube-incorrect-selector-app:latest, 8765/TCP, Ready: True
+    - Events show the pod was scheduled and the container started successfully
+- Service status
+  - kubectl get service -A
+    - default app-service: Type NodePort, ClusterIP 10.108.246.154, Port 8000, NodePort 32356
+    - default kube-wrong-port-svc: ClusterIP, etc. (unrelated)
+- Service details for app-service
+  - kubectl describe service app-service -n default
+    - Selector: app=incorrect-selector
+    - Endpoints: (empty)
+  - Observed issue: The pod kube-incorrect-selector has label app=kube-incorrect-selector, which does not match the service selector app=incorrect-selector. As a result, no endpoints are registered for app-service.
+- Endpoints resource
+  - kubectl get endpoints app-service -o yaml
+    - Endpoints resource exists but contains no endpoint IPs (no subsets listed)
+- Access tests
+  - minikube -p minikube service app-service --url
+    - Error: Exiting due to SVC_UNREACHABLE: service not available: no running pod for service app-service found
+    - Interpretation: No endpoints available; service cannot route traffic
+  - In-pod connectivity checks
+    - kubectl exec kube-incorrect-selector -- curl -sS -I http://127.0.0.1:8765/
+      - Result: curl not found in container
+    - kubectl exec kube-incorrect-selector -- /bin/sh -lc 'curl -sS -I http://127.0.0.1:8765/'
+      - Result: curl not found
+    - kubectl exec kube-incorrect-selector -- /bin/sh -lc 'wget -S -O- http://127.0.0.1:8765/'
+      - Result: wget not found
+  - Net effect: Unable to perform a one-shot in-container HTTP test due to missing curl/wget inside the container, and there are no endpoints registered for the service to test via the cluster network.
+
+Conclusion
+- The issue described in the original problem is not fixed. The service app-service shows no endpoints because its selector does not match the pod label.
+- The correct fix is to align the selectors, e.g. update app-service.yaml to use selector app: kube-incorrect-selector (matching the pod) and reapply, or update the pod label to match the service selector, then recreate the service endpoints.
+
+Verdict: <|FAILED|>

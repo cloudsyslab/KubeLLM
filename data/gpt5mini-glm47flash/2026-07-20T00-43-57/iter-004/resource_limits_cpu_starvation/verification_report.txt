@@ -1,0 +1,54 @@
+
+Running:
+ - run_shell_command(command=kubectl get pods -o wide --all-namespaces)
+
+
+Running:
+ - run_shell_command(command=kubectl describe pod resource-limits-cpu-starvation-app)
+
+Verification results
+
+1) kubectl get pods
+- Namespace: default
+- Pod: resource-limits-cpu-starvation-app
+- Status: Running
+- Ready: 1/1
+- Node: minikube
+- IP: 10.244.1.143
+Evidence:
+default       resource-limits-cpu-starvation-app   1/1     Running   0                 20s     10.244.1.143   minikube
+
+2) kubectl describe pod resource-limits-cpu-starvation-app
+- Container: app
+  - Image: kube-resource-limits-cpu-starvation-app:latest
+  - Port: 8080/TCP
+  - State: Running (Started: Mon, 20 Jul 2026 04:38:28 +0000)
+  - Ready: True
+  - Limits: cpu: 200m, memory: 128Mi
+  - Requests: cpu: 200m, memory: 64Mi
+  - Readiness probe: httpGet on /healthz (port 8080), delay=2s, timeout=2s, period=3s
+- Pod status/conditions
+  - PodReadyToStartContainers: True
+  - Initialized: True
+  - Ready: True
+  - ContainersReady: True
+  - PodScheduled: True
+- Events:
+  - Normal  Scheduled: Successfully assigned default/resource-limits-cpu-starvation-app to minikube
+  - Normal  Pulled: Container image "kube-resource-limits-cpu-starvation-app:latest" already present on machine
+  - Normal  Created: Created container app
+  - Normal  Started: Started container app
+
+3) Service check
+- No Service manifest exists for this scenario; absence of a Service is expected and not a failure.
+
+4) Access path check
+- Not applicable (no Service). In-container readiness is evidenced by the pod being Ready and the readiness probe configured for /healthz.
+
+Assessment
+- The pod resource-limits-cpu-starvation-app is Running and Ready (1/1). The readiness probe is configured and the container has started successfully with CPU limits/requests as defined. There are no readiness-related errors in Events.
+
+Conclusion
+- The issue described (pod remained unready due to readiness probe timeouts under CPU constraint) is not observed in the current state. Pod is Running and Ready, and readiness probe configuration appears to be functioning as expected.
+
+<|VERIFIED|>

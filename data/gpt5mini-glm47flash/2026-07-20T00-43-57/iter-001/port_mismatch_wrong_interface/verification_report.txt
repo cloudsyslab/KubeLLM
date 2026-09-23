@@ -1,0 +1,79 @@
+
+Running:
+ - run_shell_command(command=kubectl get pods -o wide)
+
+
+Running:
+ - run_shell_command(command=kubectl describe pod port-mismatch-wrong-interface-app)
+
+
+Running:
+ - run_shell_command(command=kubectl get service port-mismatch-app-service -o wide)
+
+
+Running:
+ - run_shell_command(command=minikube -p minikube service port-mismatch-app-service --url)
+
+
+Running:
+ - run_shell_command(command=curl -sS http://192.168.58.2:31755 -I)
+
+
+Running:
+ - run_shell_command(command=curl -sS http://192.168.58.2:31755/ -i)
+
+Verification steps completed. Here are the observed results and evidence.
+
+1) Pods status
+- Command: kubectl get pods -o wide
+- Result:
+  - port-mismatch-wrong-interface-app 1/1 Running 0 83s 10.244.0.248 minikube
+
+2) Pod details and events
+- Command: kubectl describe pod port-mismatch-wrong-interface-app
+- Key details:
+  - Status: Running
+  - Container: app
+  - Port: 8765/TCP
+  - ContainersReady: True
+  - Ready: True
+  - Events: 
+    - Normal  Scheduled: Successfully assigned default/port-mismatch-wrong-interface-app to minikube
+    - Normal  Pulled: Container image "kube-port-mismatch-wrong-interface-app" already present
+    - Normal  Created: Created container app
+    - Normal  Started: Started container app
+- Conclusion: Pod is Running with containers Ready; no error events observed.
+
+3) Service status
+- Command: kubectl get service port-mismatch-app-service -o wide
+- Result:
+  - Name: port-mismatch-app-service
+  - Type: NodePort
+  - Cluster IP: 10.107.198.3
+  - External IP: <none>
+  - Port(s): 80:31755/TCP
+  - Selector: app=port-mismatch-wrong-interface-app
+- Conclusion: Service exists, has a ClusterIP, and a NodePort mapping (80 -> 31755) to the correct app selector.
+
+4) Service access URL (Minikube)
+- Command: minikube -p minikube service port-mismatch-app-service --url
+- Result:
+  - http://192.168.58.2:31755
+
+5) Reachability test
+- Command: curl -sS http://192.168.58.2:31755 -I
+- Result:
+  - HTTP/1.0 501 Unsupported method ('HEAD')
+- Command: curl -sS http://192.168.58.2:31755/ -i
+- Result:
+  - HTTP/1.0 200 OK
+  - Content-type: text/html
+  - Hello from port_mismatch_wrong_interface test!
+
+Assessment
+- The pod port-mismatch-wrong-interface-app is Running and Ready.
+- The service port-mismatch-app-service exists and is reachable via the NodePort 31755.
+- The Minikube service URL is working, and a GET request to the root path returns 200 with the expected response from the app.
+- Therefore the previous access errors should be resolved in this cluster state.
+
+Final verdict: <|VERIFIED|>

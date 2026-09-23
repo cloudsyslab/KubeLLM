@@ -1,0 +1,86 @@
+
+Running:
+ - run_shell_command(command=kubectl get pods -o wide)
+
+
+Running:
+ - run_shell_command(command=kubectl describe pod resource-limits-oom-app)
+
+
+Running:
+ - run_shell_command(command=kubectl exec resource-limits-oom-app -- curl -sS http://127.0.0.1:8080/)
+
+
+Running:
+ - run_shell_command(command=kubectl exec resource-limits-oom-app -- sh -lc 'curl -sS http://127.0.0.1:8080/ || echo FAIL')
+
+
+Running:
+ - run_shell_command(command=...)
+
+Verification results for resource-limits-oom scenario in Minikube
+
+What I checked
+- Pod status and readiness
+- Pod description for restart/OOM events
+- In-container reachability to the application port (8080)
+
+Commands and observed output
+
+1) kubectl get pods
+- Command:
+  kubectl get pods -o wide
+- Output:
+  RESOURCE:
+  resource-limits-oom-app   1/1     Running   0          18s   10.244.1.55   minikube   <none>           <none>
+
+2) kubectl describe pod resource-limits-oom-app
+- Command:
+  kubectl describe pod resource-limits-oom-app
+- Key observed details:
+  - Status: Running
+  - IP: 10.244.1.55
+  - Container app:
+    - Image: kube-resource-limits-oom-app
+    - Port: 8080/TCP
+    - State: Running (Started: ... )
+    - Ready: True
+    - Restart Count: 0
+    - Limits: memory 1Gi, cpu 200m
+    - Requests: memory 256Mi, cpu 100m
+  - Events:
+    - Normal  Scheduled: Successfully assigned default/resource-limits-oom-app to minikube
+    - Normal  Pulled: Container image kube-resource-limits-oom-app already present
+    - Normal  Created: Created container app
+    - Normal  Started: Started container app
+
+3) In-container reachability check
+- Attempt A (curl inside container) 
+  - Command:
+    kubectl exec resource-limits-oom-app -- curl -sS http://127.0.0.1:8080/
+  - Result: Command terminated with exit code 126 (curl not found or not executable inside the container)
+  - Interpretation: curl is not available inside the container; test cannot rely on curl here.
+
+- Attempt B (curl fallback with shell)
+  - Command:
+    kubectl exec resource-limits-oom-app -- sh -lc 'curl -sS http://127.0.0.1:8080/ || echo FAIL'
+  - Result: FAIL
+  - Interpretation: curl path not available or not executable inside container; test failed due to missing curl binary. Not conclusive for application reachability.
+
+- Attempt C (Python inside container)
+  - Command:
+    kubectl exec resource-limits-oom-app -- python3 -c "import urllib.request; print(urllib.request.urlopen('http://127.0.0.1:8080/').getcode())"
+  - Result:
+    200
+  - Interpretation: The in-container HTTP server responds with HTTP 200 OK at port 8080, confirming the app is reachable from within the container.
+
+Assessment against the original problem
+- The pod is Running with 0 restarts.
+- There are no OOMKilled events in the pod describe output.
+- The container exposes port 8080 and responds with HTTP 200 to in-container requests.
+- There is no Service defined for external access in the provided manifests, which aligns with the scenario guidance (absence of a Service is not a failure). External reachability tests via minikube service are not required in this scenario.
+
+Conclusion
+- Based on the evidence, the original issue (CrashLoopBackOff due to OOMKilled) does not appear to be present in the current state. The pod is Running, Ready, with 0 restarts, and the in-container test confirms the application is serving requests on port 8080.
+
+Final verdict: <|VERIFIED|>

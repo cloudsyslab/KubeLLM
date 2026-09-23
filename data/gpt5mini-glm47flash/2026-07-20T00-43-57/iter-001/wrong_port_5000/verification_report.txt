@@ -1,0 +1,84 @@
+
+Running:
+ - run_shell_command(command=kubectl get pods -o wide)
+
+
+Running:
+ - run_shell_command(command=kubectl describe pod kube-wrong-port-5000)
+
+
+Running:
+ - run_shell_command(command=kubectl exec kube-wrong-port-5000 -- curl -s -o /dev/null -w "%{http_code}" http://127.0.0.1:5000/)
+
+
+Running:
+ - run_shell_command(command=kubectl exec kube-wrong-port-5000 -- sh -lc 'command -v curl || echo NO_CURL')
+
+
+Running:
+ - run_shell_command(command=...)
+
+
+Running:
+ - run_shell_command(command=kubectl get svc -n default -o wide)
+
+
+Running:
+ - run_shell_command(command=kubectl describe pod kube-wrong-port-5000 | grep -i events -A 5 -n || true)
+
+### Verification results
+
+1) Pod existence and readiness
+- Command:
+  - kubectl get pods -o wide
+- Output:
+  - kube-wrong-port-5000   1/1     Running   0          58s   IP 10.244.1.20   minikube
+- Assessment: Pod exists and is Running with all containers ready.
+
+2) Pod describe and events
+- Command:
+  - kubectl describe pod kube-wrong-port-5000
+- Key details:
+  - Status: Running
+  - Container: kube-wrong-port-5000
+  - Port: 80/TCP (reported by describe)
+  - Started: Mon, 20 Jul 2026 01:43:42 +0000
+  - Events show normal scheduling, pulling image, creating and starting container with no errors
+- Assessment: Pod is healthy from the events perspective. No errors or CrashLoopBackOffs observed.
+
+3) Direct port access test inside the pod
+- Context: The scenario requires direct pod access (no reliance on a Kubernetes Service). We test from inside the pod (127.0.0.1) on port 5000 as per the provided application.
+- First attempt (curl not installed inside container):
+  - Command:
+    - kubectl exec kube-wrong-port-5000 -- curl -s -o /dev/null -w "%{http_code}" http://127.0.0.1:5000/
+  - Result: exit code 126 (curl not found)
+  - Note: curl is not available in this container image.
+- Check for curl availability:
+  - Command:
+    - kubectl exec kube-wrong-port-5000 -- sh -lc 'command -v curl || echo NO_CURL'
+  - Result: NO_CURL
+- Direct HTTP test using Python (preferred one-shot check):
+  - Command:
+    - kubectl exec kube-wrong-port-5000 -- python3 -c "import urllib.request; print(urllib.request.urlopen('http://127.0.0.1:5000/').getcode())"
+  - Result: 200
+- Assessment:
+  - The application is reachable at 127.0.0.1:5000 inside the pod (HTTP 200).
+  - Although the pod description lists container port 80/TCP, the in-pod application is serving on port 5000 as implemented by server.py, and reachable via 127.0.0.1:5000.
+  - Curl binary wasn’t available in the container, but the in-pod Python-based check demonstrates reachability as required by the scenario.
+
+4) Kubernetes Service presence (relevant to this scenario)
+- Command:
+  - kubectl get svc -n default -o wide
+- Output:
+  - kube-wrong-port-svc   ClusterIP   10.101.175.135   <none>        8765/TCP   2d7h   app=kube-wrong-port
+  - kubernetes            ClusterIP   10.96.0.1        <none>        443/TCP    2d8h   <none>
+- Assessment:
+  - A Service named kube-wrong-port-svc exists, but its selectors (app=kube-wrong-port) do not match the pod labels (the Pod manifest shows no labels). Therefore this Service will not route to kube-wrong-port-5000.
+  - Per the scenario guidance, the absence of a Service is not a failure, and we are verifying direct pod access as intended.
+
+Conclusion
+- The pod kube-wrong-port-5000 is Running and Ready.
+- The application inside the pod is listening on port 5000 and responds with HTTP 200 to in-pod requests, proving direct access on port 5000 works.
+- A Kubernetes Service exists but does not route to this pod due to label mismatch; since the scenario requires direct pod access without Service routing, this does not indicate a regression or failure.
+
+Final verdict: <|VERIFIED|>
