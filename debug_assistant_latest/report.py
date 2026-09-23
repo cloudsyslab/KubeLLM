@@ -68,6 +68,7 @@ class TestSummary:
     ground_truth_passed: Optional[bool] = None  # True/False if GT ran, None if GT did not run
     ground_truth_configured: bool = False
     environment_context: Optional[Dict[str, Any]] = None
+    architecture_outcome: Optional[str] = None
 
     def to_dict(self) -> dict:
         """Convert to dictionary for JSON serialization."""
@@ -89,6 +90,8 @@ class TestSummary:
         }
         if self.environment_context is not None:
             result["environment_context"] = self.environment_context
+        if self.architecture_outcome is not None:
+            result["architecture_outcome"] = self.architecture_outcome
         for agent_name, agent_metrics in normalize_metrics_map(self.metrics).items():
             result["metrics"][agent_name] = asdict(agent_metrics)
         return result
@@ -145,6 +148,7 @@ def load_test_summary(summary_path: Path) -> TestSummary:
         ground_truth_passed=data.get("ground_truth_passed"),
         ground_truth_configured=data.get("ground_truth_configured", data.get("ground_truth_passed") is not None),
         environment_context=data.get("environment_context"),
+        architecture_outcome=data.get("architecture_outcome"),
     )
 
 

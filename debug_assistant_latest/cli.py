@@ -554,7 +554,7 @@ Examples:
     )
     parser.add_argument(
         "--technique",
-        choices=["allStepsAtOnce", "stepByStep", "singleAgent"],
+        choices=["allStepsAtOnce", "stepByStep", "singleAgent", "knowledgeAgentOnly"],
         default="allStepsAtOnce",
         help="Execution technique (default: allStepsAtOnce)",
     )
@@ -685,6 +685,11 @@ Examples:
 
     # Apply repeat overrides before dispatching
     repeat_active = _apply_repeat_overrides(args)
+    if args.technique == "knowledgeAgentOnly" and args.jobs > 1:
+        print(
+            "[ERROR] knowledgeAgentOnly requires --jobs 1 because the RAG API keeps one shared assistant session."
+        )
+        return 2
 
     if args.run_many:
         if repeat_active:
