@@ -1,6 +1,7 @@
 import os
 import re
 from collections import OrderedDict
+from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any, Optional, Union
 
@@ -84,6 +85,30 @@ RUN_SHELL_COMMAND_PARAMETERS = {
     },
     "required": ["command"],
 }
+
+
+@dataclass
+class ShellCommandResult:
+    """Structured result for deterministic callers of the existing shell backend."""
+
+    command: str
+    status: str
+    exit_code: Optional[int] = None
+    stdout: str = ""
+    stderr: str = ""
+    duration_s: float = 0.0
+    timeout_s: float = COMMAND_TIMEOUT_S
+    cwd: str = ""
+    timed_out: bool = False
+    blocked_reason: Optional[str] = None
+    execution_error: Optional[str] = None
+
+    @property
+    def succeeded(self) -> bool:
+        return self.status == "success"
+
+    def to_dict(self) -> dict:
+        return asdict(self)
 
 
 def _safe_log(level: str, message: str, *args) -> None:
@@ -187,22 +212,199 @@ class BetterShellTools(Toolkit):
                     return normalized
         return None
 
-    # def run_shell_command(self, args: str, tail: int = 100) -> str:
-    #     tail (int): The number of lines to return from the output.
+    def run_shell_command_result(
+        self,
+        command: str,
+        *,
+        timeout_s: float = COMMAND_TIMEOUT_S,
+        enforce_blocked_threshold: bool = False,
+    ) -> ShellCommandResult:
+        """Execute an unchanged command and return explicit process status/output."""
+        import subprocess
+        import time
+
+        if not isinstance(command, str) or not command.strip():
+            message = "Expected a non-empty literal shell command string."
+            self._write_progress(
+                "tool_error",
+                command=repr(command),
+                reason=message,
+            )
+            _safe_log("warning", "%s", message)
+            return ShellCommandResult(
+                command=command if isinstance(command, str) else repr(command),
+                status="execution_error",
+                execution_error=message,
+                timeout_s=timeout_s,
+            )
+
+        if not isinstance(timeout_s, (int, float)) or timeout_s <= 0:
+            message = f"Command timeout must be positive, got {timeout_s!r}."
+            return ShellCommandResult(
+                command=command,
+                status="execution_error",
+                execution_error=message,
+                timeout_s=timeout_s if isinstance(timeout_s, (int, float)) else 0,
+            )
+
+        blocked_reason = self._maybe_block_agent_command(command)
+        if not blocked_reason:
+            blocked_reason = self._maybe_block_windows_command(command)
+        if blocked_reason:
+            self._consecutive_blocked += 1
+            self._write_progress(
+                "tool_blocked",
+                command=command,
+                blocked_count=self._consecutive_blocked,
+                reason=blocked_reason,
+            )
+            _safe_log("warning", "Blocked shell command: %s", command)
+
+            if (
+                enforce_blocked_threshold
+                and self.blocked_threshold
+                and self._consecutive_blocked >= self.blocked_threshold
+            ):
+                threshold_message = (
+                    f"{blocked_reason} Aborting after {self._consecutive_blocked} consecutive blocked commands."
+                )
+                self._write_progress(
+                    "tool_blocked_threshold",
+                    command=command,
+                    blocked_count=self._consecutive_blocked,
+                    reason=threshold_message,
+                )
+                raise BlockedCommandThresholdError(threshold_message)
+
+            return ShellCommandResult(
+                command=command,
+                status="blocked",
+                blocked_reason=blocked_reason,
+                timeout_s=float(timeout_s),
+            )
+
+        self._reset_blocked_counter()
+
+        run_kwargs = {
+            "capture_output": True,
+            "text": True,
+            "encoding": "utf-8",
+            "errors": "replace",
+            "timeout": float(timeout_s),
+        }
+        if self.base_dir:
+            run_kwargs["cwd"] = self.base_dir
+
+        start = time.perf_counter()
+        self._write_progress(
+            "tool_start",
+            command=command,
+            cwd=str(run_kwargs.get("cwd") or os.getcwd()),
+            timeout_s=float(timeout_s),
+        )
+        _safe_log("info", "Running shell command: %s", command)
+
+        try:
+            if os.name == "nt":
+                result = subprocess.run(
+                    ["powershell", "-NoProfile", "-Command", command],
+                    shell=False,
+                    check=False,
+                    **run_kwargs,
+                )
+            else:
+                result = subprocess.run(command, shell=True, check=False, **run_kwargs)
+        except subprocess.TimeoutExpired as exc:
+            elapsed_s = round(time.perf_counter() - start, 3)
+            message = f"Command timed out after {timeout_s:g}s"
+            self._write_progress(
+                "tool_timeout",
+                command=command,
+                elapsed_s=elapsed_s,
+                timeout_s=float(timeout_s),
+                reason=message,
+            )
+            _safe_log("warning", "Failed to run shell command: %s", message)
+            return ShellCommandResult(
+                command=command,
+                status="timeout",
+                stdout=_captured_output(exc.stdout),
+                stderr=_captured_output(exc.stderr),
+                duration_s=elapsed_s,
+                timeout_s=float(timeout_s),
+                cwd=str(run_kwargs.get("cwd") or os.getcwd()),
+                timed_out=True,
+                execution_error=message,
+            )
+        except Exception as exc:
+            elapsed_s = round(time.perf_counter() - start, 3)
+            message = str(exc)
+            self._write_progress(
+                "tool_error",
+                command=command,
+                elapsed_s=elapsed_s,
+                reason=message,
+            )
+            _safe_log("warning", "Failed to run shell command: %s", message)
+            return ShellCommandResult(
+                command=command,
+                status="execution_error",
+                duration_s=elapsed_s,
+                timeout_s=float(timeout_s),
+                cwd=str(run_kwargs.get("cwd") or os.getcwd()),
+                execution_error=message,
+            )
+
+        elapsed_s = round(time.perf_counter() - start, 3)
+        _safe_log("debug", "Return code: %s", result.returncode)
+        stdout = getattr(result, "stdout", "") or ""
+        stderr = getattr(result, "stderr", "") or ""
+
+        if result.returncode != 0:
+            error_text = stderr.strip() or stdout.strip() or f"Command exited with code {result.returncode}"
+            self._write_progress(
+                "tool_error",
+                command=command,
+                elapsed_s=elapsed_s,
+                exit_code=result.returncode,
+                reason=error_text,
+            )
+            return ShellCommandResult(
+                command=command,
+                status="exit_error",
+                exit_code=result.returncode,
+                stdout=stdout,
+                stderr=stderr,
+                duration_s=elapsed_s,
+                timeout_s=float(timeout_s),
+                cwd=str(run_kwargs.get("cwd") or os.getcwd()),
+            )
+
+        self._write_progress(
+            "tool_end",
+            command=command,
+            elapsed_s=elapsed_s,
+            exit_code=result.returncode,
+            stdout_preview=stdout[:400],
+        )
+
+        return ShellCommandResult(
+            command=command,
+            status="success",
+            exit_code=result.returncode,
+            stdout=stdout,
+            stderr=stderr,
+            duration_s=elapsed_s,
+            timeout_s=float(timeout_s),
+            cwd=str(run_kwargs.get("cwd") or os.getcwd()),
+        )
+
     def run_shell_command(
         self,
         args: Any = None,
         command: Any = None,
     ) -> str:
-        """Runs a shell command and returns the output or error.
-
-        The public tool schema exposes only `command`, but `args` and non-string
-        payloads remain accepted here for backward compatibility with older
-        tool-call payloads.
-        """
-        import subprocess
-        import time
-
+        """Keep the existing LLM-facing text result and payload compatibility."""
         raw_command = command if command is not None else args
         normalized_command = self._normalize_command_value(raw_command)
         if normalized_command is None:
@@ -218,109 +420,29 @@ class BetterShellTools(Toolkit):
             _safe_log("warning", "Failed to normalize shell command payload: %s", raw_command)
             return f"Error: {message}"
 
-        blocked_reason = self._maybe_block_agent_command(normalized_command)
-        if not blocked_reason:
-            blocked_reason = self._maybe_block_windows_command(normalized_command)
-        if blocked_reason:
-            self._consecutive_blocked += 1
-            self._write_progress(
-                "tool_blocked",
-                command=normalized_command,
-                blocked_count=self._consecutive_blocked,
-                reason=blocked_reason,
-            )
-            _safe_log("warning", "Blocked shell command: %s", normalized_command)
-
-            if self.blocked_threshold and self._consecutive_blocked >= self.blocked_threshold:
-                threshold_message = (
-                    f"{blocked_reason} Aborting after {self._consecutive_blocked} consecutive blocked commands."
-                )
-                self._write_progress(
-                    "tool_blocked_threshold",
-                    command=normalized_command,
-                    blocked_count=self._consecutive_blocked,
-                    reason=threshold_message,
-                )
-                raise BlockedCommandThresholdError(threshold_message)
-
-            return f"Error: {blocked_reason}"
-
-        self._reset_blocked_counter()
-
-        run_kwargs = {
-            "capture_output": True,
-            "text": True,
-            "encoding": "utf-8",
-            "errors": "replace",
-            "timeout": COMMAND_TIMEOUT_S,
-        }
-        if self.base_dir:
-            run_kwargs["cwd"] = self.base_dir
-
-        start = time.perf_counter()
-        self._write_progress(
-            "tool_start",
-            command=normalized_command,
-            cwd=str(run_kwargs.get("cwd") or os.getcwd()),
-            timeout_s=COMMAND_TIMEOUT_S,
+        result = self.run_shell_command_result(
+            normalized_command,
+            enforce_blocked_threshold=True,
         )
-        _safe_log("info", "Running shell command: %s", normalized_command)
-
-        try:
-            if os.name == "nt":
-                result = subprocess.run(
-                    ["powershell", "-NoProfile", "-Command", normalized_command],
-                    shell=False,
-                    check=False,
-                    **run_kwargs,
-                )
-            else:
-                result = subprocess.run(normalized_command, shell=True, check=False, **run_kwargs)
-        except subprocess.TimeoutExpired:
-            elapsed_s = round(time.perf_counter() - start, 3)
-            message = f"Command timed out after {COMMAND_TIMEOUT_S}s"
-            self._write_progress(
-                "tool_timeout",
-                command=normalized_command,
-                elapsed_s=elapsed_s,
-                timeout_s=COMMAND_TIMEOUT_S,
-                reason=message,
-            )
-            _safe_log("warning", "Failed to run shell command: %s", message)
-            return f"Error: {message}"
-        except Exception as exc:
-            elapsed_s = round(time.perf_counter() - start, 3)
-            message = str(exc)
-            self._write_progress(
-                "tool_error",
-                command=normalized_command,
-                elapsed_s=elapsed_s,
-                reason=message,
-            )
-            _safe_log("warning", "Failed to run shell command: %s", message)
-            return f"Error: {message}"
-
-        elapsed_s = round(time.perf_counter() - start, 3)
-        _safe_log("debug", "Return code: %s", result.returncode)
-
-        if result.returncode != 0:
-            error_text = result.stderr.strip() or result.stdout.strip() or f"Command exited with code {result.returncode}"
-            self._write_progress(
-                "tool_error",
-                command=normalized_command,
-                elapsed_s=elapsed_s,
-                exit_code=result.returncode,
-                reason=error_text,
+        if result.succeeded:
+            return "\n".join(result.stdout.split("\n")[-50:])
+        if result.blocked_reason:
+            return f"Error: {result.blocked_reason}"
+        if result.timed_out:
+            return f"Error: {result.execution_error}"
+        if result.status == "exit_error":
+            error_text = (
+                result.stderr.strip()
+                or result.stdout.strip()
+                or f"Command exited with code {result.exit_code}"
             )
             return f"Error: {error_text}"
+        return f"Error: {result.execution_error or 'Shell command execution failed.'}"
 
-        output = "\n".join(result.stdout.split("\n")[-50:])
-        self._write_progress(
-            "tool_end",
-            command=normalized_command,
-            elapsed_s=elapsed_s,
-            exit_code=result.returncode,
-            stdout_preview=output[:400],
-        )
 
-        return output
+def _captured_output(value: Any) -> str:
+    if value is None:
+        return ""
+    if isinstance(value, bytes):
+        return value.decode("utf-8", errors="replace")
+    return str(value)

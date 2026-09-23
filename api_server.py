@@ -16,6 +16,7 @@ from phi.document.reader.pdf import PDFReader
 from phi.document.reader.text import TextReader
 from phi.utils.log import logger
 from assistant import get_rag_assistant, get_rag_agent  # type: ignore
+from debug_assistant_latest.rag_server_config import DEFAULT_OUTPUT_MODE, RAG_OUTPUT_MODES
 import shutil
 from statement import Model
 from sqlalchemy import create_engine, inspect, text
@@ -147,7 +148,11 @@ async def read_root():
 async def initialize_agent(model: Model, use_rag: Annotated[bool, Body()]):
     """Initialize the RAG agent with the selected model."""
     try:
-        if session_state.rag_assistant is None or session_state.llm_model != model.name:
+        if (
+            session_state.rag_assistant is None
+            or session_state.llm_model != model.name
+            or session_state.output_mode != DEFAULT_OUTPUT_MODE
+        ):
             embedder_config = None
             if use_rag:
                 embedder_config = resolve_embedder_config(chat_model_name=model.name)
@@ -156,6 +161,7 @@ async def initialize_agent(model: Model, use_rag: Annotated[bool, Body()]):
             session_state.llm_model = model.name
             session_state.embeddings_model = None if embedder_config is None else embedder_config.model
             session_state.embeddings_provider = None if embedder_config is None else embedder_config.provider
+            session_state.output_mode = DEFAULT_OUTPUT_MODE
             session_state.rag_assistant_run_id = session_state.rag_assistant.create_session()
             session_state.reset_messages()
     except Exception as exc:
@@ -168,9 +174,16 @@ async def initialize_assistant(
     llm_model: str = Form(...),
     embeddings_model: Optional[str] = Form(None),
     embeddings_provider: Optional[str] = Form(None),
+    output_mode: str = Form(DEFAULT_OUTPUT_MODE),
 ):
     """Initialize the RAG assistant with selected models."""
     try:
+        # Keep direct Python calls (including the legacy route tests) aligned
+        # with FastAPI's declared form default.
+        if not isinstance(output_mode, str):
+            output_mode = DEFAULT_OUTPUT_MODE
+        if output_mode not in RAG_OUTPUT_MODES:
+            raise ValueError(f"Unsupported assistant output mode: {output_mode!r}")
         embedder_config = resolve_embedder_config(
             embeddings_model=embeddings_model,
             provider=embeddings_provider,
@@ -181,6 +194,7 @@ async def initialize_assistant(
             or session_state.llm_model != llm_model
             or session_state.embeddings_model != embedder_config.model
             or session_state.embeddings_provider != embedder_config.provider
+            or session_state.output_mode != output_mode
         )
         if should_rebuild:
             logger.info(f"---*--- Creating {llm_model} Agent ---*---")
@@ -188,10 +202,12 @@ async def initialize_assistant(
                 llm_model=llm_model,
                 embeddings_model=embedder_config.model,
                 embeddings_provider=embedder_config.provider,
+                output_mode=output_mode,
             )
             session_state.llm_model = llm_model
             session_state.embeddings_model = embedder_config.model
             session_state.embeddings_provider = embedder_config.provider
+            session_state.output_mode = output_mode
             session_state.rag_assistant_run_id = session_state.rag_assistant.create_session()
             session_state.reset_messages()
     except Exception as exc:

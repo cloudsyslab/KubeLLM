@@ -5,6 +5,7 @@ import requests
 from bs4 import BeautifulSoup
 
 from runtime_config import build_resolved_embedder
+from debug_assistant_latest.rag_server_config import DEFAULT_OUTPUT_MODE
 
 DEFAULT_ASSISTANT_MESSAGE = "Upload a doc and ask me questions..."
 EMBEDDING_CHUNK_SIZE_CHARS = 4000
@@ -19,6 +20,7 @@ class SessionState:
     llm_model: Optional[str] = None
     embeddings_model: Optional[str] = None
     embeddings_provider: Optional[str] = None
+    output_mode: str = DEFAULT_OUTPUT_MODE
 
     def reset_messages(self):
         self.messages = [{"role": "assistant", "content": DEFAULT_ASSISTANT_MESSAGE}]
@@ -29,6 +31,7 @@ class SessionState:
         self.llm_model = None
         self.embeddings_model = None
         self.embeddings_provider = None
+        self.output_mode = DEFAULT_OUTPUT_MODE
         self.reset_messages()
 
 

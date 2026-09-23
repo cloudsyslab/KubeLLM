@@ -65,6 +65,7 @@ class TestResult:
     ground_truth_passed: Optional[bool] = None  # None if GT did not run
     ground_truth_configured: bool = False
     environment_context: Optional[Dict[str, Any]] = None
+    architecture_outcome: Optional[str] = None
 
 
 def get_timestamp_id() -> str:
@@ -227,6 +228,90 @@ def _read_error_context(log_dir: Path, line_limit: int = 20) -> Optional[str]:
     return excerpt or None
 
 
+KNOWLEDGE_AGENT_ONLY = "knowledgeAgentOnly"
+KNOWLEDGE_EARLY_FAILURES = {
+    "knowledge_generation_error",
+    "contract_error",
+    "execution_error",
+    "action_failed",
+}
+
+
+def _finalize_knowledge_agent_only(
+    *,
+    architecture_outcome: Optional[str],
+    report: Optional[dict],
+    ground_truth_configured: bool,
+    ground_truth_passed: Optional[bool],
+    verified: Optional[bool],
+) -> tuple[str, bool, dict]:
+    """Resolve the technique outcome after the independent evaluators finish."""
+    from knowledge_agent_only import write_json_artifact
+
+    report = dict(report or {})
+    report.setdefault("technique", KNOWLEDGE_AGENT_ONLY)
+    outcome = architecture_outcome or report.get("architecture_outcome") or "execution_error"
+    report["ground_truth"] = {
+        "status": (
+            "passed" if ground_truth_passed is True
+            else "failed" if ground_truth_passed is False
+            else "not_run" if not ground_truth_configured
+            else "error"
+        ),
+        "passed": ground_truth_passed,
+    }
+
+    if outcome == "pending_ground_truth":
+        if ground_truth_passed is True:
+            outcome = "completed_solved"
+        elif ground_truth_passed is False:
+            outcome = "completed_unsolved"
+        elif ground_truth_configured:
+            outcome = "verification_error"
+        elif verified is True:
+            outcome = "completed_solved"
+        elif verified is False:
+            outcome = "completed_unsolved"
+        else:
+            outcome = "verification_error"
+
+    report["architecture_outcome"] = outcome
+    report_path = report.pop("_artifact_path", None)
+    if report_path:
+        write_json_artifact(Path(report_path), report)
+
+    if outcome in KNOWLEDGE_EARLY_FAILURES:
+        success = False
+    elif ground_truth_passed is not None:
+        success = ground_truth_passed
+    else:
+        success = verified is True
+    return outcome, success, report
+
+
+def _knowledge_architecture_error(outcome: Optional[str], report: Optional[dict]) -> Optional[str]:
+    report = report or {}
+    if outcome == "knowledge_generation_error":
+        return (report.get("knowledge_generation") or {}).get("error") or "Knowledge Agent generation failed."
+    if outcome == "execution_error":
+        return (report.get("execution") or {}).get("failure_reason") or "Deterministic executor failed."
+    if outcome == "verification_error":
+        verification = report.get("verification") or {}
+        ground_truth = report.get("ground_truth") or {}
+        return (
+            verification.get("error")
+            or ground_truth.get("error")
+            or "Verification or ground-truth evaluation could not complete."
+        )
+    verification = report.get("verification") or {}
+    if verification.get("status") == "verification_error":
+        return verification.get("error") or "Verification Agent could not complete."
+    ground_truth = report.get("ground_truth") or {}
+    if ground_truth.get("status") == "error":
+        return ground_truth.get("error") or "Ground-truth evaluation could not complete."
+    return None
+
+
 def _run_selected_preflight(args, test_names: Optional[List[str]]) -> int:
     result = run_preflight(
         test_names=test_names,
@@ -297,6 +382,7 @@ def _build_failed_result(
         ground_truth_passed=None,
         ground_truth_configured=_has_ground_truth_config(test_name, overrides or {}),
         environment_context=environment_context,
+        architecture_outcome=None,
     )
 
 
@@ -338,10 +424,13 @@ def run_single_test_in_process(
     test_started = False  # Guard: only teardown if test actually started
     ground_truth_passed = None
     ground_truth_configured = False
+    architecture_outcome = None
+    knowledge_execution = None
+    ground_truth_error = None
 
     try:
         # Import here to avoid circular imports in worker process
-        from main import allStepsAtOnce, singleAgentApproach, stepByStep
+        from main import allStepsAtOnce, knowledgeAgentOnly, singleAgentApproach, stepByStep
         from config_merge import load_config_with_overrides, save_effective_config
         from teardown import (
             cleanup_test_pods,
@@ -410,6 +499,19 @@ def run_single_test_in_process(
                     success, verified, debug_self_report, metrics, derived_error = _extract_execution_result(result)
                     if error is None and derived_error:
                         error = derived_error
+                elif technique == KNOWLEDGE_AGENT_ONLY:
+                    result = knowledgeAgentOnly(
+                        configFile=str(config_path),
+                        config_overrides=overrides,
+                        runtime_context=worker_runtime,
+                    )
+                    success, verified, debug_self_report, metrics, derived_error = _extract_execution_result(result)
+                    architecture_outcome = result.get("architecture_outcome")
+                    knowledge_execution = result.get("knowledge_execution")
+                    if knowledge_execution is not None:
+                        knowledge_execution["_artifact_path"] = str(log_dir / "knowledge_execution.json")
+                    if error is None and derived_error:
+                        error = derived_error
                 else:
                     raise ValueError(f"Unknown technique: {technique}")
 
@@ -426,6 +528,14 @@ def run_single_test_in_process(
                         # GT failure overrides LLM success (deterministic > heuristic)
                         if not gt_result.passed:
                             success = False
+                    elif technique == KNOWLEDGE_AGENT_ONLY:
+                        ground_truth_error = "Ground-truth checks did not return a result."
+                        if knowledge_execution is not None:
+                            knowledge_execution["ground_truth"] = {
+                                "status": "error",
+                                "passed": None,
+                                "error": ground_truth_error,
+                            }
 
             finally:
                 sys.stdout, sys.stderr = old_stdout, old_stderr
@@ -433,8 +543,51 @@ def run_single_test_in_process(
     except Exception as e:
         if error is None:  # Don't overwrite backup error
             error = str(e)
+        if (
+            technique == KNOWLEDGE_AGENT_ONLY
+            and ground_truth_configured
+            and ground_truth_passed is None
+            and knowledge_execution is not None
+        ):
+            ground_truth_error = str(e)
+            knowledge_execution["ground_truth"] = {
+                "status": "error",
+                "passed": None,
+                "error": ground_truth_error,
+            }
         with open(stderr_log, "a", encoding="utf-8") as f:
             f.write(f"\n\nEXCEPTION:\n{traceback.format_exc()}")
+
+    if technique == KNOWLEDGE_AGENT_ONLY:
+        if knowledge_execution is None:
+            knowledge_execution = {
+                "technique": KNOWLEDGE_AGENT_ONLY,
+                "knowledge_generation": {"status": "not_started", "error": None},
+                "contract": {"status": "not_checked", "error": None},
+                "execution": {"status": "not_started", "actions": [], "failure_reason": error},
+                "verification": {"status": "not_started", "error": None},
+                "ground_truth": {"status": "pending"},
+                "_artifact_path": str(log_dir / "knowledge_execution.json"),
+            }
+            architecture_outcome = "execution_error"
+        architecture_outcome, success, knowledge_execution = _finalize_knowledge_agent_only(
+            architecture_outcome=architecture_outcome,
+            report=knowledge_execution,
+            ground_truth_configured=ground_truth_configured,
+            ground_truth_passed=ground_truth_passed,
+            verified=verified,
+        )
+        if ground_truth_error and isinstance(knowledge_execution.get("ground_truth"), dict):
+            knowledge_execution["ground_truth"].update(status="error", error=ground_truth_error)
+            try:
+                from knowledge_agent_only import write_json_artifact
+
+                write_json_artifact(log_dir / "knowledge_execution.json", knowledge_execution)
+            except Exception as artifact_error:
+                error = error or f"Could not save knowledge execution artifact: {artifact_error}"
+        stage_error = _knowledge_architecture_error(architecture_outcome, knowledge_execution)
+        if stage_error:
+            error = error or stage_error
 
     # Opt-in teardown after run (only if test started; log warnings to stderr.log)
     if teardown_after_run and test_started:
@@ -471,6 +624,7 @@ def run_single_test_in_process(
         ground_truth_passed=ground_truth_passed,
         ground_truth_configured=ground_truth_configured,
         environment_context=environment_context,
+        architecture_outcome=architecture_outcome,
     )
 
 
@@ -506,6 +660,9 @@ def run_single_test(
     ground_truth_passed = None
     ground_truth_configured = False
     runtime_context = dict(runtime_context or {})
+    architecture_outcome = None
+    knowledge_execution = None
+    ground_truth_error = None
     runtime_context.setdefault("blocked_threshold", 3)
     runtime_context["log_dir"] = str(log_dir)
     progress_writer = runtime_context.get("progress_writer")
@@ -523,7 +680,7 @@ def run_single_test(
         )
 
     try:
-        from main import allStepsAtOnce, singleAgentApproach, stepByStep
+        from main import allStepsAtOnce, knowledgeAgentOnly, singleAgentApproach, stepByStep
         from teardown import (
             cleanup_test_pods,
             cleanup_transient_k8s_resources,
@@ -613,6 +770,19 @@ def run_single_test(
                     success, verified, debug_self_report, metrics, derived_error = _extract_execution_result(result)
                     if error is None and derived_error:
                         error = derived_error
+                elif technique == KNOWLEDGE_AGENT_ONLY:
+                    result = knowledgeAgentOnly(
+                        configFile=str(config_path),
+                        config_overrides=overrides,
+                        runtime_context=runtime_context,
+                    )
+                    success, verified, debug_self_report, metrics, derived_error = _extract_execution_result(result)
+                    architecture_outcome = result.get("architecture_outcome")
+                    knowledge_execution = result.get("knowledge_execution")
+                    if knowledge_execution is not None:
+                        knowledge_execution["_artifact_path"] = str(log_dir / "knowledge_execution.json")
+                    if error is None and derived_error:
+                        error = derived_error
                 else:
                     raise ValueError(f"Unknown technique: {technique}")
 
@@ -639,6 +809,14 @@ def run_single_test(
                             )
                     elif progress_writer:
                         progress_writer.write_event("ground_truth_end", test_name=test_name, passed=None)
+                    if technique == KNOWLEDGE_AGENT_ONLY and not gt_result:
+                        ground_truth_error = "Ground-truth checks did not return a result."
+                        if knowledge_execution is not None:
+                            knowledge_execution["ground_truth"] = {
+                                "status": "error",
+                                "passed": None,
+                                "error": ground_truth_error,
+                            }
 
             finally:
                 sys.stdout, sys.stderr = old_stdout, old_stderr
@@ -646,12 +824,55 @@ def run_single_test(
     except Exception as e:
         if error is None:  # Don't overwrite backup error
             error = str(e)
+        if (
+            technique == KNOWLEDGE_AGENT_ONLY
+            and ground_truth_configured
+            and ground_truth_passed is None
+            and knowledge_execution is not None
+        ):
+            ground_truth_error = str(e)
+            knowledge_execution["ground_truth"] = {
+                "status": "error",
+                "passed": None,
+                "error": ground_truth_error,
+            }
         if verbose:
             print(f"[ERROR] {test_name}: {error}")
         with open(stderr_log, "a", encoding="utf-8") as f:
             f.write(f"\n\nEXCEPTION:\n{traceback.format_exc()}")
         if progress_writer:
             progress_writer.write_event("test_error", test_name=test_name, error=error)
+
+    if technique == KNOWLEDGE_AGENT_ONLY:
+        if knowledge_execution is None:
+            knowledge_execution = {
+                "technique": KNOWLEDGE_AGENT_ONLY,
+                "knowledge_generation": {"status": "not_started", "error": None},
+                "contract": {"status": "not_checked", "error": None},
+                "execution": {"status": "not_started", "actions": [], "failure_reason": error},
+                "verification": {"status": "not_started", "error": None},
+                "ground_truth": {"status": "pending"},
+                "_artifact_path": str(log_dir / "knowledge_execution.json"),
+            }
+            architecture_outcome = "execution_error"
+        architecture_outcome, success, knowledge_execution = _finalize_knowledge_agent_only(
+            architecture_outcome=architecture_outcome,
+            report=knowledge_execution,
+            ground_truth_configured=ground_truth_configured,
+            ground_truth_passed=ground_truth_passed,
+            verified=verified,
+        )
+        if ground_truth_error and isinstance(knowledge_execution.get("ground_truth"), dict):
+            knowledge_execution["ground_truth"].update(status="error", error=ground_truth_error)
+            try:
+                from knowledge_agent_only import write_json_artifact
+
+                write_json_artifact(log_dir / "knowledge_execution.json", knowledge_execution)
+            except Exception as artifact_error:
+                error = error or f"Could not save knowledge execution artifact: {artifact_error}"
+        stage_error = _knowledge_architecture_error(architecture_outcome, knowledge_execution)
+        if stage_error:
+            error = error or stage_error
 
     # Opt-in teardown after run (only if test started; log warnings to stderr.log)
     if teardown_after_run and test_started:
@@ -713,6 +934,7 @@ def run_single_test(
         ground_truth_passed=ground_truth_passed,
         ground_truth_configured=ground_truth_configured,
         environment_context=env_ctx,
+        architecture_outcome=architecture_outcome,
     )
 
 
@@ -736,6 +958,7 @@ def result_to_summary(result: TestResult, technique: str, overrides: dict) -> Te
         ground_truth_passed=result.ground_truth_passed,
         ground_truth_configured=result.ground_truth_configured,
         environment_context=result.environment_context,
+        architecture_outcome=result.architecture_outcome,
     )
 
 

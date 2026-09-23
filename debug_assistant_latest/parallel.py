@@ -75,7 +75,7 @@ def run_tests_parallel(
 
     Args:
         test_names: List of test case names to run
-        technique: Execution technique (allStepsAtOnce, stepByStep, singleAgent)
+        technique: Execution technique (allStepsAtOnce, stepByStep, singleAgent, knowledgeAgentOnly)
         overrides: Config overrides to apply
         output_dir: Base output directory for this run
         max_workers: Maximum number of parallel workers
@@ -84,6 +84,11 @@ def run_tests_parallel(
     Returns:
         List of TestResult objects
     """
+    if technique == "knowledgeAgentOnly" and max_workers > 1:
+        raise ValueError(
+            "knowledgeAgentOnly requires serial execution because the RAG API keeps one shared assistant session."
+        )
+
     results = []
     seq_runtime_context = None
     if run_uuid or run_id or environment_context is not None:

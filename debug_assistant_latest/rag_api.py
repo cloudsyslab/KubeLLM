@@ -2,7 +2,12 @@ from typing import Optional
 
 import requests
 
-from rag_server_config import RAG_API_VERSION, compute_repo_signature, resolve_client_base_url
+from rag_server_config import (
+    DEFAULT_OUTPUT_MODE,
+    RAG_API_VERSION,
+    compute_repo_signature,
+    resolve_client_base_url,
+)
 
 SERVER_INFO_PATH = "/server_info/"
 EXPECTED_REPO_SIGNATURE = compute_repo_signature()
@@ -126,6 +131,7 @@ def initialize_assistant(
     llm_model: str,
     embeddings_model: Optional[str] = None,
     embeddings_provider: Optional[str] = None,
+    output_mode: Optional[str] = None,
 ):
     """
     Initialize the assistant with the specified LLM and embeddings settings.
@@ -135,6 +141,8 @@ def initialize_assistant(
         data["embeddings_model"] = embeddings_model
     if embeddings_provider is not None:
         data["embeddings_provider"] = embeddings_provider
+    if output_mode is not None and output_mode != DEFAULT_OUTPUT_MODE:
+        data["output_mode"] = output_mode
     return _request("post", "/initialize/", data=data)
 
 

@@ -6,6 +6,11 @@ from phi.storage.agent.postgres import PgAgentStorage
 from better_shell import BetterShellTools
 from statement import Model
 from runtime_config import DB_URL, build_chat_model, build_resolved_embedder
+from debug_assistant_latest.rag_server_config import (
+    DEFAULT_OUTPUT_MODE,
+    KNOWLEDGE_PLAN_OUTPUT_MODE,
+    RAG_OUTPUT_MODES,
+)
 
 db_url = DB_URL
 
@@ -38,6 +43,43 @@ guidelines = [
     # TODO: HOW TO GET AGENT TO STOP USING PLACEHOLDER NAMES
     #"When writing out your commands, use the **real name** of the Kubernetes resource instead of placeholder names. For example, if the command you are about to suggest is `kubectl get pods -n <namespace>`, run `kubectl get namespaces` first to get available namespaces. Another example is if your command is `kubectl describe <node-name>`, then run `kubectl get nodes` first to get the available nodes.",
 ]
+
+
+def _output_instructions(output_mode: str):
+    if output_mode not in RAG_OUTPUT_MODES:
+        raise ValueError(f"Unsupported assistant output mode: {output_mode!r}")
+    if output_mode == DEFAULT_OUTPUT_MODE:
+        return instructions, guidelines, True
+    if output_mode != KNOWLEDGE_PLAN_OUTPUT_MODE:
+        raise ValueError(f"Unsupported assistant output mode: {output_mode!r}")
+
+    plan_instructions = [
+        instructions[0],
+        "Return exactly one JSON object and no other text using this structure: "
+        '{"schema_version":"1","actions":[{"tool":"run_shell_command",'
+        '"arguments":{"command":"literal shell command"}}]}. '
+        "Set schema_version to the string \"1\". Include 1 to 20 actions in execution order. "
+        "Use only the named fields, set tool to \"run_shell_command\", and provide a non-empty command string.",
+    ]
+    plan_guidelines = [
+        guideline
+        for guideline in guidelines
+        if not guideline.startswith("Don't worry too much about formatting or syntax")
+        and not guideline.startswith("Please use this format for each step")
+    ]
+    return plan_instructions, plan_guidelines, False
+
+
+def _output_tools(output_mode: str):
+    if output_mode == DEFAULT_OUTPUT_MODE:
+        return [BetterShellTools()]
+    if output_mode == KNOWLEDGE_PLAN_OUTPUT_MODE:
+        # This technique must emit a plan only; all command execution belongs
+        # to the deterministic runner-side parser/executor.
+        return []
+    raise ValueError(f"Unsupported assistant output mode: {output_mode!r}")
+
+
 def get_rag_agent(
     model: Model, 
     use_rag: bool = True,
@@ -118,8 +160,11 @@ def get_rag_assistant(
     user_id: Optional[str] = None,
     run_id: Optional[str] = None,
     debug_mode: bool = True,
+    output_mode: str = DEFAULT_OUTPUT_MODE,
 ) -> Agent:
     """Get a Local RAG Agent."""
+    output_instructions, output_guidelines, use_markdown = _output_instructions(output_mode)
+    output_tools = _output_tools(output_mode)
     llm = build_chat_model(llm_model)
     resolved_embedder = build_resolved_embedder(
         embeddings_model=embeddings_model,
@@ -154,16 +199,16 @@ def get_rag_assistant(
         add_context=True,
         add_context_instructions=True,
         storage=PgAgentStorage(table_name="ai.local_rag_assistant", db_url=db_url),
-        tools=[BetterShellTools()],
+        tools=output_tools,
         show_tool_calls=False,
         #read_chat_history=True,
         search_knowledge=True,
         description="You are an AI called 'RAGit'. You provide instructions that a user should take to solve issues with their Kubernetes configurations.",
         task="Provide the user with instructions and shell commands to solve the user's problem.",
-        instructions=instructions,
-        guidelines=guidelines,
+        instructions=output_instructions,
+        guidelines=output_guidelines,
         prevent_hallucinations=True,
-        markdown=True,
+        markdown=use_markdown,
         add_datetime_to_instructions=True,
         debug_mode=debug_mode,
     )
