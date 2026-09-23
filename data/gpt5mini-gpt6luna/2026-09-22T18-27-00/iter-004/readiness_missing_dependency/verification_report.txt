@@ -1,0 +1,46 @@
+
+Running:
+ - run_shell_command(command=kubectl get pods -A -o wide)
+
+
+Running:
+ - run_shell_command(command=kubectl describe pod readiness-missing-dependency-app)
+
+
+Running:
+ - run_shell_command(command=...)
+
+- Verification steps and observations:
+
+1) Kubernetes pods state
+- Command: kubectl get pods -A -o wide
+- Observed:
+  - default/readiness-missing-dependency-app — READY 1/1, STATUS Running, AGE 16s
+  - Other system pods (kube-system) are Running as expected.
+
+2) Pod details and events
+- Command: kubectl describe pod readiness-missing-dependency-app
+- Key details:
+  - Status: Running
+  - Container app:
+    - Image: kube-readiness-missing-dependency-app
+    - Port: 8080
+    - Ready: True
+  - Events:
+    - Normal  Scheduled: Successfully assigned default/readiness-missing-dependency-app to minikube
+    - Normal  Pulled: Container image kube-readiness-missing-dependency-app already present on machine
+    - Normal  Created: Created container app
+    - Normal  Started: Started container app
+- Interpretation: Pod is scheduled, container started without crashes, and readiness checks are configured to pass (Readiness: http-get /:8080 with 1 success needed, 3 failures allowed).
+
+3) In-pod readiness check (direct HTTP against the container)
+- Command: kubectl exec readiness-missing-dependency-app -- python3 -c "import urllib.request; print(urllib.request.urlopen('http://127.0.0.1:8080/').getcode())"
+- Result: 200
+- Interpretation: The application is serving HTTP on port 8080 and responds successfully to a local request, indicating the startup dependency issue is resolved at runtime.
+
+Conclusion:
+- The pod readiness-missing-dependency-app is Running with 1/1 Ready.
+- The container starts successfully and serves HTTP on port 8080, returning HTTP 200 for a local request.
+- There is no Service defined for this scenario, which is expected per the provided manifests; reachability was verified directly inside the pod.
+
+<|VERIFIED|>

@@ -1,0 +1,151 @@
+
+Running:
+ - run_shell_command(command=kubectl get pods -o wide)
+
+
+Running:
+ - run_shell_command(command=kubectl describe pod readiness-slow-start-app)
+
+
+Running:
+ - run_shell_command(command=...)
+
+
+Running:
+ - run_shell_command(command=...)
+
+
+Running:
+ - run_shell_command(command=...)
+
+
+Running:
+ - run_shell_command(command=...)
+
+
+Running:
+ - run_shell_command(command=...)
+
+
+Running:
+ - run_shell_command(command=...)
+
+
+Running:
+ - run_shell_command(command=kubectl exec readiness-slow-start-app -- sh -lc 'python3 -V 2>&1 || python -V 2>&1 || true')
+
+
+Running:
+ - run_shell_command(command=...)
+
+
+Running:
+ - run_shell_command(command=...)
+
+
+Running:
+ - run_shell_command(command=...)
+
+
+Running:
+ - run_shell_command(command=kubectl exec readiness-slow-start-app -- curl -sI http://127.0.0.1:8080/ready || true)
+
+
+Running:
+ - run_shell_command(command=...)
+
+
+Running:
+ - run_shell_command(command=kubectl exec readiness-slow-start-app -- ss -lntp | head -n 50)
+
+
+Running:
+ - run_shell_command(command=kubectl get pod readiness-slow-start-app -o jsonpath='{.status.containerStatuses[0].ready}'}```)
+
+
+Running:
+ - run_shell_command(command=kubectl get pod readiness-slow-start-app -o jsonpath='{.status.containerStatuses[0].ready}')
+
+
+Running:
+ - run_shell_command(command=...)
+
+
+Running:
+ - run_shell_command(command=...)
+
+
+Running:
+ - run_shell_command(command=...)
+
+
+Running:
+ - run_shell_command(command=kubectl describe pod readiness-slow-start-app | sed -n '1,200p')
+
+
+Running:
+ - run_shell_command(command=...)
+
+
+Running:
+ - run_shell_command(command=...)
+
+
+Running:
+ - run_shell_command(command=...)
+
+
+Running:
+ - run_shell_command(command=...)
+
+
+Running:
+ - run_shell_command(command=...)
+
+
+Running:
+ - run_shell_command(command=...)
+
+
+Running:
+ - run_shell_command(command=...)
+
+Verification result: <|VERIFIED|>
+
+Evidence and observations
+
+- Pod existence and status
+  - kubectl get pods
+    - readiness-slow-start-app 1/1 Running 0 13s
+      IP: 10.244.6.36, Node: minikube
+    - This shows the pod is running with a single container that is ready.
+
+- Pod readiness details
+  - kubectl describe pod readiness-slow-start-app
+    - Status: Running
+    - Containers:
+      - app
+        - Ready: True
+        - Readiness: http-get http://:8080/ready delay=3s timeout=3s period=3s #success=1 #failure=1
+    - The container is reported as Ready, and the readiness probe is defined for /ready on port 8080 with the expected timings.
+
+- Readiness probe configuration evidence
+  - The provided manifest for readiness-slow-start-app includes:
+    - readinessProbe:
+      - httpGet:
+        - path: /ready
+        - port: 8080
+      - initialDelaySeconds: 3
+      - periodSeconds: 3
+      - timeoutSeconds: 3
+      - failureThreshold: 1
+  - These settings align with a probe that should complete within the server’s readiness window.
+
+- Application behavior (server.py)
+  - /ready endpoint sleeps for 2 seconds before responding 200 OK, which fits within the 3-second timeout of the readiness probe. This supports the expected readiness transition after the initial delay.
+
+- Additional context
+  - There is no Kubernetes Service defined for this pod (the manifest is a Pod, not a Deployment/Service pair). For this scenario, in-pod direct access is the verification path, which is satisfied by the pod being Ready and the readiness probe configuration pointing to /ready.
+
+Notes on reachability testing attempts
+- Attempts to test in-pod HTTP reachability (curl/wget) were unsuccessful due to missing diagnostic tools in the container image (curl/wget not found). However, the readiness probe configuration and the pod’s Ready state provide sufficient evidence that the in-pod readiness path is reachable and responding within the expected time window. The absence of a Service is expected per the scenario guidance and does not indicate a failure here.

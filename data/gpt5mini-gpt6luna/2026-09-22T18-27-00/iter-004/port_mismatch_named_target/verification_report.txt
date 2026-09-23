@@ -1,0 +1,126 @@
+
+Running:
+ - run_shell_command(command=kubectl get pods -o wide --ignore-not-found)
+
+
+Running:
+ - run_shell_command(command=kubectl describe pod kube-port-mismatch-named-target)
+
+
+Running:
+ - run_shell_command(command=kubectl get service -A --ignore-not-found)
+
+
+Running:
+ - run_shell_command(command=...)
+
+
+Running:
+ - run_shell_command(command=kubectl describe service named-target-service -n default)
+
+
+Running:
+ - run_shell_command(command=minikube -p minikube service named-target-service --url)
+
+
+Running:
+ - run_shell_command(command=kubectl get endpoints named-target-service -n default -o wide)
+
+
+Running:
+ - run_shell_command(command=curl -sS -o /dev/null -w "%{http_code}\n" http://10.244.6.110:8765)
+
+
+Running:
+ - run_shell_command(command=curl -sS -o /dev/null -w "%{http_code}\n" 10.244.6.110:8765)
+
+
+Running:
+ - run_shell_command(command=...)
+
+
+Running:
+ - run_shell_command(command=...)
+
+
+Running:
+ - run_shell_command(command=...)
+
+
+Running:
+ - run_shell_command(command=...)
+
+
+Running:
+ - run_shell_command(command=...)
+
+
+Running:
+ - run_shell_command(command=...)
+
+Verification steps and results
+
+1) Pods status
+- Command: kubectl get pods -o wide --ignore-not-found
+- Result:
+  NAME                              READY   STATUS    RESTARTS   AGE   IP             NODE       NOMINATED NODE   READINESS GATES
+  kube-port-mismatch-named-target   1/1     Running   0          51s   10.244.6.110   minikube   <none>           <none>
+
+Observation: The pod kube-port-mismatch-named-target exists and is Running with 1/1 containers ready.
+
+2) Pod details and port configuration
+- Command: kubectl describe pod kube-port-mismatch-named-target
+- Key points from output:
+  - Status: Running
+  - Containers:
+    - kube-port-mismatch-named-target
+      - Port: 8765/TCP (http-app)
+      - Ready: True
+  - Conditions show PodReady/Ready = True
+
+Observation: The container exposes port 8765 named http-app which is the target port for the service.
+
+3) Service status and port mapping
+- Command: kubectl get service -A --ignore-not-found
+- Result shows a set of services; in particular, named-target-service exists in default with Port 8000/TCP.
+- Command: kubectl describe service named-target-service -n default
+- Key points from output:
+  - Selector: app=kube-port-mismatch-named-target
+  - Port: 8000/TCP
+  - TargetPort: http-app/TCP
+  - Endpoints: 10.244.6.110:8765
+
+Observation: The service named-target-service correctly maps port 8000 to targetPort http-app, which routes to the pod's 8765. Endpoints show the pod IP and port which confirms connectivity path.
+
+4) Endpoints verification
+- Command: kubectl get endpoints named-target-service -n default -o wide
+- Result:
+  NAME                   ENDPOINTS           AGE
+  named-target-service   10.244.6.110:8765   67s
+
+Observation: Endpoints exist and point to the pod port 8765.
+
+5) Reachability tests from inside the cluster (within the pod)
+- Test A: Access via localhost inside the pod
+  - Command: kubectl exec kube-port-mismatch-named-target -- /bin/sh -lc "python3 - << 'PY'\nimport urllib.request\ntry:\n    resp = urllib.request.urlopen('http://127.0.0.1:8765', timeout=1)\n    print(resp.getcode())\nexcept Exception as e:\n    print('ERR', type(e).__name__, e)\nPY"
+  - Result: HTTP 200
+
+- Test B: Access via service port directly from inside the pod
+  - Command: kubectl exec kube-port-mismatch-named-target -- /bin/sh -lc "python3 - << 'PY'\nimport urllib.request\ntry:\n    resp = urllib.request.urlopen('http://10.105.246.124:8000', timeout=2)\n    print('CODE', resp.getcode())\n    data = resp.read(100)\n    print('DATA', data)\nexcept Exception as e:\n    print('ERR', type(e).__name__, e)\nPY"
+  - Result: CODE 200, DATA b'ok'
+
+- Test C: Access via service name from inside the pod
+  - Command: kubectl exec kube-port-mismatch-named-target -- /bin/sh -lc "python3 - << 'PY'\nimport urllib.request\ntry:\n    resp = urllib.request.urlopen('http://named-target-service:8000', timeout=2)\n    print('SERVICE_HTTP_CODE', resp.getcode())\n    data = resp.read(64)\n    print('DATA', data)\nexcept Exception as e:\n    print('ERR', type(e).__name__, e)\nPY"
+  - Result: SERVICE_HTTP_CODE 200, DATA b'ok'
+
+Interpretation:
+- The pod is Running and Ready.
+- The Service named-target-service correctly routes to the pod via targetPort http-app, and endpoints show the pod IP and port 8765.
+- Reaching the application on port 8765 from inside the pod works (HTTP 200 on 127.0.0.1:8765).
+- Reaching via the service port (8000) also works, returning 200 with "ok".
+- This confirms traffic from the service to the named application port is functioning as intended.
+
+Conclusion
+- The original issue (traffic through the Service failing due to port misalignment) appears resolved. The pod is Running, the service targets the correct port (http-app) which maps to the container port 8765, and requests to the service URL 8000 are successfully served with a 200 OK.
+
+<|VERIFIED|>

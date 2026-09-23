@@ -1,0 +1,68 @@
+
+Running:
+ - run_shell_command(command=kubectl get pods)
+
+
+Running:
+ - run_shell_command(command=kubectl describe pod readiness-slow-start-app)
+
+
+Running:
+ - run_shell_command(command=kubectl get pods)
+
+
+Running:
+ - run_shell_command(command=...)
+
+
+Running:
+ - run_shell_command(command=kubectl exec readiness-slow-start-app -- sh -lc 'which curl || echo CUR-LACK')
+
+
+Running:
+ - run_shell_command(command=...)
+
+
+Running:
+ - run_shell_command(command=...)
+
+
+Running:
+ - run_shell_command(command=...)
+
+### Verification results
+
+1) Check pods status
+- Command: kubectl get pods
+- Output:
+  - readiness-slow-start-app   1/1     Running   0          47s
+
+Conclusion: The expected pod exists and is Running with 1/1 ready containers.
+
+2) Describe pod for readiness events and status
+- Command: kubectl describe pod readiness-slow-start-app
+- Key excerpts:
+  - Status: Running
+  - Containers: app — Ready: True
+  - Readiness: http-get http://:8080/ready delay=5s timeout=5s period=3s
+  - Events:
+    - Normal  Pulled  kubelet  Container image "kube-readiness-slow-start-app:latest" already present
+    - Normal  Started kubelet  Started container app
+Conclusion: Pod is Running and the container is Ready. The readiness probe is configured and would pass given the endpoint responsiveness observed below.
+
+3) Service checks
+- There is no Service manifest in the described scenario. Per guidance, absence of a Service is not a failure for this scenario. No minikube service test is required.
+
+4) In-pod reachability of /ready endpoint (no Service; direct in-container check)
+- Command: kubectl exec readiness-slow-start-app -- sh -lc 'python3 -c "import urllib.request; print(urllib.request.urlopen(\"http://127.0.0.1:8080/ready\").getcode())"'
+- Output: 200
+
+Additional note:
+- The server.py implementation sleeps 2 seconds before responding to /ready, which is well within the 5-second timeout configured by the readinessProbe. The in-pod check returning 200 confirms the endpoint is reachable and responds as expected.
+
+Conclusion:
+- The pod is Running and Ready.
+- The in-container readiness endpoint /ready responds with HTTP 200 within the probe’s timeout window.
+- There is no Service to verify externally, but the required direct-access check is successful.
+
+<|VERIFIED|>

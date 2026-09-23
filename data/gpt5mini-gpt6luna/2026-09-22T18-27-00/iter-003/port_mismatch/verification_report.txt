@@ -1,0 +1,49 @@
+
+Running:
+ - run_shell_command(command=kubectl get pods -o wide)
+
+
+Running:
+ - run_shell_command(command=kubectl describe pod kube-port-mismatch)
+
+
+Running:
+ - run_shell_command(command=kubectl get service)
+
+
+Running:
+ - run_shell_command(command=minikube -p minikube service app-service --url)
+
+
+Running:
+ - run_shell_command(command=curl -sS -m 5 -o /dev/null -w "%{http_code}\n" http://192.168.94.2:32363)
+
+Verification results:
+
+- Pod status
+  - kubectl get pods: kube-port-mismatch is Running with 1/1 ready.
+    - READY: 1/1
+    - STATUS: Running
+    - IP: 10.244.6.25
+    - NODE: minikube
+- Pod details
+  - kubectl describe pod kube-port-mismatch shows:
+    - Container port: 8765/TCP
+    - State: Running
+    - Ready: True
+    - Events indicate normal scheduling, image pull, creation, and start (no errors or CrashBackOff).
+- Service status
+  - kubectl get service shows app-service is a NodePort service with:
+    - PORT(S): 8000:32363/TCP
+    - ClusterIP: 10.99.150.152
+- Service access and reachability
+  - minikube -p minikube service app-service --url returns: http://192.168.94.2:32363
+  - curl -sS -m 5 -o /dev/null -w "%{http_code}\n" http://192.168.94.2:32363 yields: 200
+
+Assessment:
+- The application pod kube-port-mismatch is running and ready.
+- The app-service is configured and accessible via a NodePort through the minikube node IP.
+- The endpoint responds with HTTP 200, indicating the backend is reachable and serving requests.
+- No evidence of 502 Bad Gateway remains in the current cluster state for this deployment path.
+
+Conclusion: <|VERIFIED|>

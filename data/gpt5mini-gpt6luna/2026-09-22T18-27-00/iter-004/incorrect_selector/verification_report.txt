@@ -1,0 +1,74 @@
+
+Running:
+ - run_shell_command(command=kubectl get pods)
+
+
+Running:
+ - run_shell_command(command=kubectl describe pod kube-incorrect-selector)
+
+
+Running:
+ - run_shell_command(command=kubectl get service -A)
+
+
+Running:
+ - run_shell_command(command=minikube -p minikube service app-service --url)
+
+
+Running:
+ - run_shell_command(command=curl -sS -I http://192.168.94.2:32152/  | head -n 5)
+
+
+Running:
+ - run_shell_command(command=kubectl get endpoints app-service -o yaml)
+
+Verification steps and results
+
+- Pods status
+  - Command: kubectl get pods
+  - Result: 
+    - kube-incorrect-selector   1/1     Running   0          40s
+  - Pod kube-incorrect-selector is Running.
+
+- Pod details and readiness
+  - Command: kubectl describe pod kube-incorrect-selector
+  - Key findings:
+    - Status: Running
+    - Container kube-incorrect-selector: Ready: True
+    - No errors in Events (Scheduled, Pulled, Created, Started without failures)
+
+- Service existence and endpoints
+  - Command: kubectl get service -A
+  - Result: 
+    - default app-service NodePort 10.98.4.25   8000:32152/TCP
+  - The service app-service exists as a NodePort service with port 8000 and node port 32152.
+
+  - Command: kubectl get endpoints app-service -o yaml
+  - Result (excerpt):
+    - subsets:
+      - addresses:
+        - ip: 10.244.6.81
+          targetRef:
+            kind: Pod
+            name: kube-incorrect-selector
+          ports:
+            - port: 8765
+              protocol: TCP
+  - Endpoints for app-service exist and point to the running pod kube-incorrect-selector (IP 10.244.6.81) on port 8765.
+
+- Service reachability via Minikube NodePort
+  - Command: minikube -p minikube service app-service --url
+  - Result: http://192.168.94.2:32152
+
+  - Command: curl -I http://192.168.94.2:32152/
+  - Result: HTTP/1.0 200 OK
+    - Indicates the service is reachable through the NodePort and responding.
+
+Conclusion
+
+- The original issue (service showing no endpoints) is resolved in this cluster:
+  - The app-service has endpoints that include the kube-incorrect-selector pod.
+  - The pod is Running and Ready.
+  - The service is accessible via the NodePort and returns a valid HTTP response.
+
+Result: <|VERIFIED|>

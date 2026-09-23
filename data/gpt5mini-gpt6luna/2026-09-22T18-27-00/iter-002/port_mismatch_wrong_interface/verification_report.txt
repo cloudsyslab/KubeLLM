@@ -1,0 +1,57 @@
+
+Running:
+ - run_shell_command(command=kubectl get pods -o wide)
+
+
+Running:
+ - run_shell_command(command=kubectl describe pod port-mismatch-wrong-interface-app)
+
+
+Running:
+ - run_shell_command(command=kubectl get service port-mismatch-app-service -o wide)
+
+
+Running:
+ - run_shell_command(command=kubectl describe service port-mismatch-app-service)
+
+
+Running:
+ - run_shell_command(command=minikube -p minikube service port-mismatch-app-service --url)
+
+
+Running:
+ - run_shell_command(command=curl -s -o /dev/null -w "%{http_code}\n" http://192.168.94.2:31780/ -v --max-time 5)
+
+Verification results
+
+- Pod status
+  - kubectl get pods -o wide
+    - port-mismatch-wrong-interface-app is 1/1 Running, IP 10.244.5.209, node minikube
+- Pod details
+  - kubectl describe pod port-mismatch-wrong-interface-app
+    - Status: Running
+    - ContainersReady: True
+    - Events: Normal Scheduled, Pulled, Created, Started
+- Service status
+  - kubectl get service port-mismatch-app-service -o wide
+    - Type: NodePort
+    - ClusterIP: 10.111.123.45
+    - Ports: 80:31780/TCP
+    - Selector: app=port-mismatch-wrong-interface-app
+  - kubectl describe service port-mismatch-app-service
+    - Endpoints: 10.244.5.209:8765
+- Service access (Minikube)
+  - minikube -p minikube service port-mismatch-app-service --url
+    - http://192.168.94.2:31780/
+- Functional reachability test
+  - curl -s -o /dev/null -w "%{http_code}\n" http://192.168.94.2:31780/ -v --max-time 5
+    - Result: 200
+
+Conclusion
+
+- The pod is Running and Ready.
+- The Service is present with a valid NodePort (31780) and correctly targets port 8765 on the pod.
+- The endpoint is reachable via the NodePort URL provided by minikube, and a direct curl to the URL returns HTTP 200.
+- Based on these diagnostics, the access path to the app via the Service is functioning as expected.
+
+<|VERIFIED|>

@@ -219,6 +219,24 @@ class RuntimeConfigTests(unittest.TestCase):
         self.assertEqual(model["temperature"], 0.4)
         self.assertEqual(imported_modules, ["phi.model.openai"])
 
+    def test_build_chat_model_luna_sets_reasoning_effort_none(self):
+        captured = {}
+
+        def fake_import(module_name):
+            if module_name == "phi.model.openai":
+                return types.SimpleNamespace(OpenAIChat=lambda **kwargs: captured.update(kwargs) or kwargs)
+            raise AssertionError(f"Unexpected module import request: {module_name}")
+
+        with patch.dict(os.environ, {"OPENAI_API_KEY": "test-key"}, clear=False), patch(
+            "runtime_config.importlib.import_module", side_effect=fake_import
+        ):
+            runtime_config.build_chat_model("gpt-6-luna")
+
+        self.assertEqual(
+            captured["request_params"]["extra_body"]["reasoning_effort"],
+            "none",
+        )
+
     def test_build_chat_model_ollama_path_skips_openai_and_gemini_imports(self):
         imported_modules = []
 

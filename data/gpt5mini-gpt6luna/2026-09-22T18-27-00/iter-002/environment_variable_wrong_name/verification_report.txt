@@ -1,0 +1,73 @@
+
+Running:
+ - run_shell_command(command=kubectl get pods)
+
+
+Running:
+ - run_shell_command(command=kubectl describe pod kube-env-wrong-name)
+
+
+Running:
+ - run_shell_command(command=kubectl logs kube-env-wrong-name --tail=200)
+
+
+Running:
+ - run_shell_command(command=kubectl logs kube-env-wrong-name --tail=200)
+
+
+Running:
+ - run_shell_command(command=...)
+
+Verification results for the Kubernetes issue: KeyError: 'APP_MODE'
+
+Commands executed and observed results
+
+1) kubectl get pods
+- Pod list:
+  - kube-env-wrong-name    READY  STATUS    RESTARTS  AGE
+  - kube-env-wrong-name    1/1    Running   0         12s
+
+Observation: The expected pod kube-env-wrong-name exists and is in Running state with 1/1 container ready.
+
+2) kubectl describe pod kube-env-wrong-name
+Key details:
+- Name: kube-env-wrong-name
+- Status: Running
+- IP: 10.244.5.186
+- Environment: APP_MODE: production
+- Containers:
+  - kube-env-wrong-name
+    - Image: kube-env-wrong-name-app:latest
+    - Port: 8765/TCP
+    - Ready: True
+- Events:
+  - Normal  Scheduled: Successfully assigned default/kube-env-wrong-name to minikube
+  - Normal  Pulled: Container image "kube-env-wrong-name-app:latest" already present on machine
+  - Normal  Created: Created container kube-env-wrong-name
+  - Normal  Started: Started container kube-env-wrong-name
+
+Observation: The environment variable APP_MODE is present for the container (APP_MODE: production) and the container is running without errors.
+
+3) kubectl logs kube-env-wrong-name --tail=200
+- First attempt: (no output)
+- Second attempt: (no output)
+
+Observation: Logs are not available via kubectl logs in this run. This is acceptable per verification guidelines (log verification is secondary). Pod status and in-container behavior are used for verification.
+
+4) In-container health check (in-cluster HTTP request)
+Command:
+- kubectl exec kube-env-wrong-name -- python3 -c "import urllib.request; print(urllib.request.urlopen('http://127.0.0.1:8765/').read().decode())"
+
+Observed output:
+- mode=production
+
+Observation: The application reads APP_MODE from the environment correctly (mode=production), and the HTTP endpoint responds as expected. This confirms APP_MODE is accessible inside the container and the KeyError condition does not occur.
+
+Conclusion
+
+- The pod kube-env-wrong-name is Running with 1/1 container ready.
+- The environment variable APP_MODE is correctly set to production inside the container.
+- The in-container HTTP request confirms the application reads APP_MODE without error and serves the expected response (mode=production).
+- There is no Service defined for this scenario (as per guidance, absence of a Service is not a failure for this verification).
+
+Status: <|VERIFIED|>

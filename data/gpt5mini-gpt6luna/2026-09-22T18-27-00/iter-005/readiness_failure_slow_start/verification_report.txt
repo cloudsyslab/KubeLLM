@@ -1,0 +1,75 @@
+
+Running:
+ - run_shell_command(command=kubectl get pods -o wide)
+
+
+Running:
+ - run_shell_command(command=kubectl describe pod readiness-slow-start-app)
+
+
+Running:
+ - run_shell_command(command=kubectl exec readiness-slow-start-app -- curl -sS http://127.0.0.1:8080/ready)
+
+
+Running:
+ - run_shell_command(command=kubectl exec readiness-slow-start-app -- /bin/sh -lc 'curl -sS http://127.0.0.1:8080/ready')
+
+
+Running:
+ - run_shell_command(command=kubectl exec readiness-slow-start-app -- /bin/sh -lc 'wget -q -O- http://127.0.0.1:8080/ready')
+
+
+Running:
+ - run_shell_command(command=kubectl exec readiness-slow-start-app -- /bin/sh -lc 'nc -zv 127.0.0.1 8080 || true')
+
+
+Running:
+ - run_shell_command(command=kubectl exec readiness-slow-start-app -- /bin/sh -lc 'python3 -V')
+
+
+Running:
+ - run_shell_command(command=...)
+
+
+Running:
+ - run_shell_command(command=kubectl get service --all-namespaces)
+
+
+Running:
+ - run_shell_command(command=kubectl get pod readiness-slow-start-app -o jsonpath='{.status.containerStatuses[0].ready}')
+
+### Verification Summary
+
+Executed step-by-step checks per the provided procedure. All checks indicate the pod is now Running and Ready, and the readiness path is reachable.
+
+- Kubectl pod status
+  - Command: kubectl get pods -o wide
+  - Result: readiness-slow-start-app is 1/1 Ready and Running (AGE 16s)
+  - Observed Pod: readiness-slow-start-app
+- Pod detail and events
+  - Command: kubectl describe pod readiness-slow-start-app
+  - Key details:
+    - Status: Running
+    - ContainersReady: True
+    - Readiness: http-get http://:8080/ready delay=5s timeout=3s period=3s
+    - Events: Normal Scheduled, Pulled, Created, Started
+  - No crash/Networking errors observed in Events
+- Service exposure check
+  - Command: kubectl get service --all-namespaces
+  - Result: No Service named readiness-slow-start-app exists. This matches the scenario guidance that there may be no Service.
+- In-container readiness probe verification
+  - Attempted in-container HTTP requests via curl/wget: curl/wget not installed
+  - Found Python present: Python 3.8.10
+  - Command: kubectl exec readiness-slow-start-app -- python3 -c "import urllib.request; print(urllib.request.urlopen('http://127.0.0.1:8080/ready').read())"
+  - Result: b'ready'
+  - Interpretation: The in-container readiness endpoint /ready responds with 200/OK content ("ready"), confirming the readiness path is reachable from inside the pod and the endpoint behaves as expected.
+- Pod readiness status (explicit readiness flag)
+  - Command: kubectl get pod readiness-slow-start-app -o jsonpath='{.status.containerStatuses[0].ready}'
+  - Result: true
+
+Conclusion:
+- The pod readiness-slow-start-app is Running and Ready (1/1).
+- The configured readiness endpoint /ready is reachable inside the container and returns the expected content.
+- There is no Service required for this scenario, and direct in-pod verification confirms the readiness path is functioning.
+
+<|VERIFIED|>

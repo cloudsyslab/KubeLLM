@@ -1,0 +1,66 @@
+
+Running:
+ - run_shell_command(command=kubectl get pods -A)
+
+
+Running:
+ - run_shell_command(command=kubectl describe pod resource-limits-cpu-starvation-app -n default)
+
+
+Running:
+ - run_shell_command(command=...)
+
+Verification results for resource_limits_cpu_starvation scenario
+
+1) Pods state check (kubectl get pods)
+- Output (already observed):
+NAMESPACE     NAME                                 READY   STATUS    RESTARTS      AGE
+default       resource-limits-cpu-starvation-app   1/1     Running   0             12s
+kube-system   coredns-6f6b679f8f-5zkx6             1/1     Running   3 (49d ago)   50d
+kube-system   etcd-minikube                        1/1     Running   3 (49d ago)   50d
+kube-system   kube-apiserver-minikube              1/1     Running   3 (49d ago)   50d
+kube-system   kube-controller-manager-minikube     1/1     Running   3 (49d ago)   50d
+kube-system   kube-proxy-28xkt                     1/1     Running   3 (49d ago)   50d
+kube-system   kube-scheduler-minikube              1/1     Running   3 (49d ago)   50d
+kube-system   storage-provisioner                  1/1     Running   6 (49d ago)   50d
+
+Observation: The expected pod resource-limits-cpu-starvation-app exists in default and is 1/1 Ready, Status Running.
+
+2) Pod description and readiness status (kubectl describe pod default/resource-limits-cpu-starvation-app)
+- Pod IP: 10.244.6.45
+- Container: app
+  - Image: kube-resource-limits-cpu-starvation-app:latest
+  - Port: 8080/TCP
+  - Resources:
+    - Limits: cpu: 100m, memory: 128Mi
+    - Requests: cpu: 100m, memory: 64Mi
+  - Readiness probe: httpGet http://:8080/healthz, initialDelaySeconds: 2, periodSeconds: 3, timeoutSeconds: 2
+- Conditions: PodReadyToStartContainers True, Initialized True, Ready True, ContainersReady True, PodScheduled True
+- Events (relevant):
+  - Normal  Scheduled: Successfully assigned default/resource-limits-cpu-starvation-app to minikube
+  - Normal  Pulled: Image already present
+  - Normal  Created: Created container app
+  - Normal  Started: Started container app
+
+Observation: Pod is in Running state with the readiness probe configured as described. All readiness/containers-ready conditions are True.
+
+3) In-container health check (direct in-pod HTTP call)
+- Command executed:
+kubectl -n default exec resource-limits-cpu-starvation-app -- python3 -c "import urllib.request; print(urllib.request.urlopen('http://127.0.0.1:8080/healthz').read())"
+- Output:
+b'healthy'
+
+Observation: The readiness endpoint /healthz responds with healthy within the expected timeframe, indicating the container is responsive on port 8080 and the CPU-bound loop in the health handler does not cause a readiness failure under the current limits.
+
+4) Service/layout considerations
+- There is no Kubernetes Service manifest provided for this scenario. The verification guidance explicitly states absence of a Service is not a failure and reachability is tested via direct in-pod checks. We performed a direct in-pod HTTP check, which succeeded.
+
+Conclusion:
+- The pod resource-limits-cpu-starvation-app is Running and Ready.
+- The readiness probe succeeds (direct in-pod health check returns healthy).
+- CPU limit is configured as 100m (as per manifest), and the pod remains responsive to readiness checks within the probe’s timeout.
+- No Service is present, which aligns with the scenario guidance.
+
+Therefore, the issue described (pod remains unready due to readiness probe timeouts under low CPU limits) appears resolved in the current cluster state.
+
+<|VERIFIED|>

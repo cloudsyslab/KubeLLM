@@ -1,0 +1,63 @@
+
+Running:
+ - run_shell_command(command=kubectl get pods -o wide)
+
+
+Running:
+ - run_shell_command(command=kubectl get service app-service -o wide)
+
+
+Running:
+ - run_shell_command(command=kubectl describe pod kube-port-mismatch)
+
+
+Running:
+ - run_shell_command(command=minikube -p minikube service app-service --url)
+
+
+Running:
+ - run_shell_command(command=curl -s -o /dev/null -w "%{http_code}\n" http://192.168.94.2:32236)
+
+Verification results
+
+- Step 1: kubectl get pods
+  - Output:
+    - kube-port-mismatch   1/1     Running   0          51s   10.244.5.206   minikube   <none>  
+
+  Observation: The pod exists and its single container is in Running state with 1/1 ready.
+
+- Step 2: kubectl describe pod kube-port-mismatch
+  - Key details:
+    - Status: Running
+    - IP: 10.244.5.206
+    - Containers: kube-port-mismatch - Ready: True
+    - Events indicate the container was scheduled, pulled, created, and started successfully.
+  Observation: No CrashLoopBackOff or image pull errors. Pod is Ready.
+
+- Step 3: kubectl get service app-service
+  - Output:
+    - NAME          TYPE       CLUSTER-IP      EXTERNAL-IP   PORT(S)          AGE   SELECTOR
+    - app-service   NodePort   10.107.80.108   <none>        8000:32236/TCP   54s   app.kubernetes.io/name=app
+
+  Observation: Service exists as NodePort, maps port 32236 on the node to container port 8765 (targetPort), and selects the pod via label app.kubernetes.io/name=app.
+
+- Step 4: minikube -p minikube service app-service --url
+  - Output:
+    - http://192.168.94.2:32236
+
+  Observation: Service is routable via the NodePort on the Minikube node.
+
+- Step 5: curl test against the service
+  - Command: curl -s -o /dev/null -w "%{http_code}\n" http://192.168.94.2:32236
+  - Output:
+    - 200
+
+  Observation: The endpoint is reachable and returns HTTP 200, indicating a healthy response from the application through the service.
+
+Summary
+- The pod kube-port-mismatch is Running and Ready.
+- The app-service service exists and is reachable via the Minikube NodePort.
+- A direct HTTP request to the service URL returns HTTP 200, indicating the previous 502 Bad Gateway issue is resolved, and the application is serving requests correctly through the Kubernetes service.
+
+Conclusion
+<|VERIFIED|>

@@ -1,0 +1,79 @@
+
+Running:
+ - run_shell_command(command=kubectl get pods)
+
+
+Running:
+ - run_shell_command(command=kubectl describe pod resource-limits-cpu-starvation-app)
+
+
+Running:
+ - run_shell_command(command=kubectl exec resource-limits-cpu-starvation-app -- curl -sS http://127.0.0.1:8080/healthz)
+
+
+Running:
+ - run_shell_command(command=kubectl exec resource-limits-cpu-starvation-app -- curl -sS http://127.0.0.1:8080/healthz -v || true)
+
+
+Running:
+ - run_shell_command(command=...)
+
+
+Running:
+ - run_shell_command(command=...)
+
+
+Running:
+ - run_shell_command(command=...)
+
+
+Running:
+ - run_shell_command(command=...)
+
+ verification result
+
+- Pod under test: resource-limits-cpu-starvation-app
+
+1) pods state
+- Command: kubectl get pods
+- Output: resource-limits-cpu-starvation-app 1/1  Running 0 12s
+
+Result: Pod exists and is Running with 1/1 containers ready.
+
+2) pod description and events
+- Command: kubectl describe pod resource-limits-cpu-starvation-app
+- Key details:
+  - Containers:
+    - app
+      - State: Running
+      - Ready: True
+      - Limits: cpu: 250m, memory: 128Mi
+      - Readiness: http-get http://:8080/healthz delay=2s timeout=1s period=3s
+  - Events:
+    - Normal  Scheduled: Successfully assigned default/resource-limits-cpu-starvation-app to minikube
+    - Normal  Pulled: Container image kube-resource-limits-cpu-starvation-app:latest already present on machine
+    - Normal  Created: Created container app
+    - Normal  Started: Started container app
+
+Observation: No errors or failures (e.g., CrashLoopBackOff, ImagePullBackOff, OOM). Readiness is configured and the container is reported Ready.
+
+3) in-pod health check (direct access to the app, no Service required)
+- Context: The scenario specifies direct-in-pod access (no Service) and the app serves on port 8080.
+- Command: kubectl exec resource-limits-cpu-starvation-app -- python3 -c "import urllib.request; print(urllib.request.urlopen('http://127.0.0.1:8080/healthz').read())"
+- Output: b'healthy'
+
+Interpretation:
+- The /healthz endpoint returns a healthy response within the pod, indicating the application is responsive.
+- The readiness probe is expected to pass given the endpoint returns 200 and the simulated work in server.py sleeps for 0.8 seconds (less than the 1s timeout).
+
+Conclusion
+- All relevant pods are Running and Ready.
+- The in-pod health check to /healthz succeeds, and the readiness probe scenario (CPU-limited container with 250m CPU) appears to be functioning as intended.
+- There is no Service defined for this scenario, which is acceptable per the given guidance.
+
+Evidence alignment with verification rules:
+- Verified pod running and ready (kubectl get pods and describe pod outputs).
+- Verified direct in-pod health endpoint response (healthz returns healthy via Python fetch inside the container).
+- No Service is required for this scenario; absence does not indicate a failure.
+
+Result: <|VERIFIED|>

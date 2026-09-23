@@ -1,0 +1,63 @@
+
+Running:
+ - run_shell_command(command=kubectl get pods -o wide)
+
+
+Running:
+ - run_shell_command(command=kubectl describe pod port-mismatch-wrong-interface-app)
+
+
+Running:
+ - run_shell_command(command=kubectl get service port-mismatch-app-service -o wide)
+
+
+Running:
+ - run_shell_command(command=minikube -p minikube service port-mismatch-app-service --url)
+
+
+Running:
+ - run_shell_command(command=curl -s -S -i http://192.168.94.2:30585/)
+
+Verification Report
+
+1) Pods status
+- Command: kubectl get pods -o wide
+- Result: port-mismatch-wrong-interface-app 1/1 Running 0 75s 10.244.6.190 minikube
+- Assessment: Pod exists and is Running with 1/1 containers ready.
+
+2) Pod details and events
+- Command: kubectl describe pod port-mismatch-wrong-interface-app
+- Key points:
+  - Status: Running
+  - Container app: Port 8765/TCP, Ready: True
+  - Events: Scheduled, Pulled, Created, Started (no errors reported)
+- Assessment: Pod is healthy with no evident initialization or startup errors.
+
+3) Service status
+- Command: kubectl get service port-mismatch-app-service -o wide
+- Result:
+  - Name: port-mismatch-app-service
+  - Type: NodePort
+  - ClusterIP: 10.107.95.253
+  - Ports: 80:30585/TCP
+  - Selector: app=port-mismatch-wrong-interface-app
+- Assessment: Service exists, has a ClusterIP, and exposes NodePort 30585 mapped to port 80.
+
+4) Service accessibility via Minikube
+- Command: minikube -p minikube service port-mismatch-app-service --url
+- Result: http://192.168.94.2:30585
+- Assessment: The service is accessible from the Minikube node IP on the mapped NodePort.
+
+5) Reachability test
+- Command: curl -s -S -i http://192.168.94.2:30585/
+- Result: HTTP/1.0 200 OK
+  Content: "Hello from port_mismatch_wrong_interface test!"
+- Assessment: The application responds successfully over the service path.
+
+Conclusion
+- The pod is Running and Ready.
+- The Service is created and reachable via NodePort on the Minikube IP (192.168.94.2:30585).
+- The endpoint returns a valid response, confirming proper routing from the service to the pod.
+- Therefore, the original issue (service access errors / no working route to the app) appears resolved in the current cluster state.
+
+<|VERIFIED|>

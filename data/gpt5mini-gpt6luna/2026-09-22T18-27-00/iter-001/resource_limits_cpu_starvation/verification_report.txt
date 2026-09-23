@@ -1,0 +1,46 @@
+
+Running:
+ - run_shell_command(command=kubectl get pods)
+
+
+Running:
+ - run_shell_command(command=kubectl describe pod resource-limits-cpu-starvation-app)
+
+
+Running:
+ - run_shell_command(command=...)
+
+Verification results for resource_limits_cpu_starvation scenario:
+
+- Pod existence and status
+  - kubectl get pods
+    - resource-limits-cpu-starvation-app 1/1 Running 0 17s
+
+- Pod readiness and events
+  - kubectl describe pod resource-limits-cpu-starvation-app
+    - Containers:
+      - app
+        - Ready: True
+        - State: Running (Started: Tue, 22 Sep 2026 19:19:44 +0000)
+        - Limits: cpu 200m, memory 128Mi
+        - Requests: cpu 100m, memory 64Mi
+        - Readiness: http-get http://:8080/healthz delay=2s timeout=2s period=3s
+    - Conditions:
+      - Ready: True
+      - ContainersReady: True
+    - Events:
+      - Normal  Scheduled: Successfully assigned default/resource-limits-cpu-starvation-app to minikube
+      - Normal  Pulled: Container image kube-resource-limits-cpu-starvation-app:latest already present
+      - Normal  Created: Created container app
+      - Normal  Started: Started container app
+
+- In-pod readiness check (direct access since no Service is defined)
+  - kubectl exec resource-limits-cpu-starvation-app -- python3 -c "import urllib.request; print(urllib.request.urlopen('http://127.0.0.1:8080/healthz').getcode())"
+    - Output: 200
+
+Assessment:
+- The pod resource-limits-cpu-starvation-app is running and ready (1/1, Ready and ContainersReady both True).
+- The in-pod health check endpoint /healthz responds with HTTP 200, indicating readiness probe path is healthy under current conditions.
+- No Service is defined for this scenario, and direct in-pod verification confirms reachability of the intended port.
+
+Conclusion: <|VERIFIED|>
