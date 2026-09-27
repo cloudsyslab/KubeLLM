@@ -8,6 +8,9 @@ set -euo pipefail
 # Resolve single-file path for kubectl --kubeconfig (same default as preflight.sh output).
 if [[ -n "${KUBELLM_KUBECONFIG_PATH:-}" ]]; then
   KUBECONFIG_PATH="$KUBELLM_KUBECONFIG_PATH"
+elif [[ "${KUBELLM_LAB_ACTIVE:-0}" == "1" || -n "${KUBELLM_LAB_CONFIG:-}" ]]; then
+  echo "diagnostics: selected lab lane requires KUBELLM_KUBECONFIG_PATH" >&2
+  exit 1
 elif [[ -n "${KUBECONFIG:-}" ]] && [[ "$KUBECONFIG" != *:* ]]; then
   KUBECONFIG_PATH="$KUBECONFIG"
 else

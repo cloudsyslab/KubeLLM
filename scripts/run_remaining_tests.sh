@@ -6,6 +6,11 @@ if [[ ! -f "debug_assistant_latest/runner.py" ]]; then
   exit 1
 fi
 
+runner_lane_args=(--minikube-profile "${MINIKUBE_PROFILE:-plama}")
+if [[ -n "${KUBELLM_LAB_CONFIG:-}" ]]; then
+  runner_lane_args=(--lab-config "$KUBELLM_LAB_CONFIG")
+fi
+
 remaining_cases=(
   "liveness_probe"
   "wrong_port_7001"
@@ -20,7 +25,7 @@ for test_case in "${remaining_cases[@]}"; do
     --api-model gpt-5-mini \
     --debug-model gpt-5-nano \
     --verification-model gpt-5-nano \
-    --minikube-profile plama \
+    "${runner_lane_args[@]}" \
     --teardown-after-run; then
     failed_cases+=("${test_case}")
     echo "=== ${test_case} failed; continuing with remaining cases ===" >&2
