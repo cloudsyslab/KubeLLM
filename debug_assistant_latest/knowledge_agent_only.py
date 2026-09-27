@@ -7,7 +7,11 @@ from typing import Any, Dict, List
 
 from jsonschema import Draft202012Validator
 
-from better_shell import COMMAND_TIMEOUT_S, BetterShellTools, ShellCommandResult
+from debug_assistant_latest.better_shell import (
+    COMMAND_TIMEOUT_S,
+    BetterShellTools,
+    ShellCommandResult,
+)
 
 
 KNOWLEDGE_PLAN_OUTPUT_MODE = "knowledge_plan"

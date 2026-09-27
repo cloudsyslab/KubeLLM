@@ -245,7 +245,7 @@ def _finalize_knowledge_agent_only(
     ground_truth_passed: Optional[bool],
     verified: Optional[bool],
 ) -> tuple[str, bool, dict]:
-    """Resolve the technique outcome after the independent evaluators finish."""
+    """Finalize architecture and benchmark outcomes without conflating them."""
     from knowledge_agent_only import write_json_artifact
 
     report = dict(report or {})
@@ -262,18 +262,7 @@ def _finalize_knowledge_agent_only(
     }
 
     if outcome == "pending_ground_truth":
-        if ground_truth_passed is True:
-            outcome = "completed_solved"
-        elif ground_truth_passed is False:
-            outcome = "completed_unsolved"
-        elif ground_truth_configured:
-            outcome = "verification_error"
-        elif verified is True:
-            outcome = "completed_solved"
-        elif verified is False:
-            outcome = "completed_unsolved"
-        else:
-            outcome = "verification_error"
+        outcome = "execution_completed"
 
     report["architecture_outcome"] = outcome
     report_path = report.pop("_artifact_path", None)
@@ -282,8 +271,8 @@ def _finalize_knowledge_agent_only(
 
     if outcome in KNOWLEDGE_EARLY_FAILURES:
         success = False
-    elif ground_truth_passed is not None:
-        success = ground_truth_passed
+    elif ground_truth_configured:
+        success = ground_truth_passed is True
     else:
         success = verified is True
     return outcome, success, report

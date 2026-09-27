@@ -223,12 +223,12 @@ class KnowledgePlanOutputModeTests(unittest.TestCase):
 class KnowledgeAgentOnlyFlowTests(unittest.TestCase):
     def test_verification_is_fallback_evaluator_when_ground_truth_is_not_configured(self):
         cases = [
-            (True, "completed_solved", True),
-            (False, "completed_unsolved", False),
-            (None, "verification_error", False),
+            (True, True),
+            (False, False),
+            (None, False),
         ]
 
-        for verified, expected_outcome, expected_success in cases:
+        for verified, expected_success in cases:
             with self.subTest(verified=verified):
                 outcome, success, report = executor._finalize_knowledge_agent_only(
                     architecture_outcome="pending_ground_truth",
@@ -237,9 +237,23 @@ class KnowledgeAgentOnlyFlowTests(unittest.TestCase):
                     ground_truth_passed=None,
                     verified=verified,
                 )
-                self.assertEqual(outcome, expected_outcome)
+                self.assertEqual(outcome, "execution_completed")
                 self.assertEqual(success, expected_success)
                 self.assertEqual(report["ground_truth"]["status"], "not_run")
+
+    def test_architecture_outcome_is_independent_of_ground_truth_result(self):
+        for ground_truth_passed in (True, False):
+            with self.subTest(ground_truth_passed=ground_truth_passed):
+                outcome, success, report = executor._finalize_knowledge_agent_only(
+                    architecture_outcome="pending_ground_truth",
+                    report={"verification": {"status": "verified"}},
+                    ground_truth_configured=True,
+                    ground_truth_passed=ground_truth_passed,
+                    verified=True,
+                )
+                self.assertEqual(outcome, "execution_completed")
+                self.assertEqual(success, ground_truth_passed)
+                self.assertEqual(report["ground_truth"]["passed"], ground_truth_passed)
 
     def test_pipeline_verifies_deterministic_transcript_and_writes_stage_artifacts(self):
         import main

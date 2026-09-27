@@ -2,7 +2,23 @@ import hashlib
 import json
 import sys
 import os
+from pathlib import Path
+
+SCRIPT_DIR = Path(__file__).resolve().parent
+REPO_ROOT = SCRIPT_DIR.parent
+for _path in (REPO_ROOT, SCRIPT_DIR):
+    if str(_path) not in sys.path:
+        sys.path.insert(0, str(_path))
+
+from debug_assistant_latest.lab_context import LaneConfigurationError, bootstrap_from_argv
+
+try:
+    bootstrap_from_argv()
+except LaneConfigurationError as exc:
+    print(f"Lab lane configuration error: {exc}", file=sys.stderr)
+    raise SystemExit(2) from exc
 from types import SimpleNamespace
+
 from api_agents import AgentAPI
 from agent_helpers import build_tool_kwargs
 from better_shell import BetterShellTools
