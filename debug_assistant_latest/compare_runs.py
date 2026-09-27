@@ -32,8 +32,19 @@ def load_aggregate(run_dir: Path) -> Dict[str, Any]:
 
 def _summary_row(summary) -> Dict[str, Any]:
     metrics = getattr(summary, "metrics", {}) or {}
-    dbg = metrics.get("debug") if isinstance(metrics.get("debug"), dict) else {}
-    ver = metrics.get("verification") if isinstance(metrics.get("verification"), dict) else {}
+
+    def _metric(name: str) -> dict:
+        value = metrics.get(name)
+        if isinstance(value, dict):
+            return value
+        if value is not None and hasattr(value, "__dict__"):
+            return vars(value)
+        return {}
+
+    api = _metric("api")
+    dbg = _metric("debug")
+    executor = _metric("executor")
+    ver = _metric("verification")
 
     def _num(d: dict, key: str) -> float:
         v = d.get(key)
@@ -42,19 +53,27 @@ def _summary_row(summary) -> Dict[str, Any]:
         except (TypeError, ValueError):
             return 0.0
 
+    api_tok = int(api.get("total_tokens") or 0)
     dbg_tok = int(dbg.get("total_tokens") or 0)
+    executor_tok = int(executor.get("total_tokens") or 0)
     ver_tok = int(ver.get("total_tokens") or 0)
+    total_cost = sum(_num(metric, "cost") for metric in (api, dbg, executor, ver))
     return {
         "status": summary.status,
         "verified": summary.verified,
         "ground_truth_passed": summary.ground_truth_passed,
         "debug_self_report": getattr(summary, "debug_self_report", None),
+        "api_tokens": api_tok,
         "debug_tokens": dbg_tok,
+        "executor_tokens": executor_tok,
         "verification_tokens": ver_tok,
-        "total_tokens": dbg_tok + ver_tok,
+        "total_tokens": api_tok + dbg_tok + executor_tok + ver_tok,
+        "api_cost": round(_num(api, "cost"), 4),
         "debug_cost": round(_num(dbg, "cost"), 4),
+        "executor_cost": round(_num(executor, "cost"), 4),
         "verification_cost": round(_num(ver, "cost"), 4),
-        "total_cost": round(_num(dbg, "cost") + _num(ver, "cost"), 4),
+        "total_cost": round(total_cost, 4),
+        "executor_duration_s": round(_num(executor, "duration_s"), 2),
         "duration_s": round(float(summary.duration_s or 0), 2),
     }
 

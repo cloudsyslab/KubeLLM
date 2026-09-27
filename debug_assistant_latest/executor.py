@@ -161,6 +161,14 @@ def _has_ground_truth_config(test_name: str, overrides: dict) -> bool:
     return bool(config.get("ground-truth"))
 
 
+def _technique_run_metadata(technique: str) -> Dict[str, Any]:
+    if technique != "knowledgeAgentOnly":
+        return {}
+    from knowledge_plan import PLAN_SCHEMA_VERSION
+
+    return {"knowledge_plan_schema_version": PLAN_SCHEMA_VERSION}
+
+
 def _extract_execution_result(
     result: Any,
 ) -> tuple[bool, Optional[bool], Optional[bool], Dict[str, Any], Optional[str]]:
@@ -169,6 +177,7 @@ def _extract_execution_result(
         metrics: Dict[str, Any] = {}
         api_metrics = result.get("api_metrics")
         debug_metrics = result.get("debug_metrics")
+        executor_metrics = result.get("executor_metrics")
         verification_metrics = result.get("verification_metrics")
 
         if isinstance(api_metrics, dict):
@@ -182,6 +191,9 @@ def _extract_execution_result(
                 debug_self_report = True
             elif task_status == 0:
                 debug_self_report = False
+
+        if isinstance(executor_metrics, dict):
+            metrics["executor"] = executor_metrics
 
         if isinstance(verification_metrics, dict):
             metrics["verification"] = verification_metrics
@@ -341,7 +353,7 @@ def run_single_test_in_process(
 
     try:
         # Import here to avoid circular imports in worker process
-        from main import allStepsAtOnce, singleAgentApproach, stepByStep
+        from main import allStepsAtOnce, knowledgeAgentOnly, singleAgentApproach, stepByStep
         from config_merge import load_config_with_overrides, save_effective_config
         from teardown import (
             cleanup_test_pods,
@@ -403,6 +415,15 @@ def run_single_test_in_process(
                         error = derived_error
                 elif technique == "singleAgent":
                     result = singleAgentApproach(
+                        configFile=str(config_path),
+                        config_overrides=overrides,
+                        runtime_context=worker_runtime,
+                    )
+                    success, verified, debug_self_report, metrics, derived_error = _extract_execution_result(result)
+                    if error is None and derived_error:
+                        error = derived_error
+                elif technique == "knowledgeAgentOnly":
+                    result = knowledgeAgentOnly(
                         configFile=str(config_path),
                         config_overrides=overrides,
                         runtime_context=worker_runtime,
@@ -523,7 +544,7 @@ def run_single_test(
         )
 
     try:
-        from main import allStepsAtOnce, singleAgentApproach, stepByStep
+        from main import allStepsAtOnce, knowledgeAgentOnly, singleAgentApproach, stepByStep
         from teardown import (
             cleanup_test_pods,
             cleanup_transient_k8s_resources,
@@ -606,6 +627,15 @@ def run_single_test(
                         error = derived_error
                 elif technique == "singleAgent":
                     result = singleAgentApproach(
+                        configFile=str(config_path),
+                        config_overrides=overrides,
+                        runtime_context=runtime_context,
+                    )
+                    success, verified, debug_self_report, metrics, derived_error = _extract_execution_result(result)
+                    if error is None and derived_error:
+                        error = derived_error
+                elif technique == "knowledgeAgentOnly":
+                    result = knowledgeAgentOnly(
                         configFile=str(config_path),
                         config_overrides=overrides,
                         runtime_context=runtime_context,
@@ -763,6 +793,7 @@ def cmd_run_single(args, test_name: str):
         "run_uuid": run_uuid,
         "teardown_after_run": teardown_after_run,
         "rag_api_url": rag_api_url,
+        **_technique_run_metadata(technique),
     }
     save_run_config(run_config, output_dir)
     prov_payload = collect_run_provenance(REPO_ROOT, rag_api_url)
@@ -920,6 +951,7 @@ def cmd_run_many(args):
         "run_uuid": run_uuid,
         "teardown_after_run": teardown_after_run,
         "rag_api_url": rag_api_url,
+        **_technique_run_metadata(technique),
     }
     save_run_config(run_config, output_dir)
     prov_payload = collect_run_provenance(REPO_ROOT, rag_api_url)

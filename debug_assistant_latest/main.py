@@ -2,8 +2,17 @@ import hashlib
 import json
 import sys
 import os
+from types import SimpleNamespace
 from api_agents import AgentAPI
 from debug_agents import AgentDebug, AgentDebugStepByStep, SingleAgent
+from knowledge_plan import (
+    KnowledgePlanError,
+    KnowledgePlanExecutor,
+    parse_knowledge_plan,
+    write_execution_artifact,
+    write_plan_artifact,
+    write_plan_error_artifact,
+)
 from verification_agents import AgentVerification_v1, AgentVerification_v2
 from utils import setUpEnvironment, printFinishMessage
 from config_merge import load_config_with_overrides
@@ -185,6 +194,8 @@ def _run_verification_phase_after_debug(
     runtime_context: Optional[Dict[str, Any]],
     debug_agent,
     debug_metrics: dict,
+    *,
+    execution_label: str = "Debug Agent",
 ) -> Optional[Tuple[dict, Any]]:
     """
     Run AgentVerification_v2 after the debug phase.
@@ -207,7 +218,7 @@ def _run_verification_phase_after_debug(
     verification_end_time = time.perf_counter()
 
     print(f"\nFinal Task Status: {'SUCCESS' if verification_agent.verificationStatus else 'FAILURE'}")
-    print(f"Debug Agent Self-Report: {'SUCCESS' if debug_agent.debugStatus else 'FAILURE'}")
+    print(f"{execution_label} Status: {'SUCCESS' if debug_agent.debugStatus else 'FAILURE'}")
     print(
         f"Verification Agent Report: {'VERIFIED' if verification_agent.verificationStatus else 'FAILED' if verification_agent.verificationStatus is False else 'UNKNOWN'}\n"
     )
@@ -236,6 +247,122 @@ def _run_verification_phase_after_debug(
     _persist_verification_artifact(runtime_context, verification_agent)
 
     return verification_metrics, verification_agent.verificationStatus
+
+
+def _runtime_log_dir(runtime_context: Optional[Dict[str, Any]]) -> Optional[Path]:
+    raw = (runtime_context or {}).get("log_dir")
+    return Path(raw) if raw else None
+
+
+def knowledgeAgentOnly(
+    configFile=None,
+    config_overrides: Optional[Dict[str, Any]] = None,
+    runtime_context: Optional[Dict[str, Any]] = None,
+):
+    """Run one knowledge-model plan through a non-generative executor."""
+    config = _load_runtime_config(configFile, config_overrides)
+    _write_progress(runtime_context, "setup_start", test_name=config.get("test-name"))
+    try:
+        setUpEnvironment(config)
+    except Exception as exc:
+        _write_progress(
+            runtime_context,
+            "setup_end",
+            test_name=config.get("test-name"),
+            status="error",
+            error=str(exc),
+        )
+        raise
+    _write_progress(runtime_context, "setup_end", test_name=config.get("test-name"), status="ok")
+
+    api_agent = AgentAPI("api-agent", config, deterministic_plan=True)
+    api_agent.setupAgent()
+    api_metrics = _run_api_phase(config, runtime_context, api_agent)
+
+    log_dir = _runtime_log_dir(runtime_context)
+    executor_start = time.perf_counter()
+    plan_valid = False
+    execution_report = None
+
+    try:
+        plan = parse_knowledge_plan(api_agent.response)
+        plan_valid = True
+        if log_dir:
+            write_plan_artifact(plan, log_dir)
+        executor = KnowledgePlanExecutor(
+            SCRIPT_DIR.parent,
+            progress_writer=(runtime_context or {}).get("progress_writer"),
+        )
+        execution_report = _run_observed_phase(
+            runtime_context,
+            "executor",
+            lambda: executor.execute(plan),
+        )
+        if log_dir:
+            write_execution_artifact(execution_report, log_dir)
+        execution_status = execution_report.success
+        execution_transcript = json.dumps(execution_report.to_dict(), indent=2)
+    except KnowledgePlanError as exc:
+        execution_status = False
+        execution_transcript = json.dumps(
+            {
+                "schema_version": "1.0",
+                "success": False,
+                "failure_category": "PLAN_INVALID",
+                "failure_message": str(exc),
+                "steps": [],
+            },
+            indent=2,
+        )
+        if log_dir:
+            write_plan_error_artifact(str(api_agent.response), exc, log_dir)
+        _write_progress(
+            runtime_context,
+            "executor_end",
+            success=False,
+            failure_category="PLAN_INVALID",
+            error=str(exc),
+        )
+        print(f"Knowledge plan rejected: {exc}")
+
+    executor_duration = time.perf_counter() - executor_start
+    executor_metrics = _finalize_metrics(
+        _normalize_metrics(
+            config,
+            None,
+            "executor",
+            task_status=int(execution_status),
+        ),
+        executor_duration,
+    )
+
+    execution_actor = SimpleNamespace(
+        response=execution_transcript,
+        debugStatus=execution_status,
+        _last_timeout=False,
+    )
+    verification_out = _run_verification_phase_after_debug(
+        config,
+        runtime_context,
+        execution_actor,
+        executor_metrics,
+        execution_label="Deterministic Executor",
+    )
+    assert verification_out is not None
+    verification_metrics, verification_status = verification_out
+    printFinishMessage()
+
+    return {
+        "status": verification_status,
+        "api_metrics": api_metrics,
+        "executor_metrics": executor_metrics,
+        "verification_metrics": verification_metrics,
+        "plan_valid": plan_valid,
+        "execution_status": execution_status,
+        "execution_failure_category": (
+            execution_report.failure_category if execution_report is not None else "PLAN_INVALID"
+        ),
+    }
 
 
 def allStepsAtOnce(
@@ -465,12 +592,14 @@ def run(debugType, configFile, config_overrides: Optional[Dict[str, Any]] = None
         return stepByStep(configFile, config_overrides=config_overrides, runtime_context=runtime_context)
     if debugType == "singleAgent":
         return singleAgentApproach(configFile, config_overrides=config_overrides, runtime_context=runtime_context)
+    if debugType == "knowledgeAgentOnly":
+        return knowledgeAgentOnly(configFile, config_overrides=config_overrides, runtime_context=runtime_context)
     return None
 
 if __name__ == "__main__":
     if (len(sys.argv) < 2):
         print('Usage: python3 main.py <config_file> [test_type]')
-        print('Available test types: allStepsAtOnce, stepByStep, singleAgent (default: allStepsAtOnce)')
+        print('Available test types: allStepsAtOnce, stepByStep, singleAgent, knowledgeAgentOnly (default: allStepsAtOnce)')
         sys.exit(1)
 
     configFile = sys.argv[1]
@@ -479,7 +608,7 @@ if __name__ == "__main__":
     testType = sys.argv[2] if len(sys.argv) > 2 else "allStepsAtOnce"
     
     # Validate test type
-    validTestTypes = ["allStepsAtOnce", "stepByStep", "singleAgent"]
+    validTestTypes = ["allStepsAtOnce", "stepByStep", "singleAgent", "knowledgeAgentOnly"]
     if testType not in validTestTypes:
         print(f'Invalid test type: {testType}')
         print(f'Available test types: {", ".join(validTestTypes)}')

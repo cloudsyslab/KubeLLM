@@ -32,6 +32,14 @@ The model receives symptoms ("the pod cannot be accessed, curl times out") and t
 
 Every agent exists for a reason. The Knowledge Agent is not a shortcut -- it represents the realistic advantage of having a knowledge base. The Verification Agent is not redundant with Ground Truth -- it tests whether a model can evaluate cluster state, which is itself a measurable capability.
 
+The optional `knowledgeAgentOnly` technique is a controlled ablation of the
+Debug Agent. The Knowledge Agent still generates the diagnosis and every
+command; a generic deterministic executor only validates and executes its
+versioned plan. It must not contain case-specific fixes, derive solutions from
+ground truth, repair model output, or re-plan after observing command results.
+Keep case prompts and fixtures identical when comparing it with
+`allStepsAtOnce`.
+
 ## Verification hierarchy
 
 Three layers, in order of authority:
@@ -79,6 +87,10 @@ The model must do the work. The following patterns are prohibited:
 - Short-circuiting the debug loop when deterministic checks detect the right state was reached by something other than model action
 - Platform-specific code paths that skip the LLM on certain operating systems
 - Pre-computing the answer and injecting it into the model's context
+
+A generic parser/executor is not a bypass when the model still produces the
+complete fix. Adding a fixture-specific executor rule, prompt hint, command, or
+fallback is a bypass and invalidates the experiment.
 
 If the model cannot solve a problem on a given platform, that is a valid result. The benchmark should record it, not hide it.
 

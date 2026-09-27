@@ -61,6 +61,7 @@ Overrides and repeat queue:
 
 ```bash
 python3 debug_assistant_latest/runner.py wrong_port --debug-model gpt-4o
+python3 debug_assistant_latest/runner.py wrong_port --technique knowledgeAgentOnly
 python3 debug_assistant_latest/runner.py wrong_port --repeat 10 --stall-limit-s 900
 python3 debug_assistant_latest/runner.py wrong_port --repeat 10 --output-dir /tmp/kubellm_runs
 python3 debug_assistant_latest/runner.py wrong_port --minikube-profile minikube
@@ -89,6 +90,12 @@ cat .local/test_runs/*/<test_name>/summary.json | jq
 cat .local/test_runs/*/<test_name>/stdout.log
 cat .local/test_runs/*/<test_name>/stderr.log
 ```
+
+`knowledgeAgentOnly` additionally writes `knowledge_plan.json` and
+`execution_results.json` in the test directory. A response that fails its
+strict versioned JSON contract writes `knowledge_plan_error.json` instead.
+The deterministic verifier and configured ground-truth checks still run when
+the plan is rejected or execution stops early.
 
 Repeat queue:
 

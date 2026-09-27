@@ -146,6 +146,18 @@ python3 debug_assistant_latest/runner.py --run-many "port_*" --jobs 4
 python3 debug_assistant_latest/runner.py wrong_port --repeat 10 --stall-limit-s 900
 ```
 
+8. Run the experimental knowledge-agent-only remediation path:
+```bash
+python3 debug_assistant_latest/runner.py wrong_port --technique knowledgeAgentOnly
+```
+
+`knowledgeAgentOnly` asks the existing RAG-backed knowledge model for one
+strict, versioned JSON command plan. A deterministic executor validates and
+runs that plan exactly once; it never creates or calls the debug/tools LLM.
+The independent verification agent and deterministic ground truth still run.
+This is an ablation technique for measuring the debug agent's contribution,
+not the default execution path.
+
 #### Useful Runner Options
 Override models:
 ```bash

@@ -1,6 +1,7 @@
 import os
 import re
 from collections import OrderedDict
+from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any, Optional, Union
 
@@ -86,6 +87,23 @@ RUN_SHELL_COMMAND_PARAMETERS = {
 }
 
 
+@dataclass
+class ShellCommandResult:
+    """Structured result shared by model-driven and deterministic callers."""
+
+    command: str
+    stdout: str = ""
+    stderr: str = ""
+    exit_code: Optional[int] = None
+    duration_s: float = 0.0
+    timed_out: bool = False
+    blocked_reason: Optional[str] = None
+    error: Optional[str] = None
+
+    def to_dict(self) -> dict:
+        return asdict(self)
+
+
 def _safe_log(level: str, message: str, *args) -> None:
     try:
         getattr(logger, level)(message, *args)
@@ -143,7 +161,7 @@ class BetterShellTools(Toolkit):
         self._consecutive_blocked = 0
 
     def _maybe_block_agent_command(self, args: str) -> Optional[str]:
-        if self.phase not in {"debug", "verification"}:
+        if self.phase not in {"debug", "executor", "verification"}:
             return None
         for pattern, message in AGENT_BLOCK_RULES:
             if pattern.search(args):
@@ -200,9 +218,6 @@ class BetterShellTools(Toolkit):
         payloads remain accepted here for backward compatibility with older
         tool-call payloads.
         """
-        import subprocess
-        import time
-
         raw_command = command if command is not None else args
         normalized_command = self._normalize_command_value(raw_command)
         if normalized_command is None:
@@ -217,6 +232,26 @@ class BetterShellTools(Toolkit):
             )
             _safe_log("warning", "Failed to normalize shell command payload: %s", raw_command)
             return f"Error: {message}"
+
+        result = self.execute_shell_command(normalized_command, timeout_s=COMMAND_TIMEOUT_S)
+        if result.blocked_reason:
+            return f"Error: {result.blocked_reason}"
+        if result.timed_out or result.error:
+            return f"Error: {result.error or 'Command execution failed'}"
+        if result.exit_code != 0:
+            error_text = result.stderr.strip() or result.stdout.strip() or f"Command exited with code {result.exit_code}"
+            return f"Error: {error_text}"
+        return "\n".join(result.stdout.split("\n")[-50:])
+
+    def execute_shell_command(self, command: str, *, timeout_s: float = COMMAND_TIMEOUT_S) -> ShellCommandResult:
+        """Run one normalized command and return its unambiguous process result."""
+        import subprocess
+        import time
+
+        normalized_command = self._normalize_command_value(command)
+        if normalized_command is None:
+            message = "Expected a non-empty literal shell command string"
+            return ShellCommandResult(command=str(command), error=message)
 
         blocked_reason = self._maybe_block_agent_command(normalized_command)
         if not blocked_reason:
@@ -243,7 +278,7 @@ class BetterShellTools(Toolkit):
                 )
                 raise BlockedCommandThresholdError(threshold_message)
 
-            return f"Error: {blocked_reason}"
+            return ShellCommandResult(command=normalized_command, blocked_reason=blocked_reason)
 
         self._reset_blocked_counter()
 
@@ -252,7 +287,7 @@ class BetterShellTools(Toolkit):
             "text": True,
             "encoding": "utf-8",
             "errors": "replace",
-            "timeout": COMMAND_TIMEOUT_S,
+            "timeout": timeout_s,
         }
         if self.base_dir:
             run_kwargs["cwd"] = self.base_dir
@@ -262,7 +297,7 @@ class BetterShellTools(Toolkit):
             "tool_start",
             command=normalized_command,
             cwd=str(run_kwargs.get("cwd") or os.getcwd()),
-            timeout_s=COMMAND_TIMEOUT_S,
+            timeout_s=timeout_s,
         )
         _safe_log("info", "Running shell command: %s", normalized_command)
 
@@ -278,16 +313,21 @@ class BetterShellTools(Toolkit):
                 result = subprocess.run(normalized_command, shell=True, check=False, **run_kwargs)
         except subprocess.TimeoutExpired:
             elapsed_s = round(time.perf_counter() - start, 3)
-            message = f"Command timed out after {COMMAND_TIMEOUT_S}s"
+            message = f"Command timed out after {timeout_s}s"
             self._write_progress(
                 "tool_timeout",
                 command=normalized_command,
                 elapsed_s=elapsed_s,
-                timeout_s=COMMAND_TIMEOUT_S,
+                timeout_s=timeout_s,
                 reason=message,
             )
             _safe_log("warning", "Failed to run shell command: %s", message)
-            return f"Error: {message}"
+            return ShellCommandResult(
+                command=normalized_command,
+                duration_s=elapsed_s,
+                timed_out=True,
+                error=message,
+            )
         except Exception as exc:
             elapsed_s = round(time.perf_counter() - start, 3)
             message = str(exc)
@@ -298,29 +338,48 @@ class BetterShellTools(Toolkit):
                 reason=message,
             )
             _safe_log("warning", "Failed to run shell command: %s", message)
-            return f"Error: {message}"
+            return ShellCommandResult(
+                command=normalized_command,
+                duration_s=elapsed_s,
+                error=message,
+            )
 
         elapsed_s = round(time.perf_counter() - start, 3)
-        _safe_log("debug", "Return code: %s", result.returncode)
+        return_code = result.returncode
+        stdout = getattr(result, "stdout", "") or ""
+        stderr = getattr(result, "stderr", "") or ""
+        _safe_log("debug", "Return code: %s", return_code)
 
-        if result.returncode != 0:
-            error_text = result.stderr.strip() or result.stdout.strip() or f"Command exited with code {result.returncode}"
+        if return_code != 0:
+            error_text = stderr.strip() or stdout.strip() or f"Command exited with code {return_code}"
             self._write_progress(
                 "tool_error",
                 command=normalized_command,
                 elapsed_s=elapsed_s,
-                exit_code=result.returncode,
+                exit_code=return_code,
                 reason=error_text,
             )
-            return f"Error: {error_text}"
+            return ShellCommandResult(
+                command=normalized_command,
+                stdout=stdout,
+                stderr=stderr,
+                exit_code=return_code,
+                duration_s=elapsed_s,
+            )
 
-        output = "\n".join(result.stdout.split("\n")[-50:])
+        output = "\n".join(stdout.split("\n")[-50:])
         self._write_progress(
             "tool_end",
             command=normalized_command,
             elapsed_s=elapsed_s,
-            exit_code=result.returncode,
+            exit_code=return_code,
             stdout_preview=output[:400],
         )
 
-        return output
+        return ShellCommandResult(
+            command=normalized_command,
+            stdout=stdout,
+            stderr=stderr,
+            exit_code=return_code,
+            duration_s=elapsed_s,
+        )
