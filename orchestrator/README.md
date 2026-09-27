@@ -2,6 +2,11 @@
 
 Repo documentation index: [docs/README.md](../docs/README.md). Runner and orchestrator steps: [docs/handbook/operations.md](../docs/handbook/operations.md).
 
+> Personal-lane notice: for Minh's shared-lab runs, use the private selector
+> and runner contract in [docs/handbook/lab-lanes.md](../docs/handbook/lab-lanes.md).
+> The generic examples below describe legacy/manual operation and must not be
+> used as a fallback when the selected lane config or preflight fails.
+
 This folder is the control plane for the local orchestrator workflow. It defines:
 - The system prompt the orchestrator uses each run.
 - The workflow loop for delegating work to workers.
@@ -100,8 +105,8 @@ Guidance for task specs:
 ## Scripts
 
 - `orchestrator/preflight.sh`
-  - Refreshes kubeconfig from the Minikube node Docker container (default name `minikube`; override with `KUBELLM_MINIKUBE_DOCKER_CONTAINER`), writes `KUBELLM_KUBECONFIG_PATH` (default `~/.kube/kubellm-minikube.conf`), verifies `/readyz` and `kubectl get nodes`.
-  - Use before cluster-backed test runs when using this scripted setup; skip or adapt if you manage kubeconfig another way.
+  - In generic mode, refreshes kubeconfig from the Minikube node Docker container and writes `KUBELLM_KUBECONFIG_PATH` (default `~/.kube/kubellm-minikube.conf`). In personal-lane mode, it updates the selected profile context only inside the lane's private kubeconfig.
+  - Verifies `/readyz` and `kubectl get nodes`. For Minh's lane, prefer the runner's lane-aware `--preflight`; never write the shared default kubeconfig.
 
 - `orchestrator/context_pack.py`
   - Builds a small zip of relevant repo context (entrypoints, configs, key YAMLs).
@@ -250,6 +255,11 @@ Deliverables:
 ```
 
 ## Operations playbook (exact commands)
+
+The commands below describe generic/non-lane environments. For Minh's shared
+lab, select `KUBELLM_LAB_CONFIG`, use `.venv/bin/python`, pass
+`--lab-config "$KUBELLM_LAB_CONFIG"` to runner commands, and keep runs serial;
+see [lab-lanes.md](../handbook/lab-lanes.md).
 
 1) Preflight (when using the scripted cluster setup):
 ```bash

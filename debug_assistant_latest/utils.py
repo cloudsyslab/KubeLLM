@@ -34,6 +34,7 @@ import json
 import sys
 import os
 import subprocess
+import re
 import time
 from pathlib import Path
 from dotenv import load_dotenv
@@ -42,7 +43,7 @@ import yaml
 
 SCRIPT_DIR = Path(__file__).resolve().parent
 REPO_ROOT = SCRIPT_DIR.parent
-load_dotenv(REPO_ROOT / ".env", override=True)
+load_dotenv(REPO_ROOT / ".env", override=os.getenv("KUBELLM_LAB_ACTIVE") != "1")
 
 from rag_api import (
     BASE_URL,
@@ -127,14 +128,38 @@ def setUpEnvironment(config):
     # Run setup commands from repo root so repo-root-relative paths work regardless of CWD.
     env = os.environ.copy()
     minikube_profile = config.get("minikube-profile")
-    if minikube_profile:
+    if os.environ.get("KUBELLM_LAB_ACTIVE") == "1":
+        from debug_assistant_latest.lab_context import active_lane_config, assert_lane_target, prepare_lane_images
+
+        lane = active_lane_config()
+        if minikube_profile and minikube_profile != lane["minikube_profile"]:
+            raise RuntimeError("Case Minikube profile conflicts with the selected lab lane")
+        minikube_profile = lane["minikube_profile"]
+        env["KUBECONFIG"] = str(lane["kubeconfig_path"])
+        env["MINIKUBE_PROFILE"] = minikube_profile
+        assert_lane_target()
+        config["_lane_local_images"] = _local_never_pull_images(config)
+        prepare_lane_images(config, env=env)
+    elif minikube_profile:
         env["MINIKUBE_PROFILE"] = minikube_profile
     for command in config.get("setup-commands", []):
+        if os.environ.get("KUBELLM_LAB_ACTIVE") == "1" and re.search(r"\bdocker\s+build\b", command):
+            # Lane image preparation above uses `minikube -p <lane> image build`.
+            # Never execute the legacy host-Docker fallback embedded in case JSON.
+            continue
         subprocess.run(command, shell=True, check=True, cwd=str(REPO_ROOT), env=env)
     validate_local_images_available(config, env=env)
 
 
 def _resolve_minikube_profile(config, env):
+    if env.get("KUBELLM_LAB_ACTIVE") == "1":
+        from debug_assistant_latest.lab_context import active_lane_config
+
+        lane_profile = active_lane_config()["minikube_profile"]
+        configured = config.get("minikube-profile")
+        if configured and configured != lane_profile:
+            raise RuntimeError("Case Minikube profile conflicts with the selected lab lane")
+        return lane_profile
     profile = config.get("minikube-profile") or env.get("MINIKUBE_PROFILE")
     if profile:
         return profile

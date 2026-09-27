@@ -532,7 +532,7 @@ class PromptHelperTests(unittest.TestCase):
 
         self.assertIn("Minikube Image Guidance", agent.prompt)
         self.assertIn("MINIKUBE_PROFILE", agent.prompt)
-        self.assertIn('minikube -p "$PROFILE" image build', agent.prompt)
+        self.assertIn("never infer a Minikube profile name from the kubectl current context", agent.prompt)
         self.assertIn("Do not recommend `docker push`", agent.prompt)
         self.assertNotIn("plama", agent.prompt)
 
@@ -728,6 +728,26 @@ class BetterShellTests(unittest.TestCase):
         self.assertIn("Error:", output)
         self.assertIn("kubectl port-forward", output)
         run_mock.assert_not_called()
+
+    def test_run_shell_command_blocks_minikube_lifecycle_for_debug_phase(self):
+        tool = BetterShellTools(phase="debug")
+
+        with patch("subprocess.run") as run_mock:
+            output = tool.run_shell_command("minikube -p minikube start")
+
+        self.assertIn("Error:", output)
+        self.assertIn("runner owns the active profile", output)
+        run_mock.assert_not_called()
+
+    def test_run_shell_command_allows_minikube_status_for_debug_phase(self):
+        tool = BetterShellTools(phase="debug")
+        fake_result = types.SimpleNamespace(stdout="Running\n", stderr="", returncode=0)
+
+        with patch("subprocess.run", return_value=fake_result) as run_mock:
+            output = tool.run_shell_command("minikube -p minikube status")
+
+        self.assertEqual(output, "Running\n")
+        run_mock.assert_called_once()
 
     def test_run_shell_command_allows_default_linux_tool_behavior_for_same_string(self):
         tool = BetterShellTools()
@@ -1655,8 +1675,20 @@ class TeardownTests(unittest.TestCase):
         commands = [call[0][0] for call in recorded_calls]
         self.assertEqual(
             commands,
-            [["kubectl", "delete", "pods", "--all", "-n", "default", "--ignore-not-found=true"]],
+            [
+                [
+                    "kubectl",
+                    "delete",
+                    "pods",
+                    "--all",
+                    "-n",
+                    "default",
+                    "--ignore-not-found=true",
+                    "--wait=false",
+                ]
+            ],
         )
+        self.assertEqual(recorded_calls[0][1]["timeout"], teardown.KUBECTL_COMMAND_TIMEOUT_S)
 
 class RunnerTests(unittest.TestCase):
     def test_removed_backup_flag_is_rejected(self):
@@ -1665,6 +1697,15 @@ class RunnerTests(unittest.TestCase):
                 cli_main()
 
         self.assertEqual(error.exception.code, 2)
+
+    def test_single_case_dry_run_does_not_execute_case(self):
+        with patch.object(sys, "argv", ["runner.py", "wrong_port", "--dry-run"]), patch(
+            "debug_assistant_latest.cli.cmd_run_single"
+        ) as run_mock:
+            exit_code = cli_main()
+
+        self.assertEqual(exit_code, 0)
+        run_mock.assert_not_called()
 
     def test_result_to_summary_preserves_ground_truth_flag(self):
         result = TestResult(

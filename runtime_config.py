@@ -11,7 +11,7 @@ ENV_PATH = REPO_ROOT / ".env"
 
 # Prefer repo .env over pre-existing shell/user values. This keeps provider,
 # RAG, and database configuration on the same precedence rule.
-load_dotenv(ENV_PATH, override=True)
+load_dotenv(ENV_PATH, override=os.getenv("KUBELLM_LAB_ACTIVE") != "1")
 
 # The local environment installs psycopg2-binary via requirements.txt, so keep
 # every runtime path on the same SQLAlchemy driver instead of mixing psycopg

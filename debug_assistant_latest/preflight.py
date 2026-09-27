@@ -12,6 +12,7 @@ from sqlalchemy import create_engine, text
 
 from config_merge import load_config_with_overrides
 from ground_truth import validate_ground_truth_config
+from debug_assistant_latest.lab_context import active_lane_config, database_identity, is_lane_active, lane_target_errors
 from rag_server_config import resolve_client_base_url
 from runtime_config import DB_URL
 from test_discovery import get_config_path, list_test_cases
@@ -66,8 +67,9 @@ def _check_db_connectivity() -> PreflightCheck:
             conn.execute(text("SELECT 1"))
         engine.dispose()
     except Exception as exc:
-        return PreflightCheck("db_connectivity", False, f"Could not connect to DB_URL={DB_URL}: {exc}")
-    return PreflightCheck("db_connectivity", True, f"Connected to DB_URL={DB_URL}")
+        # SQLAlchemy exceptions can echo the full URL, including credentials.
+        return PreflightCheck("db_connectivity", False, f"Could not connect to the configured database: {type(exc).__name__}")
+    return PreflightCheck("db_connectivity", True, "Connected to the configured database")
 
 
 def _check_rag_api(rag_api_url: Optional[str] = None) -> PreflightCheck:
@@ -81,7 +83,39 @@ def _check_rag_api(rag_api_url: Optional[str] = None) -> PreflightCheck:
         return PreflightCheck("rag_api", False, f"RAG API check failed for {info_url}: {exc}")
 
     api_version = payload.get("api_version", "<unknown>")
+    if is_lane_active():
+        from rag_server_config import RAG_API_VERSION, compute_repo_signature
+
+        lane = active_lane_config()
+        expected_signature = compute_repo_signature()
+        if base_url.rstrip("/") != lane["rag_api_url"]:
+            return PreflightCheck("rag_api", False, "RAG API URL does not match the selected lab lane")
+        if payload.get("api_version") != RAG_API_VERSION or payload.get("repo_signature") != expected_signature:
+            return PreflightCheck(
+                "rag_api",
+                False,
+                "RAG API code signature does not match this checkout",
+            )
+        if (
+            payload.get("server_port") != lane["rag_port"]
+            or payload.get("server_bind_host") not in {"127.0.0.1", "localhost"}
+            or payload.get("database_identity") != database_identity(DB_URL)
+        ):
+            return PreflightCheck(
+                "rag_api",
+                False,
+                "RAG API port, bind address, or database identity does not match the selected lab lane",
+            )
     return PreflightCheck("rag_api", True, f"RAG API reachable at {info_url} (api_version={api_version})")
+
+
+def _check_lab_lane() -> PreflightCheck:
+    if not is_lane_active():
+        return PreflightCheck("lab_lane", True, "No personal lab lane selected; legacy runner behavior retained")
+    errors = lane_target_errors()
+    if errors:
+        return PreflightCheck("lab_lane", False, "; ".join(errors))
+    return PreflightCheck("lab_lane", True, "Profile, kubeconfig, pgvector owner, and endpoint match the selected lane")
 
 
 def _check_kubectl() -> PreflightCheck:
@@ -185,6 +219,11 @@ def _validate_single_config(test_name: str, overrides: dict) -> Optional[str]:
     gt_errors = validate_ground_truth_config(config)
     if gt_errors:
         return f"{test_name}: {gt_errors[0]}"
+    if is_lane_active():
+        lane = active_lane_config()
+        case_profile = config.get("minikube-profile")
+        if case_profile and case_profile != lane["minikube_profile"]:
+            return f"{test_name}: configured Minikube profile conflicts with the selected lab lane"
     return None
 
 
@@ -235,6 +274,23 @@ def _resolve_minikube_profile(test_names: Optional[Iterable[str]], overrides: Op
         profile = config.get("minikube-profile")
         if profile:
             return profile
+
+    try:
+        result = subprocess.run(
+            ["kubectl", "config", "current-context"],
+            capture_output=True,
+            text=True,
+            timeout=10,
+            check=False,
+        )
+    except (FileNotFoundError, subprocess.SubprocessError):
+        return None
+
+    if result.returncode != 0:
+        return None
+    current_context = result.stdout.strip()
+    if current_context:
+        return current_context
     return None
 
 
@@ -247,6 +303,7 @@ def run_preflight(
 ) -> dict:
     resolved_profile = _resolve_minikube_profile(test_names, overrides, minikube_profile)
     checks = [
+        _check_lab_lane(),
         _check_python_imports(),
         _check_pytest_available(),
         _check_db_connectivity(),

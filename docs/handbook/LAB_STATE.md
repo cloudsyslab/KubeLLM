@@ -1,5 +1,10 @@
 # KubeLLM lab state and decision record
 
+> Historical record of the July 2026 canonical-workspace setup. It is not the
+> current lane selector or a source of live service ownership. For the
+> shared-lab operating contract, use [lab-lanes.md](lab-lanes.md); verify live
+> state from the selected private config and runner preflight.
+
 **Recorded:** 2026-07-19 UTC
 
 **Canonical checkout:** `/home/minh/KubeLLM`

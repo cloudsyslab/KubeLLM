@@ -64,7 +64,13 @@ class AgentVerification_v2(VerificationAgentBase):
                 file_types=["deployment", "application", "service"],
             )
 
-            minikube_profile = self.config.get("minikube-profile") or os.environ.get("MINIKUBE_PROFILE") or "minikube"
+            from debug_assistant_latest.lab_context import active_lane_config, is_lane_active
+
+            lane_profile = active_lane_config()["minikube_profile"] if is_lane_active() else None
+            configured_profile = self.config.get("minikube-profile")
+            if lane_profile and configured_profile and configured_profile != lane_profile:
+                raise ValueError("Case Minikube profile conflicts with the selected lab lane")
+            minikube_profile = lane_profile or configured_profile or os.environ.get("MINIKUBE_PROFILE") or "minikube"
             self.prompt += f"""
             ### CURRENT CONTEXT
             - Working directory: {self.config['test-directory']}
