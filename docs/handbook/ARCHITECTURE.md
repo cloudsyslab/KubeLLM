@@ -31,6 +31,7 @@ config_step.json
 runner.py / main.py
     |
     +--> preflight.py (imports, pytest, DB, RAG API, kubectl, config checks)
+    +--> lab_context.py (optional lane bootstrap, target ownership, serial lock)
     |
     +--> setup-commands (docker build/tag, kubectl apply)
     |
@@ -62,8 +63,9 @@ RUN_DIR / RESULT stdout + summary.json / aggregate.json / run_config.json under 
 | Component | Location | Responsibility |
 |-----------|----------|----------------|
 | Runner CLI | `debug_assistant_latest/runner.py` | Recommended entry point; handles preflight, listing, single runs, pattern runs, diagnosis, latest-run lookup, dashboard output, parallelism, repeat queues, and structured stdout |
-| Execution strategies | `debug_assistant_latest/main.py`, `debug_assistant_latest/knowledge_agent_only.py` | Wires together the three existing strategies and the `knowledgeAgentOnly` POC, which strictly parses the Knowledge Agent's JSON plan and executes it deterministically before independent verification |
+| Execution strategies | `debug_assistant_latest/main.py`, `debug_assistant_latest/knowledge_agent_only.py` | Wires the three existing strategies and the `knowledgeAgentOnly` POC, which parses the Knowledge Agent's JSON plan and executes it deterministically before independent verification |
 | Preflight checker | `debug_assistant_latest/preflight.py` | Structured import, dependency, connectivity, kubectl, and config checks; powers `--preflight` and auto-preflight before normal runs |
+| Personal lane contract | `debug_assistant_latest/lab_context.py` | Loads the private lane selector before `.env`, pins profile/kubeconfig/RAG/DB targets, validates ownership, builds Never-pull images in-profile, and serializes lane runs |
 | Knowledge agent | `debug_assistant_latest/api_agents.py` | Initializes the RAG assistant via HTTP, loads knowledge URLs, builds the troubleshooting prompt, and asks the knowledge question |
 | Debug agents | `debug_assistant_latest/debug_agents.py` | Executes the recommended actions, either all at once, step by step, or with a single combined agent |
 | Verification agents | `debug_assistant_latest/verification_base.py`, `debug_assistant_latest/verification_agents.py` | Performs LLM-driven validation of the cluster state and parses relaxed verification tokens, including spaced or markdown-wrapped variants |
@@ -141,25 +143,25 @@ The knowledge-agent response feeds one of four strategies in `main.py`:
 - `allStepsAtOnce`: `AgentDebug` receives the full knowledge-agent answer and executes actions with shell and file tools.
 - `stepByStep`: `AgentDebugStepByStep` extracts fenced bash blocks from the knowledge response and executes them one step at a time.
 - `singleAgent`: `SingleAgent` skips the RAG HTTP hop and builds a single phidata agent with an embedded website knowledge base. It receives the same shared tool-use, durable-fix, and Minikube image guardrails as the default knowledge/debug flow so results can be compared fairly.
-- `knowledgeAgentOnly`: initializes the Knowledge Agent with the `knowledge_plan` output mode and no shell tools, requires a whole-response JSON object (`schema_version` 1; 1–20 `run_shell_command` actions), strictly validates it, and passes each command unchanged to the existing `BetterShellTools` backend. It does not add a reasoning agent, repair malformed output, retry commands, or adapt later commands based on output. Actions run sequentially with 120 seconds per command and a 480-second total budget; execution stops on the first failure. The existing Verification Agent then receives a structured transcript of generation, contract, and execution results.
+- `knowledgeAgentOnly`: requests the Knowledge Agent's exact JSON plan without giving it shell tools, validates the whole response against schema version 1 (1–20 `run_shell_command` actions), and sends each command unchanged to the existing `BetterShellTools` backend. Commands run sequentially with the existing per-command and total execution limits and stop on the first failure. There is no extra reasoning agent, output repair, retry, or adaptive action planning.
 
-`singleAgent` deliberately skips LLM verification so its experiment contains one remediation agent; configured deterministic ground-truth checks still run in the executor. `knowledgeAgentOnly` keeps the independent Verification Agent and runs configured Ground Truth afterward, even when plan parsing or execution fails, so architecture failures remain diagnosable separately from benchmark state.
+`singleAgent` deliberately skips LLM verification so its experiment contains one remediation agent; configured deterministic ground-truth checks still run in the executor. `knowledgeAgentOnly` keeps independent Verification and runs configured Ground Truth afterward, even when generation, parsing, or execution fails, so architecture issues remain diagnosable independently of the benchmark verdict.
 
 The agent-driven strategies rely on `BetterShellTools` so they can issue shell commands and modify files; `knowledgeAgentOnly` calls its structured execution method directly. The debug agents classify their own outcome using explicit response tokens such as `<|SOLVED|>`, `<|FAILED|>`, and `<|ERROR|>`.
 
-The existing strategies return a common result shape. `knowledgeAgentOnly` additionally returns its architecture outcome and stage report and omits Debug Agent metrics:
+The existing strategies return a common result shape. `knowledgeAgentOnly` also returns its architecture outcome and stage report, with no Debug Agent metrics:
 
 ```python
-{"status": bool, "api_metrics": dict, "debug_metrics": dict | None, "verification_metrics": dict | None}
+{"status": bool, "debug_metrics": dict, "verification_metrics": dict | None}
 ```
 
-Its runner outcome is recorded as one of `knowledge_generation_error`, `contract_error`, `execution_error`, `action_failed`, `verification_error`, `completed_solved`, or `completed_unsolved`. When Ground Truth is configured, it is authoritative for solved/unsolved; otherwise the Verification Agent verdict is used. The summary's `architecture_outcome` preserves the POC-stage diagnosis independently.
+The runner records the POC's generation, contract, execution, verification, and Ground Truth outcomes separately. Architecture failures remain diagnosable independently of the benchmark result; configured Ground Truth remains authoritative for solved/unsolved status.
 
 On Windows, `timeout_helpers.py` uses a daemon-thread timeout contract: control returns to the caller after the configured limit, while the underlying blocked work is allowed to die with process exit.
 
 ### 6. LLM verification
 
-`allStepsAtOnce` and `knowledgeAgentOnly` run `AgentVerification_v2`. The deterministic POC passes its structured execution transcript in place of a Debug Agent narrative or self-report. The verification prompt is stricter than the remediation prompt:
+`allStepsAtOnce` and `knowledgeAgentOnly` run `AgentVerification_v2`. The deterministic technique passes its structured execution transcript in place of a Debug Agent narrative or self-report. The verification prompt is stricter than the remediation prompt:
 
 - it requires `kubectl`-based evidence
 - it uses real resource names from the manifests
@@ -192,7 +194,7 @@ Each run writes to `.local/test_runs/<run_id>/` by default. Per test, the runner
 - `summary.json`
 - `config_effective.json`
 - `ground_truth.json` when configured
-- for `knowledgeAgentOnly`, `knowledge_response.raw.txt`, `knowledge_plan.json` when valid, and `knowledge_execution.json` with per-action results and stage outcomes
+- for `knowledgeAgentOnly`, `knowledge_response.raw.txt`, `knowledge_plan.json` when valid, and `knowledge_execution.json` with per-action and stage outcomes
 
 Per run, it writes:
 
@@ -309,5 +311,5 @@ End-to-end runs use your workspace: code changes, unit tests, runner-driven trou
 
 1. `start_apiserver.sh` uses an environment-specific uvicorn path (`/home/ubuntu/.local/bin/uvicorn`), which is not portable.
 2. `SingleAgent` is still partially special-cased and hardcodes `o3-mini` rather than taking its model from config like the other strategies.
-3. `stepByStep` and `singleAgent` do not run the LLM verification agent, so only ground truth can validate them objectively when configured. `knowledgeAgentOnly` runs the same independent verification step as `allStepsAtOnce`.
+3. `stepByStep` and `singleAgent` do not run the LLM verification agent, so only ground truth can validate them objectively when configured. `knowledgeAgentOnly` keeps independent Verification and records its architecture outcome separately from Ground Truth.
 4. Parallel runs still share cluster resources and can collide on Kubernetes object names; the runner warns about this but does not isolate namespaces automatically.

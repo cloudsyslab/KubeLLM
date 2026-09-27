@@ -8,8 +8,23 @@ KubeLLM is an LLM-based multi-agent framework that manages your kubernetes clust
 
 ### Execution environment
 - Develop and run tests from your machine; use Docker, Kubernetes (for example Minikube), pgvector, and the RAG API as described below.
-- The runner and the FastAPI RAG server default to the same URL on loopback: `http://127.0.0.1:18000`.
+- Generic/legacy runner invocations default to the shared URL on loopback: `http://127.0.0.1:18000`. Minh's isolated lane uses an explicit private selector and a dedicated RAG port; see [lab-lanes.md](docs/handbook/lab-lanes.md).
 - Set `RAG_API_URL` or `--rag-api-url` when the RAG API runs on another host.
+
+### Minh's shared-lab workflow
+For Minh's experiments, use the owner-only lane selector and the checkout's
+lock-matched virtual environment. The preparation and benchmark skills do this
+automatically; for a direct run:
+
+```bash
+export KUBELLM_LAB_CONFIG="${KUBELLM_LAB_CONFIG:-${XDG_CONFIG_HOME:-$HOME/.config}/kubellm/lanes/minh.json}"
+.venv/bin/python debug_assistant_latest/runner.py --lab-config "$KUBELLM_LAB_CONFIG" --preflight
+.venv/bin/python debug_assistant_latest/runner.py --lab-config "$KUBELLM_LAB_CONFIG" wrong_port --technique knowledgeAgentOnly
+```
+
+Do not use the generic `.env`, shared `minikube` profile, pgvector port 5532,
+or RAG port 18000 for this lane. The remaining generic setup examples apply to
+other researchers' separately selected environments.
 
 ---
 
@@ -38,7 +53,10 @@ All troubleshooting test cases are located in `debug_assistant_latest/troublesho
 - The recommended entrypoint is `debug_assistant_latest/runner.py`.
 - `debug_assistant_latest/main.py` is a lower-level legacy entrypoint for a single config file.
 
-#### Prerequisites
+#### Generic/legacy prerequisites
+The following manual setup is for independent workspaces, not Minh's personal
+shared-lab lane (use the lane workflow above).
+
 Install Python dependencies:
 ```bash
 pip install -r requirements.txt
@@ -111,6 +129,11 @@ Set `RAG_SERVER_HOST=0.0.0.0` only when you intentionally want remote clients to
 #### Typical workflow
 When the runner and API server run on the same machine, leave `RAG_API_URL` unset unless you intentionally split them. A typical flow:
 
+For Minh's personal lab lane, first set `KUBELLM_LAB_CONFIG` to the owner-only
+config described in [lab-lanes.md](docs/handbook/lab-lanes.md). Once set, runner
+commands below use that lane automatically; do not pass shared-profile or
+shared-service overrides.
+
 1. Go to the repo:
 ```bash
 cd /path/to/KubeLLM-main
@@ -121,10 +144,12 @@ cd /path/to/KubeLLM-main
 python3 start_apiserver.py
 ```
 
-3. Run preflight before any test:
+3. Run runner preflight before any test (lane-aware when `KUBELLM_LAB_CONFIG` is set):
 ```bash
-bash orchestrator/preflight.sh
+python3 debug_assistant_latest/runner.py --preflight
 ```
+The generic/manual helper is `bash orchestrator/preflight.sh <profile>`; do not
+use it with the shared default kubeconfig for Minh's personal lane.
 
 4. List available test cases:
 ```bash
@@ -140,6 +165,8 @@ python3 debug_assistant_latest/runner.py wrong_port
 ```bash
 python3 debug_assistant_latest/runner.py --run-many "port_*" --jobs 4
 ```
+This parallel form is for non-lane legacy runs; the personal lane enforces
+serial execution.
 
 7. Run a repeat queue for stability testing:
 ```bash
@@ -210,6 +237,7 @@ Teardown all supported test cases:
 ```bash
 python3 debug_assistant_latest/teardownenv.py all
 ```
+Broad teardown is refused while a personal lane is active; tear down one case.
 
 #### Legacy Single-Config Entry Point
 If you need to run the lower-level script directly instead of the runner:
@@ -222,7 +250,16 @@ Use this only when you explicitly want the raw single-config execution path. The
 ---
 
 ### Agents 🕵️‍♀️
-Currently our approach uses two agents, one for knowledge and one that takes corrective actions recommended by the knowledge agent. The knowledge agent uses a pgvector database and Retrieval-Augmented Generation (RAG) technique to store and retrieve relevant knowledge, which primarily consists of Kubernetes documentation.
+The default benchmark flow uses a Knowledge Agent to retrieve diagnostic
+instructions, a corrective agent to apply them, and independent Verification
+and Ground Truth checks afterward. The opt-in `knowledgeAgentOnly` POC removes
+the corrective agent's generative step: it validates the Knowledge Agent's
+strict JSON command plan, executes those commands deterministically, then
+runs the same Verification and Ground Truth stages. See
+[Architecture](docs/handbook/ARCHITECTURE.md) and [Personal lab lanes](docs/handbook/lab-lanes.md).
+
+The Knowledge Agent uses pgvector and Retrieval-Augmented Generation (RAG) to
+store and retrieve relevant knowledge, primarily Kubernetes documentation.
 
 * Our approach is currently based off this graph here [Kubernetes Troubleshooting Graph](https://learnk8s.io/troubleshooting-deployments)
 

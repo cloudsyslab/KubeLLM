@@ -2,35 +2,49 @@
 
 Canonical instructions for fixing failing tests or building features in this repo. The Phase 1–5 debug loop is implemented: the agent in the session runs commands, reads structured output, diagnoses, edits code, and re-runs.
 
-Use `python3` on Unix/macOS; on Windows, `python` is fine if that is your launcher.
+For Minh's personal lab lane, export `KUBELLM_LAB_CONFIG` to the owner-only
+selector described in [lab-lanes.md](../handbook/lab-lanes.md) before running
+any command below. The runner applies that lane before loading checkout-local
+`.env` settings. Never infer the profile from kubectl context or fall back to
+shared services. Feature branch, dirty-tree, and upstream-sync state are not
+runner readiness failures.
+
+```bash
+export KUBELLM_LAB_CONFIG="${KUBELLM_LAB_CONFIG:-${XDG_CONFIG_HOME:-$HOME/.config}/kubellm/lanes/minh.json}"
+```
+
+For Minh's lane, use `.venv/bin/python` (Python 3.11+) for runner and test
+commands, and pass `--lab-config "$KUBELLM_LAB_CONFIG"` to every runner call.
 
 ## Loop (execute in order)
 
-1. **PREFLIGHT** — `python3 debug_assistant_latest/runner.py --preflight`  
-   Treat `python_imports`, `pytest`, `kubectl`, and `config_validity` as code-health gates.  
-   If **only** `db_connectivity` and `rag_api` fail, that is an environment blocker (start pgvector and the RAG API server). Do not “fix” those with code changes.
+1. **PREFLIGHT** — `.venv/bin/python debug_assistant_latest/runner.py --lab-config "$KUBELLM_LAB_CONFIG" --preflight`
 
-2. **RUN** — `python3 debug_assistant_latest/runner.py <test_name>`  
-   Capture the printed `RUN_DIR:` line. If lost, run `python3 debug_assistant_latest/runner.py --latest-run`.
+   Treat `python_imports`, `pytest`, `kubectl`, and `config_validity` as code-health gates.
+   Lane, DB, or RAG failures are readiness blockers: diagnose them with the preparation skill and selected lane; never start shared/default services to work around them.
 
-3. **READ RESULTS** — Open `<RUN_DIR>/<test_name>/summary.json`  
-   Check `status` (`PASS`, `FAIL`, `ERROR`, `TIMEOUT`), `verified`, `ground_truth_passed`, `error_message`, `error_context`.
+2. **RUN** — `.venv/bin/python debug_assistant_latest/runner.py --lab-config "$KUBELLM_LAB_CONFIG" <test_name>`
 
-4. **TEARDOWN** — Full cluster cleanup after **every** benchmark run (success or failure), the same way an operator would before the next run or before walking away.  
-   - Default (runner did not tear down): `python3 debug_assistant_latest/teardownenv.py <test_name>`  
-   - If the runner completed teardown for that scenario, it restored the fixture directory from its committed baseline; skip only if you are sure teardown completed (check console for `[TEARDOWN]` / errors).
-   - `python3 debug_assistant_latest/teardownenv.py all` clears every configured scenario; use only when you intend that breadth.  
-   Artifacts under `<RUN_DIR>/` stay on disk for diagnosis; teardown targets the cluster, images, and restores the complete fixture directory from its committed baseline (see [Operations](../handbook/operations.md)).
-   If you still need live `kubectl` output for a failure, capture it **before** this step.
+   Capture the printed `RUN_DIR:` line. If lost, run `.venv/bin/python debug_assistant_latest/runner.py --lab-config "$KUBELLM_LAB_CONFIG" --latest-run`.
 
-5. **DIAGNOSE** — `python3 debug_assistant_latest/runner.py --diagnose-last`  
-   Read JSON fields: `category`, `summary`, `evidence`, `suggested_actions`.  
+3. **READ RESULTS** — Open `<RUN_DIR>/<test_name>/summary.json`
+
+   Check `status` (`PASS`, `FAIL`, `ERROR`, `TIMEOUT`), `architecture_outcome` when present, `verified`, `ground_truth_passed`, `error_message`, and `error_context`. For `knowledgeAgentOnly`, also inspect `knowledge_execution.json`.
+
+4. **TEARDOWN** — The runner tears down the selected case by default. If it reports a teardown failure, verify the lane first, then run targeted cleanup with the same `KUBELLM_LAB_CONFIG`. Never run `teardownenv.py all` in the shared lab.
+
+   - Targeted fallback: `KUBELLM_LAB_CONFIG="$KUBELLM_LAB_CONFIG" .venv/bin/python debug_assistant_latest/teardownenv.py <test_name>`
+   - Artifacts under `<RUN_DIR>/` stay on disk; inspect live resources before targeted cleanup only when the user requested it.
+
+5. **DIAGNOSE** — `.venv/bin/python debug_assistant_latest/runner.py --lab-config "$KUBELLM_LAB_CONFIG" --diagnose-last`
+
+   Read JSON fields: `category`, `summary`, `evidence`, `suggested_actions`.
    Add `stderr.log` / `stdout.log` in the same test directory when needed.  
-   Use `python3 debug_assistant_latest/runner.py --dashboard` for historical trends across runs, not as a substitute for per-run diagnosis.
+   Use `.venv/bin/python debug_assistant_latest/runner.py --lab-config "$KUBELLM_LAB_CONFIG" --dashboard` for historical trends across runs, not as a substitute for per-run diagnosis.
 
 6. **FIX** — Edit the files indicated by the diagnosis and logs. See [Common failure patterns](#common-failure-patterns) below.
 
-7. **VALIDATE** — `python3 -m pytest tests/ -v` (minimum regression gate after code changes).
+7. **VALIDATE** — `.venv/bin/python -m pytest tests/ -v` (minimum regression gate after code changes).
 
 8. **RE-RUN** — Run the same test again (from step 1 or 2 as appropriate). Stop after about three fix attempts if the failure category does not change or confidence is low.  
    If `status` was `PASS` after step 3, you are done once step 4 (teardown) has run.
@@ -57,39 +71,38 @@ Prefer these lines over globbing for the newest directory when the runner alread
 ## Useful runner commands
 
 ```bash
-python3 debug_assistant_latest/runner.py --preflight
-python3 debug_assistant_latest/runner.py --list
-python3 debug_assistant_latest/runner.py --validate-ground-truth
-python3 debug_assistant_latest/runner.py <test_name>
-python3 debug_assistant_latest/runner.py --diagnose-last
-python3 debug_assistant_latest/runner.py --latest-run
-python3 debug_assistant_latest/runner.py --dashboard
+.venv/bin/python debug_assistant_latest/runner.py --lab-config "$KUBELLM_LAB_CONFIG" --preflight
+.venv/bin/python debug_assistant_latest/runner.py --lab-config "$KUBELLM_LAB_CONFIG" --list
+.venv/bin/python debug_assistant_latest/runner.py --lab-config "$KUBELLM_LAB_CONFIG" --validate-ground-truth
+.venv/bin/python debug_assistant_latest/runner.py --lab-config "$KUBELLM_LAB_CONFIG" <test_name>
+.venv/bin/python debug_assistant_latest/runner.py --lab-config "$KUBELLM_LAB_CONFIG" --diagnose-last
+.venv/bin/python debug_assistant_latest/runner.py --lab-config "$KUBELLM_LAB_CONFIG" --latest-run
+.venv/bin/python debug_assistant_latest/runner.py --lab-config "$KUBELLM_LAB_CONFIG" --dashboard
 ```
 
 Teardown (after each benchmark run if the runner did not already tear down):
 
 ```bash
-python3 debug_assistant_latest/teardownenv.py <test_name>
-python3 debug_assistant_latest/teardownenv.py all
+KUBELLM_LAB_CONFIG="$KUBELLM_LAB_CONFIG" .venv/bin/python debug_assistant_latest/teardownenv.py <test_name>
 ```
 
 Notes:
 
-- Normal runs auto-run preflight unless `--skip-preflight`.
+- Lane runs auto-run preflight and reject `--skip-preflight` and parallel jobs.
 - The repo `Makefile` is optional convenience; canonical agent commands are the Python invocations above.
-- `--minikube-profile` only applies when passed explicitly; verification falls back to config, then `MINIKUBE_PROFILE`, then `minikube`.
-- **`.env` vs shell:** the repo loads `.env` with `override=True` so the file wins over a stale `OPENAI_API_KEY` from Windows user env or the parent shell. After you change the key in `.env`, **restart the RAG API server** (`start_apiserver.py` / uvicorn) so embeddings use the new secret; a long-lived process keeps the old environment until restart.
+- Without a lane selector, legacy profile resolution remains compatible with existing users. In Minh's personal lane, `--lab-config` is authoritative and conflicting profile/API overrides are rejected; verification reads the selected lane profile.
+- **Private env vs checkout `.env`:** lane service settings load before checkout `.env` modules and take precedence. After changing provider or DB credentials, rerun readiness so the lane-owned RAG API is restarted and identity-checked.
 
 ### OpenAI quota vs local Ollama
 
-`config_step.json` files default to OpenAI chat and embedders (`gpt-*`, `text-embedding-*`). A `429 insufficient_quota` response means billing or quota on the OpenAI account must be fixed **or** you should run against local Ollama instead.
+`config_step.json` files default to OpenAI chat and embedders (`gpt-*`, `text-embedding-*`). A `429 insufficient_quota` response is a provider-readiness failure. Provider/model choice is part of the benchmark condition: do not silently switch to Ollama or override models; ask the user before creating a separately identified run under another configuration.
 
 **Option A — environment (shortest):** set `KUBELLM_USE_OLLAMA=1` in `.env` or the shell. The runner fills any unset `--api-model`, `--debug-model`, `--verification-model`, `--embedder`, and `--embedder-provider` with local defaults (`llama3.2:3b`, `nomic-embed-text`, `ollama`). Explicit CLI flags still win. Optional: `KUBELLM_OLLAMA_CHAT_MODEL`, `KUBELLM_OLLAMA_EMBEDDER`, or per-role `KUBELLM_API_MODEL`, `KUBELLM_DEBUG_MODEL`, `KUBELLM_VERIFICATION_MODEL`, `KUBELLM_EMBEDDER`, `KUBELLM_EMBEDDER_PROVIDER` (see `.env.example`).
 
 **Option B — CLI (equivalent one-shot):**
 
 ```bash
-python3 debug_assistant_latest/runner.py wrong_port \
+.venv/bin/python debug_assistant_latest/runner.py --lab-config "$KUBELLM_LAB_CONFIG" wrong_port \
   --debug-model llama3.2:3b --api-model llama3.2:3b --verification-model llama3.2:3b \
   --embedder nomic-embed-text --embedder-provider ollama
 ```
@@ -113,8 +126,8 @@ Pick a chat model that fits available RAM (smaller models if Ollama reports insu
 ## Ground truth CLI
 
 ```bash
-python3 debug_assistant_latest/runner.py --validate-ground-truth
-python3 debug_assistant_latest/runner.py wrong_port --verify-only
+.venv/bin/python debug_assistant_latest/runner.py --lab-config "$KUBELLM_LAB_CONFIG" --validate-ground-truth
+.venv/bin/python debug_assistant_latest/runner.py --lab-config "$KUBELLM_LAB_CONFIG" wrong_port --verify-only
 ```
 
 Schema: `debug_assistant_latest/ground_truth.schema.json`.
@@ -129,9 +142,13 @@ Kubernetes timing, teardown ordering, and parallel runs (`--jobs` > 1) can produ
 ## Cluster helper scripts
 
 ```bash
-bash orchestrator/preflight.sh
-bash orchestrator/collect_diagnostics.sh
+.venv/bin/python debug_assistant_latest/runner.py --lab-config "$KUBELLM_LAB_CONFIG" --preflight
+KUBELLM_LAB_CONFIG="$KUBELLM_LAB_CONFIG" bash orchestrator/collect_diagnostics.sh
 ```
+
+Use `orchestrator/preflight.sh <profile>` only for a separately selected
+non-personal environment; the runner's lane-aware preflight is authoritative
+for Minh's lane.
 
 ## See also
 
