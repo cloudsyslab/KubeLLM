@@ -7,7 +7,7 @@ from dotenv import load_dotenv
 
 SCRIPT_DIR = Path(__file__).resolve().parent
 REPO_ROOT = SCRIPT_DIR.parent
-load_dotenv(REPO_ROOT / ".env", override=True)
+load_dotenv(REPO_ROOT / ".env", override=os.getenv("KUBELLM_LAB_ACTIVE") != "1")
 
 RAG_API_VERSION = "2026-07-10"
 DEFAULT_OUTPUT_MODE = "default"
@@ -83,6 +83,9 @@ SERVER_REPO_SIGNATURE = compute_repo_signature()
 
 def build_server_info(*, module_path: Optional[Path] = None, server_started_at: Optional[str] = None) -> dict:
     resolved_module_path = module_path.resolve() if module_path else None
+    from debug_assistant_latest.lab_context import database_identity
+    from runtime_config import DB_URL
+
     return {
         "service": "kubellm-rag-api",
         "api_version": RAG_API_VERSION,
@@ -91,6 +94,7 @@ def build_server_info(*, module_path: Optional[Path] = None, server_started_at: 
         "repo_signature": SERVER_REPO_SIGNATURE,
         "server_bind_host": get_server_bind_host(),
         "server_port": get_server_port(),
+        "database_identity": database_identity(DB_URL),
         "default_client_url": get_default_client_base_url(),
         "server_started_at": server_started_at,
         "server_pid": os.getpid(),

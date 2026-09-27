@@ -1,9 +1,23 @@
 """Local RAG API — load repo .env first so OPENAI_API_KEY matches the file, not a stale shell/user env."""
+import os
 from pathlib import Path
+import sys
+
+REPO_ROOT = Path(__file__).resolve().parent
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
+
+from debug_assistant_latest.lab_context import LaneConfigurationError, bootstrap_from_argv
+
+try:
+    if os.getenv("KUBELLM_LAB_CONFIG") or os.getenv("KUBELLM_LAB_ACTIVE") == "1":
+        bootstrap_from_argv([])
+except LaneConfigurationError as exc:
+    raise RuntimeError(f"Lab lane configuration error: {exc}") from exc
 
 from dotenv import load_dotenv
 
-load_dotenv(Path(__file__).resolve().parent / ".env", override=True)
+load_dotenv(Path(__file__).resolve().parent / ".env", override=os.getenv("KUBELLM_LAB_ACTIVE") != "1")
 
 from datetime import datetime, timezone
 from typing import Annotated, Any, Dict, List, Optional

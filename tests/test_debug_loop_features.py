@@ -1,4 +1,6 @@
 import json
+import os
+import subprocess
 import sys
 import tempfile
 import types
@@ -17,6 +19,7 @@ sys.path.insert(0, str(DEBUG_DIR))
 import debug_assistant_latest.main as legacy_main
 import debug_assistant_latest.preflight as preflight
 import debug_assistant_latest.utils as debug_utils
+from rag_server_config import RAG_API_VERSION
 from debug_assistant_latest.dashboard import build_dashboard_data
 from debug_assistant_latest.debug_agents import AgentDebugStepByStep, SingleAgent
 from debug_assistant_latest.preflight import PreflightCheck
@@ -518,7 +521,8 @@ class PreflightTests(unittest.TestCase):
             check = preflight._check_db_connectivity()
 
         self.assertFalse(check.passed)
-        self.assertIn("bad db", check.message)
+        self.assertIn("RuntimeError", check.message)
+        self.assertNotIn("bad db", check.message)
 
     def test_rag_api_failure_is_reported(self):
         with patch.object(preflight.requests, "get", side_effect=requests.RequestException("down")):
@@ -527,12 +531,84 @@ class PreflightTests(unittest.TestCase):
         self.assertFalse(check.passed)
         self.assertIn("down", check.message)
 
+    def test_lane_accepts_matching_rag_api_from_another_checkout_path(self):
+        payload = {
+            "api_version": RAG_API_VERSION,
+            "repo_signature": "same-code",
+            "repo_root": "/home/minh/KubeLLM-lab-isolation",
+            "server_port": 18001,
+            "server_bind_host": "127.0.0.1",
+            "database_identity": "selected-lane-db",
+        }
+        response = types.SimpleNamespace(raise_for_status=lambda: None, json=lambda: payload)
+        lane = {"rag_api_url": "http://127.0.0.1:18001", "rag_port": 18001}
+
+        with patch.object(preflight, "is_lane_active", return_value=True), patch.object(
+            preflight, "active_lane_config", return_value=lane
+        ), patch(
+            "rag_server_config.compute_repo_signature", return_value="same-code"
+        ), patch.object(preflight, "database_identity", return_value="selected-lane-db"), patch.object(
+            preflight, "DB_URL", "configured-db"
+        ), patch.object(preflight, "requests") as requests_mock:
+            requests_mock.get.return_value = response
+            check = preflight._check_rag_api(lane["rag_api_url"])
+
+        self.assertTrue(check.passed)
+        self.assertIn("RAG API reachable", check.message)
+
+    def test_lane_rejects_matching_code_signature_for_wrong_database(self):
+        payload = {
+            "api_version": RAG_API_VERSION,
+            "repo_signature": "same-code",
+            "repo_root": "/home/minh/KubeLLM-lab-isolation",
+            "server_port": 18001,
+            "server_bind_host": "127.0.0.1",
+            "database_identity": "other-lane-db",
+        }
+        response = types.SimpleNamespace(raise_for_status=lambda: None, json=lambda: payload)
+        lane = {"rag_api_url": "http://127.0.0.1:18001", "rag_port": 18001}
+
+        with patch.object(preflight, "is_lane_active", return_value=True), patch.object(
+            preflight, "active_lane_config", return_value=lane
+        ), patch(
+            "rag_server_config.compute_repo_signature", return_value="same-code"
+        ), patch.object(preflight, "database_identity", return_value="selected-lane-db"), patch.object(
+            preflight, "DB_URL", "configured-db"
+        ), patch.object(preflight, "requests") as requests_mock:
+            requests_mock.get.return_value = response
+            check = preflight._check_rag_api(lane["rag_api_url"])
+
+        self.assertFalse(check.passed)
+        self.assertIn("database identity", check.message)
+
     def test_missing_kubectl_is_reported(self):
         with patch.object(preflight.subprocess, "run", side_effect=FileNotFoundError()):
             check = preflight._check_kubectl()
 
         self.assertFalse(check.passed)
         self.assertIn("not installed", check.message)
+
+    def test_resolve_minikube_profile_falls_back_to_current_context(self):
+        completed = subprocess.CompletedProcess(
+            ["kubectl", "config", "current-context"],
+            0,
+            stdout="minikube\n",
+            stderr="",
+        )
+
+        with patch.dict(os.environ, {}, clear=True), patch.object(
+            preflight.subprocess, "run", return_value=completed
+        ) as run_mock:
+            profile = preflight._resolve_minikube_profile([], {}, None)
+
+        self.assertEqual(profile, "minikube")
+        run_mock.assert_called_once_with(
+            ["kubectl", "config", "current-context"],
+            capture_output=True,
+            text=True,
+            timeout=10,
+            check=False,
+        )
 
     def test_run_preflight_returns_structured_json(self):
         checks = {
@@ -566,6 +642,7 @@ class PreflightTests(unittest.TestCase):
         self.assertEqual(
             [check["name"] for check in result["checks"]],
             [
+                "lab_lane",
                 "python_imports",
                 "pytest",
                 "db_connectivity",

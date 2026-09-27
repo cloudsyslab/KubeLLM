@@ -12,6 +12,23 @@ from multiprocessing import Process, Queue
 from pathlib import Path
 from typing import List, Optional, Tuple
 
+# Bootstrap before importing executor, whose dependencies load checkout-local
+# .env files. This also keeps direct ``python -m debug_assistant_latest.cli``
+# invocations on the same lane contract as runner.py.
+from debug_assistant_latest.lab_context import (  # noqa: E402
+    LaneConfigurationError,
+    LaneRunLock,
+    assert_lane_target,
+    bootstrap_from_argv,
+    is_lane_active,
+)
+
+try:
+    bootstrap_from_argv()
+except LaneConfigurationError as exc:
+    print(f"Lab lane configuration error: {exc}", file=sys.stderr)
+    raise SystemExit(2) from exc
+
 # Bootstrap paths before other local imports
 from debug_assistant_latest.executor import (
     REPO_ROOT,
@@ -451,6 +468,13 @@ Examples:
         help="Single test case name to run",
     )
 
+    parser.add_argument(
+        "--lab-config",
+        default=os.environ.get("KUBELLM_LAB_CONFIG"),
+        metavar="JSON",
+        help="Select a private lab lane config; the lane is validated before any cluster changes.",
+    )
+
     # List command
     parser.add_argument(
         "--list",
@@ -640,6 +664,18 @@ Examples:
     )
 
     args = parser.parse_args()
+    if is_lane_active():
+        lane_config = bootstrap_from_argv()
+        if args.jobs > 1:
+            parser.error("parallel jobs are disabled for a lab lane; use serial runs to avoid shared-profile races")
+        if args.skip_preflight:
+            parser.error("--skip-preflight is disabled for a lab lane")
+        if args.minikube_profile and args.minikube_profile != lane_config["minikube_profile"]:
+            parser.error("--minikube-profile conflicts with the selected lab lane")
+        if args.rag_api_url and args.rag_api_url.rstrip("/") != lane_config["rag_api_url"]:
+            parser.error("--rag-api-url conflicts with the selected lab lane")
+    elif args.lab_config:
+        parser.error("--lab-config was parsed after runner bootstrap; invoke through runner.py")
     if args.rag_api_url:
         os.environ[RAG_API_URL_ENV] = args.rag_api_url
 
@@ -681,6 +717,10 @@ Examples:
             print(f"Unknown test case: {args.test_case}")
             print(f"Available: {', '.join(available)}")
             return 1
+        if is_lane_active():
+            with LaneRunLock():
+                assert_lane_target()
+                return cmd_verify_only(args, args.test_case)
         return cmd_verify_only(args, args.test_case)
 
     # Apply repeat overrides before dispatching
@@ -707,7 +747,13 @@ Examples:
             base_run_id = get_timestamp_id()
             # Always provide a base_output_dir so iter dirs are deterministic
             base_output_dir = args.output_dir if args.output_dir else REPO_ROOT / ".local" / "test_runs"
+            if is_lane_active():
+                with LaneRunLock():
+                    return _run_repeat_queue(args, "many", base_run_id, base_output_dir)
             return _run_repeat_queue(args, "many", base_run_id, base_output_dir)
+        if is_lane_active():
+            with LaneRunLock():
+                return cmd_run_many(args)
         return cmd_run_many(args)
     elif args.test_case:
         # Validate test case exists
@@ -716,16 +762,31 @@ Examples:
             print(f"Unknown test case: {args.test_case}")
             print(f"Available: {', '.join(available)}")
             return 1
-        if repeat_active:
-            if args.dry_run:
-                print(f"Dry run - would execute: {args.test_case} x {args.repeat} iterations")
+        if args.dry_run:
+            lane_name = bootstrap_from_argv()["lane_id"] if is_lane_active() else "legacy"
+            if repeat_active:
+                print(
+                    f"Dry run - would execute: {args.test_case} x {args.repeat} iterations "
+                    f"(technique={args.technique}, lane={lane_name})"
+                )
                 print(f"\nRepeat: {args.repeat} iterations, stall limit: {args.stall_limit_s}s")
-                return 0
-
+            else:
+                print(
+                    f"Dry run - would execute: {args.test_case} "
+                    f"(technique={args.technique}, lane={lane_name})"
+                )
+            return 0
+        if repeat_active:
             base_run_id = get_timestamp_id()
             # Always provide a base_output_dir so iter dirs are deterministic
             base_output_dir = args.output_dir if args.output_dir else REPO_ROOT / ".local" / "test_runs"
+            if is_lane_active():
+                with LaneRunLock():
+                    return _run_repeat_queue(args, "single", base_run_id, base_output_dir)
             return _run_repeat_queue(args, "single", base_run_id, base_output_dir)
+        if is_lane_active():
+            with LaneRunLock():
+                return cmd_run_single(args, args.test_case)
         return cmd_run_single(args, args.test_case)
     else:
         parser.print_help()
