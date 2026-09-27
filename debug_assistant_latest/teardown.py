@@ -3,6 +3,8 @@ import shutil
 import subprocess
 from pathlib import Path
 
+from debug_assistant_latest.lab_context import active_lane_config, assert_lane_target, is_lane_active
+
 SCRIPT_DIR = Path(__file__).resolve().parent
 TROUBLESHOOTING_DIR = SCRIPT_DIR / "troubleshooting"
 FIXTURE_BASELINES_DIR = SCRIPT_DIR / "fixture_baselines"
@@ -160,6 +162,9 @@ TRANSIENT_K8S_POD_NAME_PATTERNS = [
     ]
 ]
 
+KUBECTL_COMMAND_TIMEOUT_S = 20
+
+
 def list_teardown_tests():
     return list(TEARDOWN_CONFIG.keys())
 
@@ -185,10 +190,13 @@ def restore_fixture_baseline(test_env_name: str) -> None:
 
 def cleanup_transient_k8s_resources(namespace: str = "default") -> None:
     """Remove helper resources that agents may create while probing services."""
+    if is_lane_active():
+        assert_lane_target()
     for kind, name in TRANSIENT_K8S_RESOURCES:
         subprocess.run(
             ["kubectl", "delete", kind, name, "-n", namespace, "--ignore-not-found=true"],
             check=False,
+            timeout=KUBECTL_COMMAND_TIMEOUT_S,
         )
 
     result = subprocess.run(
@@ -196,6 +204,7 @@ def cleanup_transient_k8s_resources(namespace: str = "default") -> None:
         capture_output=True,
         text=True,
         check=False,
+        timeout=KUBECTL_COMMAND_TIMEOUT_S,
     )
     if not result or result.returncode != 0:
         return
@@ -208,14 +217,29 @@ def cleanup_transient_k8s_resources(namespace: str = "default") -> None:
             subprocess.run(
                 ["kubectl", "delete", "pod", pod_name, "-n", namespace, "--ignore-not-found=true"],
                 check=False,
+                timeout=KUBECTL_COMMAND_TIMEOUT_S,
             )
 
 
 def cleanup_test_pods(namespace: str = "default") -> None:
     """Remove all pods after a test has completed verification."""
+    if is_lane_active():
+        # Case teardown deletes only the case manifests. Never sweep an entire
+        # namespace, since other work may have been added to this cluster.
+        return
     subprocess.run(
-        ["kubectl", "delete", "pods", "--all", "-n", namespace, "--ignore-not-found=true"],
+        [
+            "kubectl",
+            "delete",
+            "pods",
+            "--all",
+            "-n",
+            namespace,
+            "--ignore-not-found=true",
+            "--wait=false",
+        ],
         check=False,
+        timeout=KUBECTL_COMMAND_TIMEOUT_S,
     )
 
 
@@ -224,9 +248,21 @@ def teardown_environment(test_env_name: str) -> None:
     if not config:
         raise ValueError(f"Unknown test case: {test_env_name}")
 
+    lane = active_lane_config() if is_lane_active() else None
+    if lane:
+        # Validate every target before deleting even one resource.
+        assert_lane_target()
+
     cleanup_transient_k8s_resources()
 
     for image in config["docker_images"]:
+        if lane:
+            subprocess.run(
+                ["minikube", "-p", lane["minikube_profile"], "image", "rm", image],
+                check=False,
+                timeout=120,
+            )
+            continue
         # Get container IDs (cross-platform, no pipe/xargs)
         result = subprocess.run(
             ["docker", "ps", "-a", "-q", "--filter", f"ancestor={image}"],
@@ -244,6 +280,7 @@ def teardown_environment(test_env_name: str) -> None:
         subprocess.run(
             ["kubectl", "delete", "-f", str(manifest_path), "--grace-period=5", "--ignore-not-found=true"],
             check=False,
+            timeout=KUBECTL_COMMAND_TIMEOUT_S,
         )
 
     # Some legacy teardown entries only clean cluster resources and have no

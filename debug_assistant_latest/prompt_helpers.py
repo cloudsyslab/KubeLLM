@@ -9,6 +9,7 @@ BASE_TOOL_USAGE_RULES = (
     "- Never repeat a tool call that has already been executed successfully in this run.\n"
     "- If you need the result of a previous tool call, use the provided output rather than re-invoking it.\n"
     "- Keep the tool call as simple as possible to avoid errors.\n"
+    "- Never run Minikube lifecycle or configuration commands such as `minikube start`, `minikube stop`, `minikube delete`, `minikube pause`, `minikube unpause`, or `minikube config`; the runner owns the active profile. Use `minikube status` only for diagnostics and report an unhealthy profile.\n"
     "- Do not run long-lived or background commands such as `kubectl port-forward`, `Start-Process`, or `kubectl logs -f`; prefer single-shot commands that exit on their own.\n"
     "- Do not use `kubectl port-forward`, background verification, `kubectl logs -f`, or `kubectl get -w`.\n"
     "- For reachability checks, use the access path defined by the scenario: if a Service exists, verify via Service/endpoints/service-routed access; if no Service exists, use bounded direct checks such as `kubectl exec` with an in-container one-shot HTTP request.\n"
@@ -25,7 +26,7 @@ DURABLE_FIX_GUIDANCE = (
 MINIKUBE_IMAGE_GUIDANCE = (
     "### Minikube Image Guidance\n"
     "- For minikube-backed clusters, if rebuilding an application image is necessary, recommend building or loading the image into the active minikube profile rather than pushing to a remote registry.\n"
-    "- Prefer `PROFILE=${MINIKUBE_PROFILE:-$(kubectl config current-context)}` followed by `minikube -p \"$PROFILE\" image build -t <image>:<tag> -f <Dockerfile> <context>`.\n"
+    "- Use the explicit `MINIKUBE_PROFILE` value for Minikube commands; never infer a Minikube profile name from the kubectl current context.\n"
     "- Do not recommend `docker push` or switching a Deployment to a new unpublished image tag unless registry credentials and pull access are explicitly available.\n"
     "- Prefer manifest-only fixes when the application source and image contents do not need to change.\n"
 )

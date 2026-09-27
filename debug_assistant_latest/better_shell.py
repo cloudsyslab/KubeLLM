@@ -32,6 +32,13 @@ except ImportError:
 COMMAND_TIMEOUT_S = 120
 AGENT_BLOCK_RULES = (
     (
+        re.compile(
+            r"\bminikube\b[^\r\n;&|]*\b(?:start|stop|delete|pause|unpause|config)\b",
+            re.IGNORECASE,
+        ),
+        "Minikube lifecycle and configuration commands are not allowed during debug or verification because the runner owns the active profile. Use `minikube status` for diagnostics and report an unhealthy profile instead of starting, stopping, deleting, pausing, or reconfiguring it.",
+    ),
+    (
         re.compile(r"\bkubectl\s+port-forward\b", re.IGNORECASE),
         "`kubectl port-forward` is long-lived and not allowed for debug or verification. Use `kubectl exec`, `kubectl get`, `kubectl describe`, `kubectl wait`, `kubectl rollout status`, or Service-based checks when a Service is part of the case.",
     ),
@@ -170,6 +177,11 @@ class BetterShellTools(Toolkit):
     def _maybe_block_agent_command(self, args: str) -> Optional[str]:
         if self.phase not in {"debug", "verification"}:
             return None
+        from debug_assistant_latest.lab_context import lane_command_block_reason
+
+        lane_reason = lane_command_block_reason(args)
+        if lane_reason:
+            return lane_reason
         for pattern, message in AGENT_BLOCK_RULES:
             if pattern.search(args):
                 return message
