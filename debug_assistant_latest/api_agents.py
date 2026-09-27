@@ -11,9 +11,10 @@ from utils import traverseRelevantFiles
 
 
 class AgentAPI(Agent):
-    def __init__(self, agentType, config):
+    def __init__(self, agentType, config, *, deterministic_plan=False):
         super().__init__(agentType, config)
         self.response = None
+        self.deterministic_plan = deterministic_plan
 
     def prepareAgent(self):
         """Prepare the API agent based on the config specifications."""
@@ -56,6 +57,11 @@ class AgentAPI(Agent):
 
             for relevantFileType in ["deployment", "application", "service", "dockerfile"]:
                 self.prompt = traverseRelevantFiles(self.config, relevantFileType, self.prompt)
+
+            if self.deterministic_plan:
+                from knowledge_plan import KNOWLEDGE_PLAN_PROMPT
+
+                self.prompt += KNOWLEDGE_PLAN_PROMPT
 
         except Exception as e:
             raise RuntimeError(f"Error creating knowledge (API) agent prompt: {e}") from e

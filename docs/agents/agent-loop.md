@@ -48,6 +48,9 @@ Prefer these lines over globbing for the newest directory when the runner alread
 
 - `<test_name>/summary.json` — per-test result (includes `error_context`)
 - `<test_name>/stderr.log`, `stdout.log`, `config_effective.json`
+- `knowledgeAgentOnly`: `<test_name>/knowledge_plan.json` and
+  `<test_name>/execution_results.json`, or `knowledge_plan_error.json` for a
+  rejected response
 - `aggregate.json`, `run_config.json`
 
 **Repeat queue** — `.local/test_runs/<queue_id>/`:
@@ -61,6 +64,7 @@ python3 debug_assistant_latest/runner.py --preflight
 python3 debug_assistant_latest/runner.py --list
 python3 debug_assistant_latest/runner.py --validate-ground-truth
 python3 debug_assistant_latest/runner.py <test_name>
+python3 debug_assistant_latest/runner.py <test_name> --technique knowledgeAgentOnly
 python3 debug_assistant_latest/runner.py --diagnose-last
 python3 debug_assistant_latest/runner.py --latest-run
 python3 debug_assistant_latest/runner.py --dashboard
