@@ -25,7 +25,7 @@ DURABLE_FIX_GUIDANCE = (
 MINIKUBE_IMAGE_GUIDANCE = (
     "### Minikube Image Guidance\n"
     "- For minikube-backed clusters, if rebuilding an application image is necessary, recommend building or loading the image into the active minikube profile rather than pushing to a remote registry.\n"
-    "- Prefer `PROFILE=${MINIKUBE_PROFILE:-$(kubectl config current-context)}` followed by `minikube -p \"$PROFILE\" image build -t <image>:<tag> -f <Dockerfile> <context>`.\n"
+    "- Use the explicit `MINIKUBE_PROFILE` value for Minikube commands; never infer a Minikube profile name from the kubectl current context.\n"
     "- Do not recommend `docker push` or switching a Deployment to a new unpublished image tag unless registry credentials and pull access are explicitly available.\n"
     "- Prefer manifest-only fixes when the application source and image contents do not need to change.\n"
 )

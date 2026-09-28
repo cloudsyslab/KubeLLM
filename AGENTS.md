@@ -21,9 +21,13 @@ KubeLLM is a research benchmark for measuring how well models diagnose and repai
 
 - Give the debug model symptoms, not the root cause or fix. Do not hardcode solutions, tune prompts to improve pass rates, or weaken verification to count partial fixes as success.
 - Deterministic ground truth is the strongest outcome signal, followed by the independent verification agent, then the debug agent's self-report. Preserve that ordering when interpreting or changing results.
+- The opt-in `knowledgeAgentOnly` technique is a fourth, separately measured architecture: the Knowledge Agent emits a strict JSON plan, the deterministic executor runs it, then independent Verification and configured Ground Truth run. Keep `architecture_outcome` separate from benchmark success and do not add plan-repair reasoning or retries.
 - Keep fixtures reproducible and teardown complete. Check the applicable `config_step.json`, ground truth, and teardown mapping together when modifying a scenario.
 - Keep the runner authoritative for test discovery, configuration, preflight, execution, verification, history, and teardown. Any KubeLLM-specific operator skill should orchestrate those interfaces or inspect their artifacts, not reimplement benchmark behavior.
 - Before a cluster-backed run, check the current Kubernetes context and namespace and run the appropriate preflight. Do not use `--skip-preflight` or skip teardown to work around a readiness failure. Cluster changes and teardown can affect workloads; use them only within the user's requested scope. Do not assume the service ownership or paths recorded for the separate Linux lab apply to this Mac.
+- For Minh's personal shared-lab work, select the private lane config with `KUBELLM_LAB_CONFIG` or `--lab-config`; never infer the profile from kubectl context or fall back to the shared default profile/services. Read [lab-lanes.md](docs/handbook/lab-lanes.md). Keep other researchers' Minikube profiles, containers, volumes, and workloads untouched.
+- For Minh's selected lane, run benchmarks and runner diagnostics with `.venv/bin/python` plus an explicit `--lab-config`; the exact lock requires Python 3.11 or newer. Use the preparation skill before live runs. Generic README commands are for other environments unless they explicitly select this lane.
+- Feature branches, dirty worktrees, and checkout paths are valid experiment inputs. Do not require branch `minh`, a clean tree, or an upstream sync to run the POC. Every execution technique must use the same selected lane and guarded runner path.
 - Keep `.env`, keys, runtime logs, raw sessions, local services, and generated outputs out of commits. Record only source and intentional agent configuration.
 
 ## Validation

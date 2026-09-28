@@ -23,6 +23,15 @@ if str(REPO_ROOT) not in sys.path:
 if str(SCRIPT_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPT_DIR))
 
+# Lane settings must win over checkout-local .env files imported below.
+from debug_assistant_latest.lab_context import LaneConfigurationError, bootstrap_from_argv  # noqa: E402
+
+try:
+    bootstrap_from_argv()
+except LaneConfigurationError as exc:
+    print(f"Lab lane configuration error: {exc}", file=sys.stderr)
+    sys.exit(2)
+
 from debug_assistant_latest.cli import (  # noqa: E402
     _apply_repeat_overrides,
     _build_repeat_payload,

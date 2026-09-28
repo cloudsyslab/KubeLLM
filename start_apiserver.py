@@ -2,10 +2,23 @@
 
 import argparse
 import os
+import sys
 from typing import Optional
 
 import requests
 import uvicorn
+
+from debug_assistant_latest.lab_context import LaneConfigurationError, bootstrap_from_argv
+
+try:
+    _lane = bootstrap_from_argv()
+except LaneConfigurationError as exc:
+    print(f"Lab lane configuration error: {exc}", file=sys.stderr)
+    raise SystemExit(2) from exc
+
+if _lane:
+    os.environ["RAG_SERVER_HOST"] = "127.0.0.1"
+    os.environ["RAG_SERVER_PORT"] = str(_lane["rag_port"])
 
 from debug_assistant_latest.rag_server_config import (
     RAG_API_VERSION,
@@ -46,10 +59,16 @@ def _probe_existing_server(base_url: str) -> Optional[dict]:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="Start the KubeLLM FastAPI RAG server.")
+    parser.add_argument("--lab-config", help="Private lab lane JSON config (also accepted via KUBELLM_LAB_CONFIG).")
     parser.add_argument("--host", help="Bind host override. Defaults to RAG_SERVER_HOST or 127.0.0.1.")
     parser.add_argument("--port", type=int, help="Bind port override. Defaults to RAG_SERVER_PORT or 18000.")
     parser.add_argument("--reload", action="store_true", help="Enable uvicorn reload mode for local development.")
     args = parser.parse_args()
+
+    if _lane and args.host and args.host not in {"127.0.0.1", "localhost"}:
+        parser.error("A lab lane RAG API must bind to loopback")
+    if _lane and args.port is not None and args.port != _lane["rag_port"]:
+        parser.error("--port conflicts with the selected lab lane")
 
     if args.host:
         os.environ[RAG_SERVER_HOST_ENV] = args.host

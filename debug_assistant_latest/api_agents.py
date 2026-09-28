@@ -8,12 +8,14 @@ from rag_api import (
 )
 from prompt_helpers import get_durable_fix_guidance, get_minikube_image_guidance, get_tool_usage_rules
 from utils import traverseRelevantFiles
+from rag_server_config import DEFAULT_OUTPUT_MODE
 
 
 class AgentAPI(Agent):
-    def __init__(self, agentType, config):
+    def __init__(self, agentType, config, output_mode=DEFAULT_OUTPUT_MODE):
         super().__init__(agentType, config)
         self.response = None
+        self.output_mode = output_mode
 
     def prepareAgent(self):
         """Prepare the API agent based on the config specifications."""
@@ -22,10 +24,14 @@ class AgentAPI(Agent):
                 new_run_response = start_new_run()
                 print("New Run Response:", new_run_response)
 
+            initialize_kwargs = {}
+            if self.output_mode != DEFAULT_OUTPUT_MODE:
+                initialize_kwargs["output_mode"] = self.output_mode
             initialize_response = initialize_assistant(
                 self.agentProperties["model"],
                 self.agentProperties.get("embedder"),
                 self.agentProperties.get("embedder-provider"),
+                **initialize_kwargs,
             )
             print("Initialize Response:", initialize_response)
 
