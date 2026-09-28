@@ -235,6 +235,23 @@ def _resolve_minikube_profile(test_names: Optional[Iterable[str]], overrides: Op
         profile = config.get("minikube-profile")
         if profile:
             return profile
+
+    try:
+        result = subprocess.run(
+            ["kubectl", "config", "current-context"],
+            capture_output=True,
+            text=True,
+            timeout=10,
+            check=False,
+        )
+    except (FileNotFoundError, subprocess.SubprocessError):
+        return None
+
+    if result.returncode != 0:
+        return None
+    current_context = result.stdout.strip()
+    if current_context:
+        return current_context
     return None
 
 
