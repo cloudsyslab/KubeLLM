@@ -22,6 +22,16 @@ from prompt_helpers import (
 from timeout_helpers import timeout, withTimeout
 
 
+_BASH_STEP_RE = re.compile(r"```bash(?:[ \t]+|\r?\n)(.*?)```", re.DOTALL)
+
+
+def parse_bash_steps(response):
+    """Extract executable steps from the Knowledge Agent's documented format."""
+    if not isinstance(response, str):
+        return []
+    return [step.strip() for step in _BASH_STEP_RE.findall(response) if step.strip()]
+
+
 class AgentDebug(Agent):
     def __init__(self, agentType, config):
         super().__init__(agentType, config)
@@ -131,19 +141,10 @@ class AgentDebugStepByStep(Agent):
             raise RuntimeError(f"Error creating debug agent prompt: {e}") from e
 
     def formProblemSolvingSteps(self):
-        """Generate a list of steps that the debug agent will execute one by one."""
-        self.steps = []
-
-        try:
-            knowledge_response_string = str(self.agentAPIResponse)
-            bash_commands = re.findall(r"``bash\\n\s*(.*?)\\n\s*```", knowledge_response_string, re.DOTALL)
-            bash_commands_list = [cmd.strip() for cmd in bash_commands]
-            print(knowledge_response_string)
-            print(bash_commands)
-            print(bash_commands_list)
-            self.steps = bash_commands_list
-        except Exception as e:
-            raise RuntimeError(f"Failed to generate steps to problem: {e}") from e
+        """Parse the Knowledge Agent's fenced Bash steps without rewriting them."""
+        self.steps = parse_bash_steps(self.agentAPIResponse)
+        print(f"Knowledge Agent Bash steps parsed: {len(self.steps)}")
+        return self.steps
 
     @withTimeout(False)
     @timeout(480)

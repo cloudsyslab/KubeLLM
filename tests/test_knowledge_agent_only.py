@@ -14,6 +14,7 @@ sys.path.insert(0, str(DEBUG_DIR))
 
 from assistant import BetterShellTools as AssistantBetterShellTools
 from assistant import _output_instructions, _output_tools, guidelines, instructions
+from debug_assistant_latest.rag_server_config import STEP_BY_STEP_OUTPUT_MODE
 import api_server
 from debug_assistant_latest import rag_api
 from debug_assistant_latest.better_shell import BetterShellTools, ShellCommandResult
@@ -169,13 +170,18 @@ class DeterministicExecutionTests(unittest.TestCase):
 
 
 class KnowledgePlanOutputModeTests(unittest.TestCase):
-    def test_default_prompt_is_unchanged_and_plan_mode_only_replaces_format_contract(self):
+    def test_step_by_step_prompt_clarifies_shell_format_without_changing_other_modes(self):
         default_instructions, default_guidelines, default_markdown = _output_instructions("default")
+        step_instructions, step_guidelines, step_markdown = _output_instructions(STEP_BY_STEP_OUTPUT_MODE)
         plan_instructions, plan_guidelines, plan_markdown = _output_instructions("knowledge_plan")
 
         self.assertIs(default_instructions, instructions)
         self.assertIs(default_guidelines, guidelines)
         self.assertTrue(default_markdown)
+        self.assertIn("fenced Bash block", " ".join(step_instructions))
+        self.assertIn("executable shell commands", " ".join(step_guidelines))
+        self.assertNotIn("Don't worry too much about formatting or syntax", " ".join(step_guidelines))
+        self.assertTrue(step_markdown)
         self.assertEqual(plan_instructions[0], instructions[0])
         self.assertIn('"schema_version":"1"', plan_instructions[1])
         self.assertNotIn("Think harder", " ".join(plan_instructions + plan_guidelines))
@@ -183,12 +189,16 @@ class KnowledgePlanOutputModeTests(unittest.TestCase):
         self.assertFalse(any(item.startswith("Don't worry too much") for item in plan_guidelines))
         self.assertFalse(plan_markdown)
         self.assertEqual(_output_tools("knowledge_plan"), [])
+        self.assertIsInstance(_output_tools(STEP_BY_STEP_OUTPUT_MODE)[0], AssistantBetterShellTools)
         self.assertIsInstance(_output_tools("default")[0], AssistantBetterShellTools)
 
     def test_client_sends_plan_mode_only_when_requested(self):
         with patch.object(rag_api, "_request", return_value={"status": "Agent initialized"}) as request:
             rag_api.initialize_assistant("test-model", output_mode="knowledge_plan")
             self.assertEqual(request.call_args.kwargs["data"]["output_mode"], "knowledge_plan")
+
+            rag_api.initialize_assistant("test-model", output_mode=STEP_BY_STEP_OUTPUT_MODE)
+            self.assertEqual(request.call_args.kwargs["data"]["output_mode"], STEP_BY_STEP_OUTPUT_MODE)
 
             rag_api.initialize_assistant("test-model")
             self.assertNotIn("output_mode", request.call_args.kwargs["data"])
@@ -216,6 +226,20 @@ class KnowledgePlanOutputModeTests(unittest.TestCase):
             self.assertEqual(build_assistant.call_args.kwargs["output_mode"], "knowledge_plan")
             self.assertEqual(session.output_mode, "knowledge_plan")
             self.assertEqual(session.rag_assistant_run_id, "plan-run")
+
+            with patch.object(api_server, "resolve_embedder_config", return_value=embedder_config), patch.object(
+                api_server, "get_rag_assistant", return_value=fake_assistant
+            ) as build_assistant:
+                asyncio.run(
+                    api_server.initialize_assistant(
+                        llm_model="test-model",
+                        embeddings_model="embedder",
+                        embeddings_provider="openai",
+                        output_mode=STEP_BY_STEP_OUTPUT_MODE,
+                    )
+                )
+                self.assertEqual(build_assistant.call_args.kwargs["output_mode"], STEP_BY_STEP_OUTPUT_MODE)
+                self.assertEqual(session.output_mode, STEP_BY_STEP_OUTPUT_MODE)
         finally:
             session.reset_run()
 
