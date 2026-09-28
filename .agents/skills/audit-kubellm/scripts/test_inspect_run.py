@@ -9,6 +9,29 @@ from inspect_run import inspect
 
 
 class RunInspectorTests(unittest.TestCase):
+    def test_summary_exposes_allowlisted_invalid_knowledge_outcome(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            test_dir = root / "case"
+            test_dir.mkdir()
+            (test_dir / "summary.json").write_text(
+                json.dumps(
+                    {
+                        "technique": "stepByStep",
+                        "status": "FAIL",
+                        "architecture_outcome": "knowledge_output_invalid",
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            report = inspect(root)
+
+        self.assertEqual(
+            report["artifacts"][0]["data"]["architecture_outcome"],
+            "knowledge_output_invalid",
+        )
+
     def test_knowledge_execution_exposes_statuses_and_counts_only(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

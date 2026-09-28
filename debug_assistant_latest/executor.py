@@ -186,7 +186,7 @@ def _extract_execution_result(
 
         if isinstance(verification_metrics, dict):
             metrics["verification"] = verification_metrics
-            vstatus = result.get("status")
+            vstatus = result.get("verified", result.get("status"))
             if vstatus is True:
                 verified = True
             elif vstatus is False:
@@ -197,8 +197,10 @@ def _extract_execution_result(
             verified = None
 
         derived_error = None
-        if not success and isinstance(debug_metrics, dict) and debug_metrics.get("task_status") == -1:
+        if result.get("timed_out") is True:
             derived_error = "Timeout: agent execution exceeded 480s"
+        elif result.get("architecture_outcome") == "knowledge_output_invalid":
+            derived_error = result.get("error") or "Knowledge Agent output contained no executable Bash steps."
 
         return success, verified, debug_self_report, metrics, derived_error
 
@@ -211,9 +213,8 @@ def _result_status(result: TestResult) -> str:
     if "timeout" in error_text:
         return "TIMEOUT"
 
-    debug_metrics = result.metrics.get("debug") if isinstance(result.metrics, dict) else None
-    if isinstance(debug_metrics, dict) and debug_metrics.get("task_status") == -1:
-        return "TIMEOUT"
+    if result.architecture_outcome == "knowledge_output_invalid":
+        return "FAIL"
 
     return "PASS" if result.success else ("ERROR" if result.error else "FAIL")
 
@@ -477,6 +478,7 @@ def run_single_test_in_process(
                         runtime_context=worker_runtime,
                     )
                     success, verified, debug_self_report, metrics, derived_error = _extract_execution_result(result)
+                    architecture_outcome = result.get("architecture_outcome")
                     if error is None and derived_error:
                         error = derived_error
                 elif technique == "singleAgent":
@@ -894,7 +896,12 @@ def run_single_test(
     duration = time.perf_counter() - start_time
     finished_at = datetime.now().isoformat()
 
-    status = "PASS" if success else ("ERROR" if error else "FAIL")
+    if architecture_outcome == "knowledge_output_invalid":
+        status = "FAIL"
+    elif "timeout" in (error or "").lower():
+        status = "TIMEOUT"
+    else:
+        status = "PASS" if success else ("ERROR" if error else "FAIL")
     if verbose:
         print(f"[{status}] {test_name} ({duration:.1f}s)")
     if progress_writer:

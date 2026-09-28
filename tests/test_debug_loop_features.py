@@ -19,12 +19,13 @@ sys.path.insert(0, str(DEBUG_DIR))
 import debug_assistant_latest.main as legacy_main
 import debug_assistant_latest.preflight as preflight
 import debug_assistant_latest.utils as debug_utils
-from rag_server_config import RAG_API_VERSION
+from rag_server_config import RAG_API_VERSION, STEP_BY_STEP_OUTPUT_MODE
 from debug_assistant_latest.dashboard import build_dashboard_data
-from debug_assistant_latest.debug_agents import AgentDebugStepByStep, SingleAgent
+from debug_assistant_latest.debug_agents import AgentDebugStepByStep, SingleAgent, parse_bash_steps
 from debug_assistant_latest.preflight import PreflightCheck
 from debug_assistant_latest.result_interpreter import FailureCategory, interpret_run
 from debug_assistant_latest.runner import TestResult, result_to_summary
+from debug_assistant_latest.executor import _extract_execution_result, _result_status
 from debug_assistant_latest.verification_base import parse_verification_status
 
 
@@ -52,6 +53,7 @@ def _write_run_fixture(
     error_message: str | None = None,
     verified: bool | None = None,
     ground_truth_passed: bool | None = None,
+    architecture_outcome: str | None = None,
     stderr_text: str = "",
     stdout_text: str = "",
 ):
@@ -67,6 +69,7 @@ def _write_run_fixture(
         "debug_self_report": None,
         "ground_truth_passed": ground_truth_passed,
         "ground_truth_configured": ground_truth_passed is not None,
+        "architecture_outcome": architecture_outcome,
         "started_at": "2026-03-25T10:00:00",
         "finished_at": "2026-03-25T10:00:05",
         "duration_s": 5.0,
@@ -138,6 +141,29 @@ class VerificationParsingTests(unittest.TestCase):
 
 
 class DebugAgentMetricsTests(unittest.TestCase):
+    def test_step_parser_preserves_order_and_multiline_shell_blocks(self):
+        fence = chr(96) * 3
+        response = (
+            "1. Inspect the pod.\n"
+            f"{fence}bash\nkubectl get pods\nkubectl describe pod/demo\n{fence}\n"
+            "2. Apply the fix.\n"
+            f"{fence}bash kubectl apply -f deployment.yaml {fence}"
+        )
+
+        self.assertEqual(
+            parse_bash_steps(response),
+            [
+                "kubectl get pods\nkubectl describe pod/demo",
+                "kubectl apply -f deployment.yaml",
+            ],
+        )
+
+    def test_step_parser_rejects_prose_and_non_bash_fences(self):
+        fence = chr(96) * 3
+        self.assertEqual(parse_bash_steps("Run kubectl get pods and inspect the output."), [])
+        self.assertEqual(parse_bash_steps(f"{fence}sh\nkubectl get pods\n{fence}"), [])
+        self.assertEqual(parse_bash_steps(f"{fence}bash\n \n{fence}"), [])
+
     def test_step_by_step_aggregates_metrics_across_steps(self):
         config = {
             "test-name": "wrong_port",
@@ -369,9 +395,13 @@ class LegacyMainReturnShapeTests(unittest.TestCase):
 
     def test_step_by_step_returns_dict_shape(self):
         class FakeAPI:
-            def __init__(self, agent_type, config):
+            instances = []
+
+            def __init__(self, agent_type, config, output_mode=None):
                 self.agentProperties = config["api-agent"]
                 self.response = "fix it"
+                self.output_mode = output_mode
+                self.instances.append(self)
 
             def setupAgent(self):
                 return None
@@ -394,6 +424,7 @@ class LegacyMainReturnShapeTests(unittest.TestCase):
                 self._last_timeout = False
                 self.agentAPIResponse = None
                 self.response = "debug trace"
+                self.steps = ["kubectl get pods"]
 
             def setupAgent(self):
                 return None
@@ -445,7 +476,10 @@ class LegacyMainReturnShapeTests(unittest.TestCase):
             result = legacy_main.stepByStep("ignored.json")
 
         stored_agent_types = [call.args[1]["agent_type"] for call in store_mock.call_args_list]
-        self.assertEqual(set(result.keys()), {"status", "api_metrics", "debug_metrics", "verification_metrics"})
+        self.assertEqual(
+            set(result.keys()),
+            {"status", "verified", "api_metrics", "debug_metrics", "verification_metrics"},
+        )
         self.assertTrue(result["status"])
         self.assertEqual(result["api_metrics"]["total_tokens"], 3)
         self.assertIsNotNone(result["verification_metrics"])
@@ -453,6 +487,127 @@ class LegacyMainReturnShapeTests(unittest.TestCase):
         self.assertEqual(result["verification_metrics"]["total_tokens"], 2)
         self.assertEqual(len(FakeVerification.instances), 1)
         self.assertIn("api", stored_agent_types)
+        self.assertEqual(FakeAPI.instances[-1].output_mode, STEP_BY_STEP_OUTPUT_MODE)
+
+    def test_step_by_step_skips_execution_but_keeps_verification_on_invalid_knowledge_output(self):
+        config = {
+            "test-name": "wrong_port",
+            "api-agent": {"model": "knowledge-model"},
+            "debug-agent": {"model": "tools-model"},
+            "verification-agent": {"model": "verifier-model"},
+            "knowledge-prompt": {"problem-desc": "service is unavailable"},
+        }
+
+        class FakeAPI:
+            def __init__(self, _agent_type, _config, output_mode=None):
+                self.response = None
+                self.output_mode = output_mode
+
+            def setupAgent(self):
+                pass
+
+        class FakeDebug:
+            def __init__(self, _agent_type, _config):
+                self.agentProperties = config["debug-agent"]
+                self.agentAPIResponse = None
+                self.response = None
+                self.steps = []
+                self.debugStatus = None
+                self._last_timeout = False
+
+            def setupAgent(self):
+                pass
+
+            def formProblemSolvingSteps(self):
+                self.steps = parse_bash_steps(self.agentAPIResponse)
+
+            def executeProblemSteps(self):
+                raise AssertionError("invalid Knowledge output must not execute")
+
+        observed = {}
+        api_metrics = {"model": "knowledge-model", "total_tokens": 12}
+        verification_metrics = {"model": "verifier-model", "total_tokens": 4}
+
+        def generate(_config, _runtime_context, agent):
+            agent.response = "I could not determine commands for this issue."
+            return api_metrics
+
+        def verify(_config, _runtime_context, agent, debug_metrics):
+            observed["transcript"] = agent.response
+            observed["debug_metrics"] = debug_metrics
+            return verification_metrics, True
+
+        with patch.object(legacy_main, "_load_runtime_config", return_value=config), patch.object(
+            legacy_main, "setUpEnvironment"
+        ), patch.object(legacy_main, "printFinishMessage"), patch.object(
+            legacy_main, "AgentAPI", FakeAPI
+        ), patch.object(legacy_main, "AgentDebugStepByStep", FakeDebug), patch.object(
+            legacy_main, "_run_api_phase", side_effect=generate
+        ), patch.object(legacy_main, "_run_verification_phase_after_debug", side_effect=verify):
+            result = legacy_main.stepByStep("ignored.json")
+
+        self.assertFalse(result["status"])
+        self.assertTrue(result["verified"])
+        self.assertEqual(result["architecture_outcome"], "knowledge_output_invalid")
+        self.assertIsNone(result["debug_metrics"])
+        self.assertEqual(observed["transcript"], "I could not determine commands for this issue.")
+        self.assertIsNone(observed["debug_metrics"])
+
+    def test_runner_keeps_knowledge_failure_distinct_from_verification_and_timeout(self):
+        result = {
+            "status": False,
+            "verified": True,
+            "api_metrics": {"model": "knowledge-model", "total_tokens": 12},
+            "debug_metrics": None,
+            "verification_metrics": {"model": "verifier-model", "total_tokens": 4},
+            "architecture_outcome": "knowledge_output_invalid",
+        }
+        success, verified, self_report, metrics, error = _extract_execution_result(result)
+        self.assertFalse(success)
+        self.assertTrue(verified)
+        self.assertIsNone(self_report)
+        self.assertIn("api", metrics)
+        self.assertIn("verification", metrics)
+        self.assertIn("no executable Bash steps", error)
+
+        summary = result_to_summary(
+            TestResult(
+                test_name="wrong_port",
+                success=success,
+                verified=verified,
+                debug_self_report=self_report,
+                duration_s=1,
+                error=error,
+                metrics=metrics,
+                log_dir=Path("/tmp/missing-run"),
+                started_at="2026-01-01T00:00:00",
+                finished_at="2026-01-01T00:00:01",
+                architecture_outcome="knowledge_output_invalid",
+            ),
+            "stepByStep",
+            {},
+        )
+        self.assertEqual(summary.status, "FAIL")
+        self.assertTrue(summary.verified)
+        self.assertEqual(summary.architecture_outcome, "knowledge_output_invalid")
+
+        unknown_status = TestResult(
+            test_name="wrong_port",
+            success=False,
+            verified=None,
+            debug_self_report=None,
+            duration_s=1,
+            error=None,
+            metrics={"debug": {"task_status": -1}},
+            log_dir=Path("/tmp/missing-run"),
+            started_at="2026-01-01T00:00:00",
+            finished_at="2026-01-01T00:00:01",
+        )
+        self.assertEqual(_result_status(unknown_status), "FAIL")
+        self.assertEqual(
+            _extract_execution_result({"status": False, "timed_out": True})[-1],
+            "Timeout: agent execution exceeded 480s",
+        )
 
     def test_single_agent_returns_dict_shape(self):
         class FakeSingleAgent:
@@ -751,6 +906,21 @@ def subprocess_result(returncode=0, stdout="", stderr=""):
 
 
 class ResultInterpreterTests(unittest.TestCase):
+    def test_invalid_knowledge_output_has_a_distinct_diagnosis(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            run_dir = Path(tmpdir) / "invalid-knowledge-output"
+            _write_run_fixture(
+                run_dir,
+                status="FAIL",
+                verified=True,
+                ground_truth_passed=False,
+                architecture_outcome="knowledge_output_invalid",
+                error_message="Knowledge Agent output contained no executable Bash steps.",
+            )
+            diagnosis = interpret_run(run_dir)
+
+        self.assertEqual(diagnosis.category, FailureCategory.KNOWLEDGE_OUTPUT_INVALID)
+
     def test_static_fixtures_cover_pass_gt_fail_and_timeout(self):
         cases = [
             ("run_pass", "PASS", FailureCategory.UNKNOWN),

@@ -20,6 +20,7 @@ STATUS_VALUES = {
     "execution_error",
     "failed",
     "invalid",
+    "knowledge_output_invalid",
     "not_checked",
     "not_started",
     "pending",
@@ -36,6 +37,7 @@ ARCHITECTURE_OUTCOMES = {
     "contract_error",
     "execution_error",
     "knowledge_generation_error",
+    "knowledge_output_invalid",
     "pending_ground_truth",
 }
 SUMMARY_FIELDS = {

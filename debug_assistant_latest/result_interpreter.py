@@ -13,6 +13,7 @@ from report import collect_summaries_from_run, TestSummary
 
 class FailureCategory(str, Enum):
     TIMEOUT = "TIMEOUT"
+    KNOWLEDGE_OUTPUT_INVALID = "KNOWLEDGE_OUTPUT_INVALID"
     IMPORT_ERROR = "IMPORT_ERROR"
     LLM_STALL = "LLM_STALL"
     VERIFICATION_MISMATCH = "VERIFICATION_MISMATCH"
@@ -102,6 +103,13 @@ def _dedupe(items: List[str]) -> List[str]:
 
 
 def _categorize(summary: Optional[TestSummary], aggregate: Optional[dict], combined_text: str) -> tuple[FailureCategory, List[str]]:
+    if summary and summary.architecture_outcome == "knowledge_output_invalid":
+        return FailureCategory.KNOWLEDGE_OUTPUT_INVALID, [
+            "Inspect the Knowledge Agent response locally and confirm the selected RAG service uses this checkout's prompt.",
+            "Check whether the response contains executable Bash blocks in the documented format.",
+            "Preserve this run as a benchmark failure; do not add repair reasoning or retry it.",
+        ]
+
     if summary and summary.status == "TIMEOUT":
         category = FailureCategory.TIMEOUT
         for pattern in ERROR_PATTERNS:
