@@ -114,7 +114,7 @@ def _verification_temperature_issues(config: dict, allow_high: bool) -> List[str
         return [f"verification-agent.temperature is not numeric: {raw!r}"]
     if temp > 1.0:
         return [
-            f"verification-agent.temperature={temp} exceeds 1.0 (see docs/agents/benchmark-philosophy.md); "
+            f"verification-agent.temperature={temp} exceeds 1.0 (see .agents/skills/audit-kubellm/references/benchmark-integrity.md); "
             "use --allow-high-temp-verification to allow."
         ]
     return []
