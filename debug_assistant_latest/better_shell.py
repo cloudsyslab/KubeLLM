@@ -31,6 +31,13 @@ except ImportError:
 COMMAND_TIMEOUT_S = 120
 AGENT_BLOCK_RULES = (
     (
+        re.compile(
+            r"\bminikube\b[^\r\n;&|]*\b(?:start|stop|delete|pause|unpause|config)\b",
+            re.IGNORECASE,
+        ),
+        "Minikube lifecycle and configuration commands are not allowed during debug or verification because the runner owns the active profile. Use `minikube status` for diagnostics and report an unhealthy profile instead of starting, stopping, deleting, pausing, or reconfiguring it.",
+    ),
+    (
         re.compile(r"\bkubectl\s+port-forward\b", re.IGNORECASE),
         "`kubectl port-forward` is long-lived and not allowed for debug or verification. Use `kubectl exec`, `kubectl get`, `kubectl describe`, `kubectl wait`, `kubectl rollout status`, or Service-based checks when a Service is part of the case.",
     ),

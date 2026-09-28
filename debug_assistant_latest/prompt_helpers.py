@@ -9,6 +9,7 @@ BASE_TOOL_USAGE_RULES = (
     "- Never repeat a tool call that has already been executed successfully in this run.\n"
     "- If you need the result of a previous tool call, use the provided output rather than re-invoking it.\n"
     "- Keep the tool call as simple as possible to avoid errors.\n"
+    "- Never run Minikube lifecycle or configuration commands such as `minikube start`, `minikube stop`, `minikube delete`, `minikube pause`, `minikube unpause`, or `minikube config`; the runner owns the active profile. Use `minikube status` only for diagnostics and report an unhealthy profile.\n"
     "- Do not run long-lived or background commands such as `kubectl port-forward`, `Start-Process`, or `kubectl logs -f`; prefer single-shot commands that exit on their own.\n"
     "- Do not use `kubectl port-forward`, background verification, `kubectl logs -f`, or `kubectl get -w`.\n"
     "- For reachability checks, use the access path defined by the scenario: if a Service exists, verify via Service/endpoints/service-routed access; if no Service exists, use bounded direct checks such as `kubectl exec` with an in-container one-shot HTTP request.\n"
