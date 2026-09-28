@@ -34,6 +34,7 @@ from verification_agents import AgentVerification_v1, AgentVerification_v2
 from utils import setUpEnvironment, printFinishMessage
 from config_merge import load_config_with_overrides
 from metrics_db import store_metrics_entry, calculate_cost, calculate_totals
+from rag_server_config import STEP_BY_STEP_OUTPUT_MODE
 import time
 from pathlib import Path
 from typing import Any, Dict, Optional, Tuple
@@ -527,6 +528,7 @@ def allStepsAtOnce(
         printFinishMessage()
         return {
             "status": False,
+            "timed_out": True,
             "api_metrics": api_metrics,
             "debug_metrics": debug_metrics,
             "verification_metrics": None,
@@ -574,7 +576,7 @@ def stepByStep(
         raise
     _write_progress(runtime_context, "setup_end", test_name=config.get("test-name"), status="ok")
     # Initialize needed LLMs
-    apiAgent = AgentAPI("api-agent" , config)
+    apiAgent = AgentAPI("api-agent", config, output_mode=STEP_BY_STEP_OUTPUT_MODE)
     debugAgent = AgentDebugStepByStep("debug-agent", config)
     debugAgent.runtime_context = runtime_context or {}
     #set up the LLMs
@@ -584,20 +586,34 @@ def stepByStep(
     #Run the LLMs as needed
     api_metrics = _run_api_phase(config, runtime_context, apiAgent)
     debugAgent.agentAPIResponse = apiAgent.response
+    debugAgent.response = apiAgent.response
     debugAgent.formProblemSolvingSteps()
-    debug_start_time = time.perf_counter()
-    debug_metrics = _run_observed_phase(runtime_context, "debug", debugAgent.executeProblemSteps)
-    debug_end_time = time.perf_counter()
-    debug_metrics = _normalize_metrics(
-        config,
-        debug_metrics,
-        "debug",
-        model=debugAgent.agentProperties.get("model") if debugAgent.agentProperties else None,
-        task_status=-1 if getattr(debugAgent, "_last_timeout", False) else _status_to_task_status(debugAgent.debugStatus),
-    )
-    _finalize_metrics(debug_metrics, debug_end_time - debug_start_time)
+    output_invalid = not debugAgent.steps
+    debug_timed_out = False
+    if output_invalid:
+        debug_metrics = None
+        _write_progress(
+            runtime_context,
+            "phase_skipped",
+            phase="debug",
+            reason="knowledge_output_invalid",
+        )
+        print("Knowledge Agent output contained no executable Bash steps; skipping execution.")
+    else:
+        debug_start_time = time.perf_counter()
+        debug_metrics = _run_observed_phase(runtime_context, "debug", debugAgent.executeProblemSteps)
+        debug_end_time = time.perf_counter()
+        debug_timed_out = bool(getattr(debugAgent, "_last_timeout", False))
+        debug_metrics = _normalize_metrics(
+            config,
+            debug_metrics,
+            "debug",
+            model=debugAgent.agentProperties.get("model") if debugAgent.agentProperties else None,
+            task_status=-1 if debug_timed_out else _status_to_task_status(debugAgent.debugStatus),
+        )
+        _finalize_metrics(debug_metrics, debug_end_time - debug_start_time)
 
-    if getattr(debugAgent, "_last_timeout", False):
+    if debug_timed_out:
         store_metrics_entry(
             db_path,
             _metrics_with_lineage(debug_metrics, runtime_context),
@@ -606,6 +622,7 @@ def stepByStep(
         printFinishMessage()
         return {
             "status": False,
+            "timed_out": True,
             "api_metrics": api_metrics,
             "debug_metrics": debug_metrics,
             "verification_metrics": None,
@@ -618,12 +635,16 @@ def stepByStep(
     verification_metrics, verification_status = verification_out
     printFinishMessage()
 
-    return {
-        "status": verification_status,
+    result = {
+        "status": False if output_invalid else verification_status,
+        "verified": verification_status,
         "api_metrics": api_metrics,
         "debug_metrics": debug_metrics,
         "verification_metrics": verification_metrics,
     }
+    if output_invalid:
+        result["architecture_outcome"] = "knowledge_output_invalid"
+    return result
 
 
 def singleAgentApproach(
@@ -680,11 +701,14 @@ def singleAgentApproach(
     )
     printFinishMessage()
 
-    return {
+    result = {
         "status": False if timed_out else agent.debugStatus,
         "debug_metrics": debug_metrics,
         "verification_metrics": None,
     }
+    if timed_out:
+        result["timed_out"] = True
+    return result
 
 
 def run(debugType, configFile, config_overrides: Optional[Dict[str, Any]] = None, runtime_context: Optional[Dict[str, Any]] = None):

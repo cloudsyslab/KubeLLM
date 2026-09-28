@@ -10,6 +10,7 @@ from debug_assistant_latest.rag_server_config import (
     DEFAULT_OUTPUT_MODE,
     KNOWLEDGE_PLAN_OUTPUT_MODE,
     RAG_OUTPUT_MODES,
+    STEP_BY_STEP_OUTPUT_MODE,
 )
 
 db_url = DB_URL
@@ -43,6 +44,14 @@ guidelines = [
     # TODO: HOW TO GET AGENT TO STOP USING PLACEHOLDER NAMES
     #"When writing out your commands, use the **real name** of the Kubernetes resource instead of placeholder names. For example, if the command you are about to suggest is `kubectl get pods -n <namespace>`, run `kubectl get namespaces` first to get available namespaces. Another example is if your command is `kubectl describe <node-name>`, then run `kubectl get nodes` first to get the available nodes.",
 ]
+STEP_FORMAT_GUIDELINE = (
+    "Keep explanatory prose outside Bash blocks and put only executable shell commands inside each block."
+)
+STEP_BY_STEP_INSTRUCTIONS = [
+    instructions[0],
+    "Enumerate the steps starting at \"1.\". Put each step's executable shell commands in exactly one fenced Bash block.",
+    "Put the opening ```bash fence and closing ``` fence on separate lines, with commands between them. Keep a multiline script for one step in that same block.",
+]
 
 
 def _output_instructions(output_mode: str):
@@ -50,6 +59,14 @@ def _output_instructions(output_mode: str):
         raise ValueError(f"Unsupported assistant output mode: {output_mode!r}")
     if output_mode == DEFAULT_OUTPUT_MODE:
         return instructions, guidelines, True
+    if output_mode == STEP_BY_STEP_OUTPUT_MODE:
+        step_guidelines = [
+            guideline
+            for guideline in guidelines
+            if not guideline.startswith("Don't worry too much about formatting or syntax")
+            and not guideline.startswith("Please use this format for each step")
+        ]
+        return STEP_BY_STEP_INSTRUCTIONS, step_guidelines + [STEP_FORMAT_GUIDELINE], True
     if output_mode != KNOWLEDGE_PLAN_OUTPUT_MODE:
         raise ValueError(f"Unsupported assistant output mode: {output_mode!r}")
 
@@ -71,7 +88,7 @@ def _output_instructions(output_mode: str):
 
 
 def _output_tools(output_mode: str):
-    if output_mode == DEFAULT_OUTPUT_MODE:
+    if output_mode in {DEFAULT_OUTPUT_MODE, STEP_BY_STEP_OUTPUT_MODE}:
         return [BetterShellTools()]
     if output_mode == KNOWLEDGE_PLAN_OUTPUT_MODE:
         # This technique must emit a plan only; all command execution belongs
