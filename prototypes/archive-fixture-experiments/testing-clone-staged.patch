@@ -1,0 +1,223 @@
+diff --git a/debug_assistant_latest/troubleshooting/environment_variable/environment_variable.yaml.bak b/debug_assistant_latest/troubleshooting/environment_variable/environment_variable.yaml.bak
+new file mode 100644
+index 0000000..90c035f
+--- /dev/null
++++ b/debug_assistant_latest/troubleshooting/environment_variable/environment_variable.yaml.bak
+@@ -0,0 +1,11 @@
++apiVersion: v1
++kind: Pod
++metadata:
++  name: kube-env-missing
++spec:
++  containers:
++  - name: kube-env-missing
++    image: kube-env-missing-app:latest
++    imagePullPolicy: Never
++    ports:
++    - containerPort: 8765
+diff --git a/debug_assistant_latest/troubleshooting/incorrect_selector/app-service.yaml b/debug_assistant_latest/troubleshooting/incorrect_selector/app-service.yaml
+index 7c72196..adf3f20 100644
+--- a/debug_assistant_latest/troubleshooting/incorrect_selector/app-service.yaml
++++ b/debug_assistant_latest/troubleshooting/incorrect_selector/app-service.yaml
+@@ -4,7 +4,7 @@ metadata:
+   name: app-service
+ spec:
+   selector:
+-    app: kube-correct-application
++    app: kube-incorrect-selector
+   ports:
+     - protocol: TCP
+       port: 8000
+diff --git a/debug_assistant_latest/troubleshooting/incorrect_selector/app_service.yaml.bak b/debug_assistant_latest/troubleshooting/incorrect_selector/app_service.yaml.bak
+new file mode 100644
+index 0000000..d2dcf6c
+--- /dev/null
++++ b/debug_assistant_latest/troubleshooting/incorrect_selector/app_service.yaml.bak
+@@ -0,0 +1,12 @@
++apiVersion: v1
++kind: Service
++metadata:
++  name: app-service
++spec:
++  selector:
++    app: incorrect-selector
++  ports:
++    - protocol: TCP
++      port: 8000
++      targetPort: 8765
++  type: NodePort
+diff --git a/debug_assistant_latest/troubleshooting/port_mismatch/app_service.yaml.bak b/debug_assistant_latest/troubleshooting/port_mismatch/app_service.yaml.bak
+new file mode 100644
+index 0000000..b811d0b
+--- /dev/null
++++ b/debug_assistant_latest/troubleshooting/port_mismatch/app_service.yaml.bak
+@@ -0,0 +1,12 @@
++apiVersion: v1
++kind: Service
++metadata:
++  name: app-service
++spec:
++  selector:
++    app: kube-port-mismatch
++  ports:
++    - protocol: TCP
++      port: 8000
++      targetPort: 8756
++  type: NodePort
+\ No newline at end of file
+diff --git a/debug_assistant_latest/troubleshooting/port_mismatch/port_mismatch.yaml.bak b/debug_assistant_latest/troubleshooting/port_mismatch/port_mismatch.yaml.bak
+new file mode 100644
+index 0000000..ef59ee0
+--- /dev/null
++++ b/debug_assistant_latest/troubleshooting/port_mismatch/port_mismatch.yaml.bak
+@@ -0,0 +1,13 @@
++apiVersion: v1
++kind: Pod
++metadata:
++  name: kube-port-mismatch
++  labels:
++    app.kubernetes.io/name: app
++spec:
++  containers:
++  - name: kube-port-mismatch
++    image: kube-port-mismatch-app:latest
++    imagePullPolicy: Never
++    ports:
++      - containerPort: 8765
+diff --git a/debug_assistant_latest/troubleshooting/port_mismatch/port_mismatch.yaml.new b/debug_assistant_latest/troubleshooting/port_mismatch/port_mismatch.yaml.new
+new file mode 100644
+index 0000000..e69de29
+diff --git a/debug_assistant_latest/troubleshooting/port_mismatch_wrong_interface/app_service.yaml b/debug_assistant_latest/troubleshooting/port_mismatch_wrong_interface/app_service.yaml
+index f58b993..74c0173 100644
+--- a/debug_assistant_latest/troubleshooting/port_mismatch_wrong_interface/app_service.yaml
++++ b/debug_assistant_latest/troubleshooting/port_mismatch_wrong_interface/app_service.yaml
+@@ -8,5 +8,5 @@ spec:
+   ports:
+   - protocol: TCP
+     port: 80
+-    targetPort: 8765  # BUG 2: Should be 8765
++    targetPort: 8000  # BUG 2: Should be 8765
+   type: NodePort
+diff --git a/debug_assistant_latest/troubleshooting/port_mismatch_wrong_interface/server.py b/debug_assistant_latest/troubleshooting/port_mismatch_wrong_interface/server.py
+index e0a6da5..f3b51b1 100644
+--- a/debug_assistant_latest/troubleshooting/port_mismatch_wrong_interface/server.py
++++ b/debug_assistant_latest/troubleshooting/port_mismatch_wrong_interface/server.py
+@@ -22,8 +22,8 @@ class SimpleHTTPRequestHandler(BaseHTTPRequestHandler):
+                 pass  # Headers already sent, can't send error response
+ 
+ if __name__ == '__main__':
+-    # BUG 1: Binding to 0.0.0.0 instead of 0.0.0.0
+-    server_address = ('0.0.0.0', 8765)  # Should be ('0.0.0.0', 8765)
++    # BUG 1: Binding to localhost instead of 0.0.0.0
++    server_address = ('localhost', 8765)  # Should be ('0.0.0.0', 8765)
+     httpd = HTTPServer(server_address, SimpleHTTPRequestHandler)
+     logger.info(f'Server running on {server_address[0]}:{server_address[1]}')
+     httpd.serve_forever()
+diff --git a/debug_assistant_latest/troubleshooting/readiness_failure/readiness_failure.yaml.bak b/debug_assistant_latest/troubleshooting/readiness_failure/readiness_failure.yaml.bak
+new file mode 100644
+index 0000000..eb61047
+--- /dev/null
++++ b/debug_assistant_latest/troubleshooting/readiness_failure/readiness_failure.yaml.bak
+@@ -0,0 +1,24 @@
++apiVersion: v1
++kind: Pod
++metadata:
++  labels:
++    test: readiness
++  name: readiness-http
++spec:
++  containers:
++  - name: readiness
++    image: registry.k8s.io/e2e-test-images/agnhost:2.40
++    args:
++    - netexec  # Valid subcommand: Starts always-healthy HTTP server
++    - --http-port=8080  # Explicit port for the server
++    ports:  # Optional but recommended for exposure
++    - containerPort: 8080
++    readinessProbe:
++      httpGet:
++        path: /invalid-path
++        port: 8080
++        httpHeaders:
++        - name: Custom-Header
++          value: Awesome
++      initialDelaySeconds: 3
++      periodSeconds: 3
+diff --git a/debug_assistant_latest/troubleshooting/readiness_missing_dependency/Dockerfile.bak b/debug_assistant_latest/troubleshooting/readiness_missing_dependency/Dockerfile.bak
+new file mode 100644
+index 0000000..6ec89fb
+--- /dev/null
++++ b/debug_assistant_latest/troubleshooting/readiness_missing_dependency/Dockerfile.bak
+@@ -0,0 +1,12 @@
++FROM python:3.9-slim
++
++WORKDIR /app
++
++COPY server.py .
++
++# BUG: Missing 'RUN pip install requests'
++# The application requires the requests package but it's not installed
++
++EXPOSE 8080
++
++CMD ["python3", "server.py"]
+diff --git a/debug_assistant_latest/troubleshooting/resource_limits_oom/resource_limits_oom.yaml.bak b/debug_assistant_latest/troubleshooting/resource_limits_oom/resource_limits_oom.yaml.bak
+new file mode 100644
+index 0000000..2bdb408
+--- /dev/null
++++ b/debug_assistant_latest/troubleshooting/resource_limits_oom/resource_limits_oom.yaml.bak
+@@ -0,0 +1,20 @@
++apiVersion: v1
++kind: Pod
++metadata:
++  name: resource-limits-oom-app
++  labels:
++    app: resource-limits-oom-app
++spec:
++  containers:
++  - name: app
++    image: kube-resource-limits-oom-app
++    imagePullPolicy: Never
++    ports:
++    - containerPort: 8080
++    resources:
++      requests:
++        memory: "32Mi"
++        cpu: "100m"
++      limits:
++        memory: "50Mi"  # BUG: Too restrictive, will cause OOMKilled
++        cpu: "200m"
+diff --git a/debug_assistant_latest/troubleshooting/volume_mount/backup_Dockerfile b/debug_assistant_latest/troubleshooting/volume_mount/backup_Dockerfile
+index 3fa7704..b36ddfa 100644
+--- a/debug_assistant_latest/troubleshooting/volume_mount/backup_Dockerfile
++++ b/debug_assistant_latest/troubleshooting/volume_mount/backup_Dockerfile
+@@ -6,11 +6,10 @@ RUN apt-get update && \
+         python3-pip \
+         python3-venv
+ 
+-
+-COPY server.py /app
+ WORKDIR /app
+-RUN mkdir -p /data RUN mkdir -p /data/logsRUN mkdir -p /data/logs mkdir -p /data/logs
++COPY server.py /app/server.py
++RUN mkdir -p /data/logs
+ 
+ EXPOSE 8765
+ 
+-CMD ["python3", "server.py"]
++CMD ["python3", "server.py"]
+\ No newline at end of file
+diff --git a/debug_assistant_latest/troubleshooting/wrong_interface/server.py.bak b/debug_assistant_latest/troubleshooting/wrong_interface/server.py.bak
+new file mode 100644
+index 0000000..b3fa54b
+--- /dev/null
++++ b/debug_assistant_latest/troubleshooting/wrong_interface/server.py.bak
+@@ -0,0 +1,8 @@
++import http.server
++import socketserver
++
++Handler = http.server.SimpleHTTPRequestHandler
++
++with socketserver.TCPServer(("localhost", 8765), Handler) as httpd:
++    print('Serving on port 8765')
++    httpd.serve_forever()
