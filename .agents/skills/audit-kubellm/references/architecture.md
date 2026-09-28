@@ -36,7 +36,10 @@ runner.py -> preflight -> case setup -> selected technique
   Agent for diagnosis and execution; Verification and configured Ground Truth
   follow.
 - `stepByStep`: Knowledge guidance is executed incrementally by the
-  step-by-step Tools Agent; configured evaluators follow.
+  step-by-step Tools Agent. It accepts numbered steps with one fenced Bash
+  block per step. If no executable blocks are produced, execution is skipped,
+  the run records `knowledge_output_invalid`, and configured evaluators still
+  run without changing that failure.
 - `singleAgent`: one generative agent diagnoses and acts; configured Ground
   Truth runs, with the verification stage omitted by design.
 - `knowledgeAgentOnly`: the Knowledge Agent returns a schema-constrained
@@ -47,8 +50,10 @@ runner.py -> preflight -> case setup -> selected technique
 Do not conflate architecture execution with task success. A valid plan that
 ran is not proof the issue was fixed. When configured, deterministic Ground
 Truth is authoritative; Verification and agent self-report are separate
-signals. Keep generation, contract, execution, Verification, Ground Truth,
-and readiness failures diagnosable as distinct stages.
+signals. A `stepByStep` Knowledge response with no executable Bash blocks is
+a benchmark failure; parser defects and actual execution timeouts remain
+separate diagnoses. Keep generation, contract, execution, Verification,
+Ground Truth, and readiness failures diagnosable as distinct stages.
 
 Per-run evidence is written under ignored `.local/test_runs/`. A typical case
 has `summary.json`, `config_effective.json`, optional `ground_truth.json`, and
