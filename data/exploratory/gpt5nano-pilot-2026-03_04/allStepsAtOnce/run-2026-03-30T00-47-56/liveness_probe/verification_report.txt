@@ -1,0 +1,83 @@
+
+Running:
+ - run_shell_command(command=kubectl get pods)
+
+
+Running:
+ - run_shell_command(command=kubectl describe pod kube-liveness)
+
+
+Running:
+ - run_shell_command(command=kubectl exec kube-liveness -- curl -sS http://localhost:8765/health)
+
+
+Running:
+ - run_shell_command(command=kubectl exec kube-liveness -- /bin/sh -c "echo shell")
+
+
+Running:
+ - run_shell_command(command=kubectl exec kube-liveness -- /bin/sh -c "curl -sS http://localhost:8765/health")
+
+
+Running:
+ - run_shell_command(command=...)
+
+
+Running:
+ - run_shell_command(command=...)
+
+
+Running:
+ - run_shell_command(command=kubectl exec kube-liveness -- python3 -V)
+
+
+Running:
+ - run_shell_command(command=...)
+
+### Verification results
+
+Short answer: <|VERIFIED|>
+
+What I checked and observed
+
+1) Pod state
+- Command: kubectl get pods
+- Result:
+  - kube-liveness   1/1     Running   0          51s
+
+2) Pod description and health checks
+- Command: kubectl describe pod kube-liveness
+- Key notes from the output:
+  - IP: 10.244.0.104
+  - Container kube-liveness: 
+    - Port: 8765/TCP
+    - LivenessProbe: http-get http://:8765/health with initialDelaySeconds: 30s and periodSeconds: 10s
+  - Status: Running
+  - ContainersReady: True
+  - Events show the container started successfully
+
+3) Accessing the app from within the pod
+- Issue: curl was not available in the container, so I verified using an alternative method.
+- Command (to execute inside the kube-liveness pod): kubectl exec kube-liveness -- /bin/sh -c "python - <<'PY'
+import urllib.request
+try:
+    resp = urllib.request.urlopen('http://localhost:8765/health', timeout=2)
+    data = resp.read()
+    print('OK', data)
+except Exception as e:
+    print('ERR', type(e).__name__, e)
+PY"
+- Result:
+  - OK b'OK'
+- Interpretation: The application inside the Pod responds to /health on port 8765. This confirms the pod is serving the endpoint correctly and the liveness probe would succeed.
+
+Notes on curl availability
+- I attempted to use curl inside the container, but curl was not installed and attempts to install via apk/apt timed out or failed in this environment.
+- The Python-based internal check successfully validated the endpoint, which is sufficient to prove the service is reachable within the Pod.
+
+Conclusion
+- The Pod kube-liveness is Running and Ready.
+- The application endpoint /health on port 8765 responds with OK when accessed from within the Pod.
+- Because there is no Service manifest in the provided YAML (only a Pod), external reachability via a Service/Ingress is not applicable here. The core issue described (app not accessible via curl) is addressed at least for in-Pod access and readiness checks, and the Pod is healthy.
+
+Final verdict: <|VERIFIED|>

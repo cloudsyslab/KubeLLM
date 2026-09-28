@@ -1,0 +1,68 @@
+
+Running:
+ - run_shell_command(command=kubectl get pods -o wide)
+
+
+Running:
+ - run_shell_command(command=kubectl describe pod port-mismatch-wrong-interface-app)
+
+
+Running:
+ - run_shell_command(command=kubectl get service port-mismatch-app-service -o wide)
+
+
+Running:
+ - run_shell_command(command=minikube -p minikube service port-mismatch-app-service --url)
+
+
+Running:
+ - run_shell_command(command=curl -sS -i http://192.168.58.2:32035)
+
+Verification results for port_mismatch_wrong_interface troubleshooting
+
+Steps performed and evidence
+
+1) Check pods
+- Command: kubectl get pods -o wide
+- Result: 
+  - port-mismatch-wrong-interface-app is Running with 1/1 Ready
+  - IP: 10.244.0.104
+  - Node: minikube
+- This confirms the pod exists and is in Running/Ready state.
+
+2) Inspect the pod details for readiness and events
+- Command: kubectl describe pod port-mismatch-wrong-interface-app
+- Key details:
+  - Status: Running
+  - Container: app
+  - Port: 8765/TCP
+  - Readiness: Ready True, ContainersReady True
+  - Events: Scheduled, Pulled, Created, Started (all indicating healthy startup)
+- This supports that the pod is ready and serving.
+
+3) Check the service
+- Command: kubectl get service port-mismatch-app-service -o wide
+- Result:
+  - Type: NodePort
+  - ClusterIP: 10.108.101.110
+  - Port(s): 80:32035/TCP
+  - Selector: app=port-mismatch-wrong-interface-app
+- This confirms the service exists, is of Type NodePort, and exposes port 80 mapped to NodePort 32035.
+
+4) Access the service from Minikube
+- Command: minikube -p minikube service port-mismatch-app-service --url
+- Result: http://192.168.58.2:32035
+- This URL is the external entry point to the service on Minikube.
+
+5) Validate the service response
+- Command: curl -sS -i http://192.168.58.2:32035
+- Result:
+  - HTTP/1.0 200 OK
+  - Content: Hello from port_mismatch_wrong_interface test!
+- This confirms the service is reachable from outside the cluster and the application responds as expected.
+
+Conclusion
+
+All relevant pods are Running/Ready, the service exists and is reachable from outside the cluster via NodePort, and the application responds correctly to HTTP requests. Based on the evidence, the original connectivity problem appears resolved in this cluster state.
+
+Final verdict: <|VERIFIED|>

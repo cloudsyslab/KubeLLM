@@ -1,0 +1,82 @@
+
+Running:
+ - run_shell_command(command=kubectl get pods -o wide)
+
+
+Running:
+ - run_shell_command(command=kubectl describe pod kube-incorrect-selector)
+
+
+Running:
+ - run_shell_command(command=kubectl get service app-service -o wide)
+
+
+Running:
+ - run_shell_command(command=minikube -p minikube service app-service --url)
+
+
+Running:
+ - run_shell_command(command=curl -sS -I http://192.168.58.2:32189)
+
+
+Running:
+ - run_shell_command(command=kubectl get endpoints app-service -o yaml)
+
+Verification results
+
+1) Pod status
+- Command: kubectl get pods -o wide
+- Output:
+  NAME                      READY   STATUS    RESTARTS   AGE   IP           NODE       NOMINATED NODE   READINESS GATES
+  kube-incorrect-selector   1/1     Running   0          87s   10.244.0.5   minikube   <none>           <none>
+
+2) Pod details and events
+- Command: kubectl describe pod kube-incorrect-selector
+- Key findings:
+  - Status: Running
+  - Containers: kube-incorrect-selector - Ready: True
+  - Events: Scheduled, Pulled, Created, Started (no errors)
+
+3) Service status
+- Command: kubectl get service app-service -o wide
+- Output:
+  NAME          TYPE       CLUSTER-IP     EXTERNAL-IP   PORT(S)          AGE   SELECTOR
+  app-service   NodePort   10.101.95.12   <none>        8000:32189/TCP   91s   app=kube-incorrect-selector
+
+4) Service endpoints
+- Command: kubectl get endpoints app-service -o yaml
+- Output excerpt:
+  subsets:
+  - addresses:
+    - ip: 10.244.0.5
+      nodeName: minikube
+      targetRef:
+        kind: Pod
+        name: kube-incorrect-selector
+        namespace: default
+        uid: ...
+    ports:
+    - port: 8765
+      protocol: TCP
+- Observation: The endpoint exists and points to the running pod 10.244.0.5 on port 8765.
+
+5) External reachability of the service
+- Command: minikube -p minikube service app-service --url
+- Output: http://192.168.58.2:32189
+
+- Command: curl -sS -I http://192.168.58.2:32189
+- Output:
+  HTTP/1.0 200 OK
+  Server: SimpleHTTP/0.6 Python/3.8.10
+  Date: Sun, 19 Apr 2026 13:51:39 GMT
+  Content-type: text/html; charset=utf-8
+  Content-Length: 340
+
+Analysis
+- The pod kube-incorrect-selector is Running and Ready.
+- The service app-service exists (NodePort 32189) and has a ClusterIP.
+- kubectl get endpoints confirms there is an endpoint for app-service pointing to 10.244.0.5 (the pod) on port 8765.
+- The service is reachable externally via minikube service URL, and curl returns HTTP 200 OK.
+
+Conclusion
+<|VERIFIED|>

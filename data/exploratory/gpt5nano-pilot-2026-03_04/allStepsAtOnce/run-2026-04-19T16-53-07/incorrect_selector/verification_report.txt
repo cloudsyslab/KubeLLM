@@ -1,0 +1,74 @@
+
+Running:
+ - run_shell_command(command=kubectl get pods -o wide --all-namespaces)
+
+
+Running:
+ - run_shell_command(command=kubectl describe pod kube-incorrect-selector)
+
+
+Running:
+ - run_shell_command(command=kubectl get service app-service -o yaml)
+
+
+Running:
+ - run_shell_command(command=minikube -p minikube service app-service --url)
+
+
+Running:
+ - run_shell_command(command=curl -sS -v http://192.168.58.2:31621/  | head -n 20)
+
+
+Running:
+ - run_shell_command(command=kubectl get endpoints app-service -o yaml)
+
+Verification results
+
+1) Pods status
+- Command: kubectl get pods -o wide --all-namespaces
+- Observed:
+  - default/kube-incorrect-selector 1/1 Running 0 62s 10.244.0.70 minikube
+  - kube-system: coredns-6f6b679f8f-qz6z5, etcd-minikube, kube-apiserver-minikube, kube-controller-manager-minikube, kube-proxy-5f7z2, kube-scheduler-minikube, storage-provisioner (Running)
+- Assessment: The application pod kube-incorrect-selector is Running with 1/1 ready container.
+
+2) Pod description and events
+- Command: kubectl describe pod kube-incorrect-selector
+- Key details:
+  - Status: Running
+  - IP: 10.244.0.70
+  - Containers: kube-incorrect-selector is Running, Ready: True
+  - Events: Scheduled, Pulled image kube-incorrect-selector-app:latest, Created container, Started
+- Assessment: No errors reported; container is Running and Ready.
+
+3) Service status
+- Command: kubectl get service app-service -o yaml
+- Key details:
+  - Name: app-service (default namespace)
+  - Type: NodePort
+  - Ports: port 8000, targetPort 8765, nodePort 31621
+  - Selector: app=kube-incorrect-selector
+  - ClusterIP: 10.97.116.95
+- Endpoints mapping exists (see Step 5)
+- Assessment: Service exists with a valid NodePort and proper selector.
+
+4) Service accessibility via Minikube
+- Command: minikube -p minikube service app-service --url
+- URL returned: http://192.168.58.2:31621
+- Assessment: Service is reachable from outside the cluster on the given NodePort.
+
+5) Functional test of the service
+- Command: curl -sS -v http://192.168.58.2:31621/ | head -n 20
+- Output shows a directory listing for /, including a link to server.py, indicating a successful HTTP response from the service endpoint mapped to port 8765 inside the pod.
+- Assessment: The service endpoint responds as expected when accessed via the external NodePort.
+
+6) Endpoints verification
+- Command: kubectl get endpoints app-service -o yaml
+- Key details:
+  - Endpoints contain 10.244.0.70 (pod kube-incorrect-selector) on port 8765
+  - TargetRef references the kube-incorrect-selector pod in default
+- Assessment: Endpoints are correctly populated and linked to the running pod.
+
+Conclusion
+All relevant pods are Running/Ready, the Service exists with a valid endpoint and is reachable via the NodePort from outside the cluster. The original issue described as “no endpoints listed” appears resolved in the current cluster state.
+
+<|VERIFIED|>

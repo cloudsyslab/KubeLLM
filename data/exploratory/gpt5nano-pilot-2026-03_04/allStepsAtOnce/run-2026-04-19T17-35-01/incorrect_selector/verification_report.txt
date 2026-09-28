@@ -1,0 +1,57 @@
+
+Running:
+ - run_shell_command(command=kubectl get pods -A)
+
+
+Running:
+ - run_shell_command(command=kubectl describe pod kube-incorrect-selector)
+
+
+Running:
+ - run_shell_command(command=kubectl get service app-service -o wide)
+
+
+Running:
+ - run_shell_command(command=minikube -p minikube service app-service --url)
+
+
+Running:
+ - run_shell_command(command=curl -sS -m 5 http://192.168.58.2:32070/)
+
+
+Running:
+ - run_shell_command(command=kubectl get endpoints app-service -o wide)
+
+Verification Summary
+- Objective: Confirm whether the service endpoints for the pod kube-incorrect-selector are correctly configured and reachable.
+
+Evidence and Observations
+- Pods
+  - kubectl get pods -A
+    - default: kube-incorrect-selector 1/1 Running
+    - kube-system: core DNS and control plane components Running
+  - kubectl describe pod kube-incorrect-selector
+    - Status: Running
+    - Container kube-incorrect-selector: 8765/TCP, Ready True
+    - Events show the pod was scheduled and the container started successfully
+- Service
+  - kubectl get service app-service -o wide
+    - Type: NodePort
+    - ClusterIP: 10.98.115.17
+    - Port(s): 8000:32070/TCP
+    - Selector: app=kube-incorrect-selector
+  - kubectl get endpoints app-service -o wide
+    - ENDPOINTS: 10.244.0.96:8765
+    - This matches the Pod IP 10.244.0.96 and container port 8765 (targetPort)
+- Accessibility
+  - minikube -p minikube service app-service --url
+    - http://192.168.58.2:32070
+  - curl -sS -m 5 http://192.168.58.2:32070/
+    - Returned HTML directory listing for /
+    - Indicates the service is serving and reachable via the NodePort
+    - The directory listing includes server.py, confirming the application is responding on port 8765 internally
+
+Conclusion
+- The original problem (service showing no endpoints) is resolved. The app-service now has endpoints (10.244.0.96:8765) associated with the kube-incorrect-selector pod, the pod is Running, and the service is reachable from outside the cluster via the NodePort (32070) URL obtained from minikube.
+
+Final status: <|VERIFIED|>

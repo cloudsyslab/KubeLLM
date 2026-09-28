@@ -1,0 +1,65 @@
+
+Running:
+ - run_shell_command(command=kubectl get pods -o wide)
+
+
+Running:
+ - run_shell_command(command=kubectl describe pod kube-port-mismatch)
+
+
+Running:
+ - run_shell_command(command=kubectl get service -o wide)
+
+
+Running:
+ - run_shell_command(command=minikube -p minikube service app-service --url)
+
+
+Running:
+ - run_shell_command(command=curl -sS http://192.168.58.2:31560 -I)
+
+Verification steps and results
+
+1) Check pods
+- Command: kubectl get pods -o wide
+- Result:
+  - kube-port-mismatch 1/1 Running 0 22s 10.244.0.205 minikube
+- Assessment: Pod exists and is Running with 1/1 ready containers. Proceeding to inspect details.
+
+2) Describe pod for issues
+- Command: kubectl describe pod kube-port-mismatch
+- Result highlights:
+  - Status: Running
+  - Containers: kube-port-mismatch, Port: 8765/TCP
+  - State: Running, Ready: True
+  - Events: Normal/Scheduled, Pulled, Created, Started
+- Assessment: No error events observed. Container is running and ready.
+
+3) Check service
+- Command: kubectl get service -o wide
+- Result:
+  - app-service  NodePort  10.105.200.106  <none>  8000:31560/TCP  2m28s  app.kubernetes.io/name=app
+- Assessment: Service app-service exists with ClusterIP and NodePort 31560 mapped to port 8000. TargetPort 8765 is configured as per manifest.
+
+4) Access service via Minikube
+- Command: minikube -p minikube service app-service --url
+- Result:
+  - http://192.168.58.2:31560
+- Assessment: External URL for the service is reachable via Minikube.
+
+5) Validate service from outside the cluster
+- Command: curl -sS http://192.168.58.2:31560 -I
+- Result:
+  - HTTP/1.0 200 OK
+  - Server: SimpleHTTP/0.6 Python/3.11.15
+  - Date: Sun, 19 Apr 2026 19:51:23 GMT
+  - Content-type: text/html; charset=utf-8
+  - Content-Length: 877
+- Assessment: Service responds with 200 OK, indicating the application is reachable and serving content as expected.
+
+Conclusion
+- All relevant pods are Running/Ready.
+- The service is reachable from outside the cluster via the NodePort and Minikube URL.
+- The previous 502 Bad Gateway symptom is not observed in this verification run; the service responds correctly.
+
+Final verdict: <|VERIFIED|>

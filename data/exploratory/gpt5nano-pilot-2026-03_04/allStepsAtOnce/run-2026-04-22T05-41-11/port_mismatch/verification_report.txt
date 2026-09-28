@@ -1,0 +1,58 @@
+
+Running:
+ - run_shell_command(command=kubectl get pods -o wide)
+
+
+Running:
+ - run_shell_command(command=kubectl describe pod kube-port-mismatch)
+
+
+Running:
+ - run_shell_command(command=kubectl get service app-service -o json)
+
+
+Running:
+ - run_shell_command(command=minikube -p minikube service app-service --url)
+
+
+Running:
+ - run_shell_command(command=curl -s -I http://192.168.58.2:32422)
+
+Verification summary
+
+1) Pods status
+- Command: kubectl get pods -o wide
+- Result:
+  - kube-port-mismatch 1/1 Running 0 11s 10.244.1.143 minikube
+- Command: kubectl describe pod kube-port-mismatch
+- Result highlights:
+  - Status: Running
+  - Container kube-port-mismatch: Running, Ready True
+  - Events: Scheduled, Pulled, Created, Started (no errors)
+
+2) Service status
+- Command: kubectl get service app-service -o json
+- Result (selected fields):
+  - name: app-service
+  - type: NodePort
+  - ports: [{ port: 8000, targetPort: 8765, nodePort: 32422 }]
+  - selector: app.kubernetes.io/name: app
+  - clusterIP: 10.98.76.19
+- Interpretation: Service exists, has a ClusterIP, and exposes port 8000 mapped to targetPort 8765 via NodePort 32422.
+
+3) External access and reachability
+- Command: minikube -p minikube service app-service --url
+- Result: http://192.168.58.2:32422
+- Command: curl -I http://192.168.58.2:32422
+- Result: HTTP/1.0 200 OK
+  - Server: SimpleHTTP/0.6 Python/3.8.10
+  - Date: ...
+  - Content-type: text/html; charset=utf-8
+  - Content-Length: 340
+
+Conclusion
+- The pod kube-port-mismatch is Running and Ready.
+- The app-service is present, of type NodePort, and exposes port 8000 targeting 8765.
+- The NodePort 32422 is accessible externally via Minikube, and curl to http://192.168.58.2:32422 returns HTTP 200 OK, indicating the service is reachable and responding.
+
+Result: <|VERIFIED|>

@@ -1,0 +1,59 @@
+
+Running:
+ - run_shell_command(command=kubectl get pods -o wide)
+
+
+Running:
+ - run_shell_command(command=kubectl describe pod kube-incorrect-selector)
+
+
+Running:
+ - run_shell_command(command=kubectl get service app-service -o yaml)
+
+
+Running:
+ - run_shell_command(command=minikube -p minikube service app-service --url)
+
+
+Running:
+ - run_shell_command(command=curl -sS -v http://192.168.58.2:30300)
+
+Verification steps and results
+
+1) Pods status
+- Command: kubectl get pods -o wide
+- Result: 
+  - kube-incorrect-selector 1/1 Running 0 56s 10.244.1.183 minikube ...
+
+2) Pod description (events)
+- Command: kubectl describe pod kube-incorrect-selector
+- Result highlights:
+  - Status: Running
+  - Container kube-incorrect-selector: Running, Ready=True
+  - Events include: Successfully scheduled, Container image present, Container started
+
+3) Service details
+- Command: kubectl get service app-service -o yaml
+- Result highlights:
+  - name: app-service
+  - selector: app: kube-incorrect-selector
+  - ports: port 8000, targetPort 8765, nodePort 30300
+  - type: NodePort
+  - clusterIP assigned
+
+4) Service accessibility from Minikube
+- Command: minikube -p minikube service app-service --url
+- Result: http://192.168.58.2:30300
+
+5) Reachability test
+- Command: curl -v http://192.168.58.2:30300
+- Result: HTML directory listing returned (server is serving content on port 8765 via the NodePort)
+
+Assessment
+- The pod is Running and Ready.
+- The service app-service is configured with the correct selector matching the pod.
+- The NodePort is reachable from outside the cluster (Minikube host) and successfully serves the application on port 8765 inside the container.
+- Therefore, endpoints are effectively registered and reachable; the previous issue of “no endpoints listed” is resolved in this cluster state.
+
+Conclusion
+<|VERIFIED|>

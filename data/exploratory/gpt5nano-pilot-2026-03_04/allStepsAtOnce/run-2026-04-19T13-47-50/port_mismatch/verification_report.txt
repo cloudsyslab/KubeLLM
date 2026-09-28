@@ -1,0 +1,71 @@
+
+Running:
+ - run_shell_command(command=kubectl get pods --all-namespaces -o wide)
+
+
+Running:
+ - run_shell_command(command=kubectl describe pod kube-port-mismatch)
+
+
+Running:
+ - run_shell_command(command=kubectl describe service app-service)
+
+
+Running:
+ - run_shell_command(command=minikube -p minikube service app-service --url)
+
+
+Running:
+ - run_shell_command(command=curl -s -D - http://192.168.58.2:30325 | head -n 20)
+
+Verification summary
+
+- Pod and service state checked against the provided manifests
+- Original problem: HTTP 502 Bad Gateway
+
+1) Pods: kubectl get pods
+- kube-port-mismatch (default namespace)
+  - READY: 1/1
+  - STATUS: Running
+  - AGE: 36s
+  - IP: 10.244.0.11
+  - NODE: minikube
+
+2) Pod details: kubectl describe pod kube-port-mismatch
+- Container kube-port-mismatch
+  - Image: python:3.11-slim
+  - Port: 8765/TCP
+  - State: Running (Started: Sun, 19 Apr 2026 14:14:41 +0000)
+  - Ready: True
+- Events show successful pull and start (no errors/crashes)
+
+3) Service: kubectl describe service app-service
+- Name: app-service
+- Type: NodePort
+- Selector: app.kubernetes.io/name=app
+- Ports: port 8000/TCP, targetPort 8765/TCP, NodePort 30325
+- Endpoints: 10.244.0.11:8765
+- Cluster IP assigned: 10.100.100.44
+
+4) Service accessibility (Minikube): minikube -p minikube service app-service --url
+- URL: http://192.168.58.2:30325
+
+5) Reachability test: curl to URL
+- curl -s -D - http://192.168.58.2:30325 | head -n 20
+- Result: HTTP/1.0 200 OK
+- Server: SimpleHTTP/0.6 Python/3.11.15
+- Content-Type: text/html; charset=utf-8
+- Response contains a directory listing (valid HTTP response from the Python http.server)
+
+Conclusion
+- The pod kube-port-mismatch is Running and Ready.
+- The app-service is created with a valid endpoint pointing to the pod.
+- The service is reachable from outside the cluster via Minikube URL http://192.168.58.2:30325.
+- The application responds with HTTP 200 OK, indicating the previous 502 Bad Gateway issue is resolved.
+
+Evidence summary:
+- Pod: kube-port-mismatch in Running/Ready state
+- Service: app-service Endpoints includes 10.244.0.11:8765; NodePort 30325
+- External URL: http://192.168.58.2:30325 returns 200 OK and directory listing
+
+Final verdict: <|VERIFIED|>

@@ -1,0 +1,53 @@
+
+Running:
+ - run_shell_command(command=kubectl get pods -o wide)
+
+
+Running:
+ - run_shell_command(command=kubectl describe pod port-mismatch-wrong-interface-app)
+
+
+Running:
+ - run_shell_command(command=kubectl get service -o wide)
+
+
+Running:
+ - run_shell_command(command=kubectl describe service port-mismatch-app-service)
+
+
+Running:
+ - run_shell_command(command=minikube -p minikube service port-mismatch-app-service --url)
+
+
+Running:
+ - run_shell_command(command=curl -s -o /dev/null -w "%{http_code}\n" http://192.168.58.2:30644)
+
+Verification results
+
+- Pod status
+  - kubectl get pods -o wide
+    - port-mismatch-wrong-interface-app  1/1  Running  0  26s  10.244.1.121  minikube
+- Pod details
+  - kubectl describe pod port-mismatch-wrong-interface-app
+    - Status: Running
+    - Containers: app — Ready: True
+    - Events: Successful scheduling, container started
+- Service status
+  - kubectl get service -o wide
+    - port-mismatch-app-service  NodePort  10.97.19.29  <none>  80:30644/TCP  2m18s  app=port-mismatch-wrong-interface-app
+  - kubectl describe service port-mismatch-app-service
+    - Endpoints: 10.244.1.121:8765
+    - NodePort: 30644
+- Accessability via Minikube
+  - minikube -p minikube service port-mismatch-app-service --url
+    - http://192.168.58.2:30644
+  - curl test
+    - curl -s -o /dev/null -w "%{http_code}\n" http://192.168.58.2:30644
+    - 200
+
+Conclusion
+- The pod port-mismatch-wrong-interface-app is Running and Ready.
+- The service port-mismatch-app-service has a valid endpoint (10.244.1.121:8765) and is reachable via the NodePort 30644 on the Minikube host (http://192.168.58.2:30644) as confirmed by the HTTP 200 response from curl.
+- Therefore, the original issue (service access errors due to routing/container exposure) appears to be resolved in this cluster state.
+
+<|VERIFIED|>

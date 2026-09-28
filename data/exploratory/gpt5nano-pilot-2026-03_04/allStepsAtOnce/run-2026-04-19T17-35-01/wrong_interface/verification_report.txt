@@ -1,0 +1,59 @@
+
+Running:
+ - run_shell_command(command=kubectl get pods -o wide)
+
+
+Running:
+ - run_shell_command(command=kubectl describe pod kube-wrong-interface)
+
+
+Running:
+ - run_shell_command(command=kubectl get service app-service -o wide)
+
+
+Running:
+ - run_shell_command(command=minikube -p minikube service app-service --url)
+
+
+Running:
+ - run_shell_command(command=curl -sS -v http://192.168.58.2:30156/  | head -n 20)
+
+### Verification results
+
+- Step 1: kubectl get pods
+  - kube-wrong-interface is present and Running
+  - READY: 1/1
+  - IP: 10.244.0.114
+  - Node: minikube
+  - Output excerpt:
+    - NAME                   READY   STATUS    RESTARTS   AGE
+    - kube-wrong-interface   1/1     Running   0          2m10s
+
+- Step 2: kubectl describe pod kube-wrong-interface
+  - Status: Running
+  - Container kube-wrong-interface: Running since 2m12s, Ready: True
+  - Container image: kube-wrong-interface-app:latest
+  - Port: 8765/TCP (containerPort)
+  - Events show normal scheduling, image pulled, container started successfully
+  - No CrashLoopBackOff or other errors observed
+
+- Step 3: kubectl get service app-service
+  - Type: NodePort
+  - ClusterIP: 10.108.121.119
+  - Ports: 8000:30156/TCP
+  - Selector: app=kube-wrong-interface
+
+- Step 4: minikube -p minikube service app-service --url
+  - URL: http://192.168.58.2:30156/
+
+- Step 5: curl test (outside cluster)
+  - Command: curl -v http://192.168.58.2:30156/
+  - Response shows a valid HTTP page with directory listing for /
+  - HTML content indicates the server is serving content from port 8765 (server.py is listed)
+
+Conclusion:
+- The pod kube-wrong-interface is Running and Ready.
+- The service app-service is available via NodePort 30156 and reachable from outside the cluster using Minikube’s URL.
+- A curl request to http://192.168.58.2:30156/ returns a valid response (directory listing), confirming the application is accessible.
+
+<|VERIFIED|>

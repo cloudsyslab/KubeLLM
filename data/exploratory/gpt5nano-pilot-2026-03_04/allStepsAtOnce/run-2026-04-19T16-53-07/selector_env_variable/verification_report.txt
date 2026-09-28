@@ -1,0 +1,55 @@
+
+Running:
+ - run_shell_command(command=kubectl get pods -A -o wide)
+
+
+Running:
+ - run_shell_command(command=kubectl describe pod selector-env-app -n default)
+
+
+Running:
+ - run_shell_command(command=kubectl get service -A -o wide)
+
+
+Running:
+ - run_shell_command(command=minikube -p minikube service selector-env-app-service --url)
+
+
+Running:
+ - run_shell_command(command=curl -sS -i http://192.168.58.2:32349/ -m 5)
+
+- Verification result: <|VERIFIED|>
+
+Evidence and steps performed
+
+- kubectl get pods -A
+  - default/selector-env-app is Running with 1/1 Ready
+  - Other system pods (kube-dns, etcd, etc.) are Running
+  - This confirms the target pod exists and is up
+
+- kubectl describe pod selector-env-app -n default
+  - State: Running
+  - Ready: True
+  - Environment: APP_MESSAGE = Hello from selector_env_variable test!
+  - Events show the container started normally (Scheduled, Pulled, Created, Started)
+
+- kubectl get service -A -o wide
+  - default/selector-env-app-service is a NodePort service
+  - Address: ClusterIP 10.101.199.89
+  - Port mapping: 80:32349/TCP
+  - Selector: app=selector-env-app
+  - This confirms the service exists and is correctly wired to the pod
+
+- minikube -p minikube service selector-env-app-service --url
+  - URL returned: http://192.168.58.2:32349
+
+- curl -sS -i http://192.168.58.2:32349/ -m 5
+  - HTTP/1.0 200 OK
+  - Response body: APP_MESSAGE=Hello from selector_env_variable test!
+
+Conclusion
+- The pod is running and Ready.
+- The service endpoints are correctly configured and reachable from outside the cluster (via minikube service URL).
+- The application responds with the expected APP_MESSAGE value, indicating the startup issue (KeyError due to missing APP_MESSAGE) is no longer occurring in this deployment, and the service endpoints are active.
+
+Final status: The issue is resolved in the current cluster state.

@@ -1,0 +1,83 @@
+
+Running:
+ - run_shell_command(command=kubectl get pods -A -o wide)
+
+
+Running:
+ - run_shell_command(command=kubectl describe pod kube-port-mismatch -n default)
+
+
+Running:
+ - run_shell_command(command=kubectl get service app-service -A -o wide)
+
+
+Running:
+ - run_shell_command(command=kubectl get service app-service -n default -o json)
+
+
+Running:
+ - run_shell_command(command=minikube -p minikube service app-service --url)
+
+
+Running:
+ - run_shell_command(command=curl -s -D - http://192.168.58.2:32318 -m 5)
+
+### Verification results
+
+1) Pod status check
+- Command: kubectl get pods -A -o wide
+- Outcome: 
+  - default/kube-port-mismatch is Running (1/1 ready)
+
+Evidence excerpt:
+- NAME: kube-port-mismatch
+- NAMESPACE: default
+- READY: 1/1
+- STATUS: Running
+- IP: 10.244.1.166
+- NODE: minikube
+
+2) Pod detail and events
+- Command: kubectl describe pod kube-port-mismatch -n default
+- Outcome: Pod is Running with container Ready: True. No error events reported.
+
+Evidence excerpt:
+- Status: Running
+- Containers: 
+  - kube-port-mismatch: Ready: True
+- Events: 
+  - Normal  Started: kube-port-mismatch
+  - No error-related events observed
+
+3) Service existence and port mapping
+- Command: kubectl get service app-service -n default -o json
+- Outcome: Service app-service exists with:
+  - type: NodePort
+  - ports: port 8000 -> targetPort 8765
+  - nodePort: 32318
+  - clusterIP: 10.109.83.43
+
+Evidence excerpt:
+- "ports": [{"port": 8000, "targetPort": 8765, "nodePort": 32318, "protocol": "TCP"}]
+- "type": "NodePort"
+- "selector": { "app.kubernetes.io/name": "app" }
+
+4) Accessing the service externally (Minikube)
+- Command: minikube -p minikube service app-service --url
+- Outcome: http://192.168.58.2:32318
+
+5) Functional test of the service
+- Command: curl -s -D - http://192.168.58.2:32318 -m 5
+- Outcome: HTTP/1.0 200 OK
+- Response content indicates a Python SimpleHTTPServer directory listing, showing server.py is served on port 8765 inside the pod (as configured by targetPort).
+
+Evidence excerpt:
+- HTTP/1.0 200 OK
+- Content-Type: text/html; charset=utf-8
+- Directory listing for /
+- Entry: server.py
+
+Conclusion
+- The application service is reachable from outside the cluster, the NodePort is correctly mapped to the pod's container port, and the pod is Running with the expected container Ready state. The 502 Bad Gateway issue seen previously is not observed in current state; the service responds with HTTP 200 OK and content served by the app.
+
+Final verdict: <|VERIFIED|>

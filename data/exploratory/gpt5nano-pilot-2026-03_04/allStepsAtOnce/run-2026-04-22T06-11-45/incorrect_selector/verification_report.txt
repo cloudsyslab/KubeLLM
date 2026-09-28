@@ -1,0 +1,79 @@
+
+Running:
+ - run_shell_command(command=kubectl get pods -o wide --all-namespaces | sed -n '1,200p')
+
+
+Running:
+ - run_shell_command(command=kubectl describe pod kube-incorrect-selector --namespace default)
+
+
+Running:
+ - run_shell_command(command=kubectl get service app-service -o wide --namespace default)
+
+
+Running:
+ - run_shell_command(command=minikube -p minikube service app-service --url)
+
+
+Running:
+ - run_shell_command(command=curl -sS -v http://192.168.58.2:30447/)
+
+
+Running:
+ - run_shell_command(command=kubectl get endpoints app-service -o yaml --namespace default)
+
+Verification results
+
+Objective: Confirm whether the original issue “service shows no endpoints listed for the pod” is resolved.
+
+Evidence gathered (exact resource names used from manifests):
+- Pod: kube-incorrect-selector (namespace: default)
+- Service: app-service (namespace: default)
+
+1) Pods status
+- Command: kubectl get pods -o wide --all-namespaces
+- Output (relevant lines):
+  - default  kube-incorrect-selector  1/1  Running 0  2m13s  10.244.1.160  minikube
+  - kube-system ... (other system pods)
+- Status: kube-incorrect-selector is Running with 1/1 ready containers.
+
+2) Pod description and events
+- Command: kubectl describe pod kube-incorrect-selector --namespace default
+- Key details:
+  - Status: Running
+  - Container kube-incorrect-selector: Running, Ready: True
+  - Events: Scheduled, Pulled, Created, Started (no errors)
+- Conclusion: Pod is healthy and ready.
+
+3) Service status and endpoints
+- Command: kubectl get service app-service -o wide --namespace default
+- Output:
+  - app-service, Type: NodePort, ClusterIP: 10.108.53.199, Ports: 8000:30447/TCP, Selector: app=kube-incorrect-selector
+- Command: kubectl get endpoints app-service -o yaml --namespace default
+- Output (relevant subset):
+  - subsets:
+    - addresses:
+      - ip: 10.244.1.160
+        nodeName: minikube
+        targetRef:
+          kind: Pod
+          name: kube-incorrect-selector
+          namespace: default
+      ports:
+      - port: 8765
+        protocol: TCP
+- Analysis: Endpoints exist. The endpoint IP 10.244.1.160 corresponds to the kube-incorrect-selector pod, validating that the service has endpoints.
+
+4) Service accessibility from outside the cluster (Minikube)
+- Command: minikube -p minikube service app-service --url
+- Output: http://192.168.58.2:30447
+
+- Command: curl -v http://192.168.58.2:30447/
+- Output: HTML directory listing showing server.py, confirming the service is reachable and serving traffic to the pod on port 8765 (as mapped by targetPort 8765 to NodePort 30447).
+
+Conclusion
+- The service app-service has endpoints pointing to the kube-incorrect-selector pod, and the endpoint IP matches the pod's IP.
+- The NodePort is accessible from outside the cluster (Minikube) and serves content from the pod’s application port.
+- Therefore, the original issue (no endpoints listed for the service) is resolved.
+
+Final verdict: <|VERIFIED|>

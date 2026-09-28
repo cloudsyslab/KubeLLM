@@ -1,0 +1,130 @@
+
+Running:
+ - run_shell_command(command=kubectl get pods -A -o wide)
+
+
+Running:
+ - run_shell_command(command=kubectl describe pod kube-liveness)
+
+
+Running:
+ - run_shell_command(command=kubectl get svc -A -o wide)
+
+
+Running:
+ - run_shell_command(command=kubectl describe service kube-liveness-svc -n default)
+
+
+Running:
+ - run_shell_command(command=minikube -p minikube service kube-liveness-svc --url)
+
+Verification results
+
+1) Pods status
+- Command: kubectl get pods -A -o wide
+- Result:
+  NAMESPACE     NAME                               READY   STATUS    RESTARTS        AGE     IP             NODE       NOMINATED NODE   READINESS GATES
+  default       kube-liveness                      1/1     Running   0               40s     10.244.1.162   minikube   <none>           <none>
+  kube-system   coredns-6f6b679f8f-qz6z5           1/1     Running   0               2d16h   10.244.0.2     minikube   <none>           <none>
+  kube-system   etcd-minikube                      1/1     Running   0               2d16h   192.168.58.2   minikube   <none>           <none>
+  kube-system   kube-apiserver-minikube            1/1     Running   0               2d16h   192.168.58.2   minikube   <none>           <none>
+  kube-system   kube-controller-manager-minikube   1/1     Running   0               2d16h   192.168.58.2   minikube   <none>           <none>
+  kube-system   kube-proxy-5f7z2                   1/1     Running   0               2d16h   192.168.58.2   minikube   <none>           <none>
+  kube-system   kube-scheduler-minikube            1/1     Running   0               2d16h   192.168.58.2   minikube   <none>           <none>
+  kube-system   storage-provisioner                1/1     Running   1 (2d16h ago)   2d16h   192.168.58.2   minikube   <none>           <none>
+
+2) Pod details
+- Command: kubectl describe pod kube-liveness
+- Result (summary):
+  Service Account:  default
+  Node:             minikube/192.168.58.2
+  Start Time:       Wed, 22 Apr 2026 06:18:00 +0000
+  Labels:           <none>
+  Annotations:      <none>
+  Status:           Running
+  IP:               10.244.1.162
+  Containers:
+    kube-liveness:
+      Container ID:   docker://b9b3483838e7e0da1dea383bf1a446603bf623179eaf6d4e7824a14b6ebbdec1
+      Image:          kube-liveness-app
+      Image ID:       docker://sha256:6571f583cf93ef3cfd3eb4df9eeaed12c6834ad733fb66fd5603c43480b9fb39
+      Port:           8765/TCP
+      Host Port:      0/TCP
+      State:          Running
+        Started:      Wed, 22 Apr 2026 06:18:01 +0000
+      Ready:          True
+      Restart Count:  0
+      Liveness:       http-get http://:8765/health delay=30s timeout=1s period=10s #success=1 #failure=3
+  Conditions:
+    Type                        Status
+    PodReadyToStartContainers   True 
+    Initialized                 True 
+    Ready                       True 
+    ContainersReady             True 
+    PodScheduled                True 
+  Messages/Events:
+  - Normal  Scheduled  51s   default-scheduler  Successfully assigned default/kube-liveness to minikube
+  - Normal  Pulled     50s   kubelet            spec.containers{kube-liveness}: Container image "kube-liveness-app" already present on machine
+  - Normal  Created    50s   kubelet            spec.containers{kube-liveness}: Created container kube-liveness
+  - Normal  Started    50s   kubelet            spec.containers{kube-liveness}: Started container kube-liveness
+
+3) Service status
+- Command: kubectl get svc -A -o wide
+- Result:
+  NAMESPACE     NAME                TYPE        CLUSTER-IP      EXTERNAL-IP   PORT(S)                  AGE     SELECTOR
+  default       kube-liveness-svc   NodePort    10.106.223.13   <none>        8765:31583/TCP           160m    app=kube-liveness
+  default       kubernetes          ClusterIP   10.96.0.1       <none>        443/TCP                  2d16h   <none>
+  kube-system   kube-dns            ClusterIP   10.96.0.10      <none>        53/UDP,53/TCP,9153/TCP   2d16h   k8s-app=kube-dns
+
+- Command: kubectl describe service kube-liveness-svc -n default
+- Result (summary):
+  Name:                     kube-liveness-svc
+  Namespace:                default
+  Labels:                   app=kube-liveness
+  Selector:                 app=kube-liveness
+  Type:                     NodePort
+  IP Family Policy:         SingleStack
+  IP Families:              IPv4
+  IP:                       10.106.223.13
+  IPs:                      10.106.223.13
+  Port:                     <unset>  8765/TCP
+  NodePort:                 <unset>  31583/TCP
+  Endpoints:                
+  Session Affinity:         None
+  External Traffic Policy:  Cluster
+  Internal Traffic Policy:  Cluster
+  Events:                   <none>
+
+Observations:
+- The kube-liveness pod is Running (1/1 ready).
+- The service kube-liveness-svc exists (NodePort 31583) and targets port 8765, but Endpoints are empty.
+- The service selector is app=kube-liveness, but the pod kube-liveness has no labels (Labels: <none>), so there is no endpoint for the service to route to.
+
+4) Minikube access attempt
+- Command: minikube -p minikube service kube-liveness-svc --url
+- Result:
+  Error: X Exiting due to SVC_UNREACHABLE: service not available: no running pod for service kube-liveness-svc found
+
+Implications
+- The pod is running, but the service has no endpoints due to a selector mismatch (pod lacks the label app=kube-liveness).
+- Therefore, the NodePort service cannot route traffic to the pod, and external curl requests will time out or fail to reach the application.
+- The application itself (server.py) would respond to GET /health, but traffic cannot be delivered to the pod via the service until the label alignment is fixed.
+
+Recommended next steps to resolve
+- Option A: Label the existing pod to match the service selector
+  - Example:
+    - kubectl label pod kube-liveness app=kube-liveness
+  - Then verify:
+    - kubectl get pod kube-liveness --show-labels
+    - kubectl describe pod kube-liveness (Endoints should populate for the service)
+    - minikube -p minikube service kube-liveness-svc --url (should return a URL) and curl that URL
+- Option B: Update the service to match the pod's labels (if you prefer not to add labels)
+  - Example:
+    - kubectl label pod kube-liveness app=kube-liveness
+    - Or edit the service to use a different selector that matches the pod’s labels (if you set them differently).
+
+Final verdict
+- Not fixed. The kube-liveness pod is running, but the associated NodePort service has no endpoints due to a label-selector mismatch, preventing external curl access to the application.
+
+Conclusion token
+<|FAILED|>

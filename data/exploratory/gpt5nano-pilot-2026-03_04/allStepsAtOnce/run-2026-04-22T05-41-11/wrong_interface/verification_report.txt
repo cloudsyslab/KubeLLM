@@ -1,0 +1,45 @@
+
+Running:
+ - run_shell_command(command=kubectl get pods -o wide)
+
+
+Running:
+ - run_shell_command(command=kubectl describe pod kube-wrong-interface)
+
+
+Running:
+ - run_shell_command(command=kubectl get service app-service -o wide)
+
+
+Running:
+ - run_shell_command(command=minikube -p minikube service app-service --url)
+
+
+Running:
+ - run_shell_command(command=curl -sS http://192.168.58.2:31007 -m 5)
+
+ Verification Evidence
+
+- Pod status
+  - kubectl get pods
+    - kube-wrong-interface 1/1 Running
+- Pod description
+  - kubectl describe pod kube-wrong-interface
+    - Status: Running
+    - Container kube-wrong-interface: Ready: True
+- Service status
+  - kubectl get service app-service -o wide
+    - Type: NodePort
+    - ClusterIP: 10.103.183.145
+    - Ports: 8000:31007/TCP
+    - Selector: app=kube-wrong-interface
+- Access from Minikube
+  - minikube -p minikube service app-service --url
+    - http://192.168.58.2:31007
+- Reachability test
+  - curl -sS http://192.168.58.2:31007 -m 5
+    - Response is a directory listing HTML (served by server.py on port 8765), indicating successful access to the application via the service.
+
+Conclusion: The pod is Running and the service is reachable from outside the cluster. The original curl timeout issue appears resolved in this cluster state.
+
+<|VERIFIED|>

@@ -1,0 +1,43 @@
+
+Running:
+ - run_shell_command(command=kubectl get pods -o wide)
+
+
+Running:
+ - run_shell_command(command=kubectl describe pod kube-volume-mount)
+
+
+Running:
+ - run_shell_command(command=kubectl exec kube-volume-mount -- ls -l /data/logs || true)
+
+
+Running:
+ - run_shell_command(command=kubectl logs kube-volume-mount --tail=50)
+
+
+Running:
+ - run_shell_command(command=kubectl exec kube-volume-mount -- cat /data/logs/app.log)
+
+Verification results
+
+- Pod status
+  - kubectl get pods: kube-volume-mount is Running with 1/1 ready containers.
+  - kubectl describe pod kube-volume-mount: Init container init-log-dir completed successfully and created /data/logs; main container kube-volume-mount started and is Ready. No errors in Events.
+
+- Data path existence and file content
+  - kubectl exec kube-volume-mount -- ls -l /data/logs
+    - Output:
+      total 4
+      -rw-r--r-- 1 root root 20 Apr 19 17:30 app.log
+    - Confirms /data/logs directory exists and contains app.log.
+  - kubectl exec kube-volume-mount -- cat /data/logs/app.log
+    - Output:
+      Application started
+    - Confirms the application successfully wrote to /data/logs/app.log.
+
+Notes
+- There is no Service defined for this pod, so no external Service URL test was applicable. The Kubernetes pod is Running and the volume path /data/logs is correctly created and writable by the application.
+
+Conclusion: The original issue No such file or directory: '/data/logs' appears to be resolved in this cluster state. The directory exists, is mounted via an init container, and the application writes to /data/logs/app.log as intended.
+
+<|VERIFIED|>

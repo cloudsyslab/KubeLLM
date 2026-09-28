@@ -1,0 +1,52 @@
+
+Running:
+ - run_shell_command(command=kubectl get pods -o wide)
+
+
+Running:
+ - run_shell_command(command=kubectl describe pod selector-env-app)
+
+
+Running:
+ - run_shell_command(command=kubectl get service -A)
+
+
+Running:
+ - run_shell_command(command=minikube -p minikube service selector-env-app-service --url)
+
+
+Running:
+ - run_shell_command(command=curl -sS -v http://192.168.58.2:31783/)
+
+- Verification steps and results:
+
+1) kubectl get pods
+- Pod exists and is Running with 1/1 containers ready:
+  - selector-env-app   READY 1/1  STATUS Running
+
+2) kubectl describe pod selector-env-app
+- Container is Running and Ready
+- APP_MESSAGE environment variable is set to "Hello from selector_env_variable test!"
+- No crash-related events observed; container started successfully.
+
+3) kubectl get service -A
+- Service selector-env-app-service exists
+- Type: NodePort
+- ClusterIP: 10.105.206.246
+- Port mapping: 80:31783/TCP
+- Selector matches the pod label app: selector-env-app
+
+4) Accessing the service via Minikube
+- URL obtained: http://192.168.58.2:31783
+
+5) curl test
+- Response: "Hello from selector_env_variable test! (from env var)"
+
+Conclusion:
+- The pod is running and healthy.
+- The environment variable APP_MESSAGE is correctly set, preventing the KeyError startup issue.
+- The Service is reachable from outside the cluster via NodePort and returns the expected application message.
+
+Therefore, the issue described has been resolved.
+
+<|VERIFIED|>

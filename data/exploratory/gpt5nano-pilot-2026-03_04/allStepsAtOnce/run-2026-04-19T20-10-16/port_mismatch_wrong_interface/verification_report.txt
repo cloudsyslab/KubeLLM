@@ -1,0 +1,64 @@
+
+Running:
+ - run_shell_command(command=kubectl get pods -o wide)
+
+
+Running:
+ - run_shell_command(command=kubectl describe pod port-mismatch-wrong-interface-app)
+
+
+Running:
+ - run_shell_command(command=kubectl get service -A)
+
+
+Running:
+ - run_shell_command(command=kubectl describe service port-mismatch-app-service)
+
+
+Running:
+ - run_shell_command(command=minikube -p minikube service port-mismatch-app-service --url)
+
+
+Running:
+ - run_shell_command(command=curl -sS http://192.168.58.2:32762 -m 5)
+
+Verification results for port_mismatch_wrong_interface
+
+Commands executed and observed outcomes:
+
+1) kubectl get pods
+- port-mismatch-wrong-interface-app  1/1  Running  0  40s  10.244.0.239  minikube
+Evidence: Pod is Running and Ready (1/1).
+
+2) kubectl describe pod port-mismatch-wrong-interface-app
+- Status: Running
+- IP: 10.244.0.239
+- Containers: app - Ready: True
+- Events: Scheduled, Pulled, Created, Started
+Evidence: Pod reports Running and Ready with no errors in events.
+
+3) kubectl get service
+- port-mismatch-app-service (NodePort) on NodePort 32762, ClusterIP 10.111.231.18, Endpoints: 10.244.0.239:8765
+Evidence: Service exists, NodePort is mapped, and endpoint points to the pod port 8765.
+
+4) kubectl describe service port-mismatch-app-service
+- Port: 80/TCP
+- TargetPort: 8765/TCP
+- NodePort: 32762/TCP
+- Endpoints: 10.244.0.239:8765
+Evidence: Service correctly targets the pod port 8765 and has an endpoint.
+
+5) minikube -p minikube service port-mismatch-app-service --url
+- URL: http://192.168.58.2:32762
+Evidence: External URL for the service is exposed via NodePort.
+
+6) curl -sS http://192.168.58.2:32762 -m 5
+- Response: Hello from port_mismatch_wrong_interface test!
+Evidence: Service is reachable from outside the cluster and returns the expected application response.
+
+Conclusion:
+- The pod port-mismatch-wrong-interface-app is Running and Ready.
+- The service port-mismatch-app-service is exposing NodePort 32762 and is routing to the pod’s 8765 port.
+- The NodePort URL is reachable from outside the cluster, and the curl request succeeds with the expected application response.
+
+Status: <|VERIFIED|>

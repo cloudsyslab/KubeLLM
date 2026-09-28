@@ -1,0 +1,47 @@
+
+Running:
+ - run_shell_command(command=kubectl get pods -o wide --show-labels)
+
+
+Running:
+ - run_shell_command(command=kubectl describe pod kube-wrong-port)
+
+
+Running:
+ - run_shell_command(command=...)
+
+- Verification steps performed and results
+
+1) kubectl get pods
+- Output:
+  NAME            READY   STATUS    RESTARTS   AGE   IP            NODE       NOMINATED NODE   READINESS GATES
+  kube-wrong-port 1/1     Running   0          17s   10.244.0.67   minikube   <none>           <none>
+
+Interpretation: The pod kube-wrong-port exists and is Running with 1/1 containers ready.
+
+2) kubectl describe pod kube-wrong-port
+- Key details observed:
+  - Status: Running
+  - IP: 10.244.0.67
+  - Containers:
+    - kube-wrong-port
+      Port: 8765/TCP
+      Ready: True
+  - Events include:
+    - Scheduled to minikube
+    - Image pulled and container started successfully
+
+Interpretation: The pod is healthy, the container is listening on port 8765 inside the pod, and it is Ready.
+
+3) In-pod HTTP check (no Service required for this scenario)
+- Command:
+  kubectl exec kube-wrong-port -- python3 -c "import urllib.request; print(urllib.request.urlopen('http://localhost:8765/').getcode())"
+- Output:
+  200
+
+Interpretation: The application inside the pod responds with HTTP 200 to a request to localhost:8765, confirming in-pod accessibility.
+
+Conclusion
+- The pod kube-wrong-port is Running and Ready, the containerPort is 8765, and an in-pod HTTP check succeeded with 200. Since this scenario has no Service, external accessibility via curl from outside the cluster is not applicable here, but the in-pod accessibility verifies that the application is serving correctly on the expected port inside the pod.
+
+Result: <|VERIFIED|>

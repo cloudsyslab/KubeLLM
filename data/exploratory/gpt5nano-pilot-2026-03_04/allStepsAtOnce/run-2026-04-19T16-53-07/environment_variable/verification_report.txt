@@ -1,0 +1,61 @@
+
+Running:
+ - run_shell_command(command=kubectl get pods)
+
+
+Running:
+ - run_shell_command(command=kubectl describe pod kube-env-missing)
+
+
+Running:
+ - run_shell_command(command=kubectl exec kube-env-missing -- curl -s http://localhost:8765/env || true)
+
+
+Running:
+ - run_shell_command(command=kubectl exec kube-env-missing -- /bin/sh -c 'curl -s http://localhost:8765/env')
+
+
+Running:
+ - run_shell_command(command=kubectl exec kube-env-missing -- /bin/sh -c 'wget -qO- http://localhost:8765/env')
+
+
+Running:
+ - run_shell_command(command=...)
+
+
+Running:
+ - run_shell_command(command=...)
+
+- Verification steps and results
+
+1) Pod presence and readiness
+- Command: kubectl get pods
+- Output:
+  kube-env-missing   1/1     Running   0          21s
+- The pod exists and is Running with 1/1 containers ready.
+
+2) Pod details and environment verification
+- Command: kubectl describe pod kube-env-missing
+- Key excerpts:
+  - Name: kube-env-missing
+  - Environment:
+      APP_MODE:  production
+  - State: Running (Started: ...), ContainersReady: True
+  - Events show the container was scheduled, pulled, created, and started successfully
+- Conclusion: APP_MODE is defined in the pod’s environment as production, so the missing-env issue should not occur.
+
+3) Service reachability / external access
+- There is no Service defined for this Pod in the manifest, so external reachability via a Service is not applicable. The verification focuses on the pod state and internal accessibility.
+
+4) In-pod verification of the application behavior
+- Initial attempt: kubectl exec kube-env-missing -- curl -s http://localhost:8765/env
+  - Result: curl not found (curl is not installed in the container)
+- Alternative command used: executed a Python snippet inside the pod to perform an HTTP GET to /env
+  - Command: kubectl exec kube-env-missing -- /bin/sh -lc 'python3 - <<\PY\nimport urllib.request\nprint(urllib.request.urlopen("http://localhost:8765/env").read())\nPY'
+  - Output: b'Running in production'
+- Interpretation: The application started successfully, reads APP_MODE from the environment, and responds on /env with the expected message “Running in production”.
+
+Conclusion
+- The original problem (EnvironmentError: Missing required environment variable 'APP_MODE') is mitigated in this cluster state. APP_MODE is set to production in the pod, and the application confirms this on startup and via the /env endpoint.
+
+Final verdict: <|VERIFIED|>
