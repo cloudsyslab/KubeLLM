@@ -31,3 +31,10 @@ Historical text result dumps and paired Knowledge/Tools Agent logs are kept in
 [`legacy/`](legacy/README.md). They predate the structured export format and
 are not observations in the current analysis pipeline. Do not infer comparable
 rates, costs, or denominators from those files.
+
+Additional local pilots and incomplete experiments are preserved under
+[`exploratory/`](exploratory/README.md). They are intentionally gated with
+`run_config.archived.json` filenames, so the default recursive analyzer does
+not mix them into the seven canonical exports. Their summaries retain outcomes
+and measured metrics, while raw execution logs, generated commands, prompts,
+and private lab/path identifiers are omitted.
