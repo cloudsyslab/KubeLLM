@@ -13,6 +13,11 @@ Progressive disclosure: start here, then open linked docs for depth. **Agents:**
 
 ## Reference and history
 
+The [benchmark data catalog](../data/README.md) records the current structured
+exports, their integrity status, and the location of unstructured legacy logs.
+The [branch archive record](handbook/BRANCH_ARCHIVE.md) documents preserved
+branch history and prototype tags.
+
 | Doc | Audience | Purpose |
 |-----|----------|---------|
 | [history/2026-03-26-agentic-loop-development-update.md](history/2026-03-26-agentic-loop-development-update.md) | Maintainers | What shipped in the agentic-loop sprint (Phases 1–5), validation notes, follow-ons |

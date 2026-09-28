@@ -2,7 +2,7 @@
 
 KubeLLM is an LLM-based multi-agent framework that manages your kubernetes clusters all on its own. KubeLLM takes in ONE formatted prompt and it will automatically diagnose and apply fixes to Kubernetes configuration issues.
 
-**Full documentation index:** [docs/README.md](docs/README.md) (architecture, agent iteration loop, operations, history).
+**Full documentation index:** [docs/README.md](docs/README.md) (architecture, agent iteration loop, operations, history). **Benchmark export catalog:** [data/README.md](data/README.md).
 
 ---
 
@@ -136,7 +136,7 @@ shared-service overrides.
 
 1. Go to the repo:
 ```bash
-cd /path/to/KubeLLM-main
+cd /path/to/KubeLLM
 ```
 
 2. Start the RAG API server:
