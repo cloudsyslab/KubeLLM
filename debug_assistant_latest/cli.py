@@ -716,12 +716,14 @@ Examples:
             print(f"Unknown test case: {args.test_case}")
             print(f"Available: {', '.join(available)}")
             return 1
-        if repeat_active:
-            if args.dry_run:
+        if args.dry_run:
+            if repeat_active:
                 print(f"Dry run - would execute: {args.test_case} x {args.repeat} iterations")
                 print(f"\nRepeat: {args.repeat} iterations, stall limit: {args.stall_limit_s}s")
-                return 0
-
+            else:
+                print(f"Dry run - would execute: {args.test_case}")
+            return 0
+        if repeat_active:
             base_run_id = get_timestamp_id()
             # Always provide a base_output_dir so iter dirs are deterministic
             base_output_dir = args.output_dir if args.output_dir else REPO_ROOT / ".local" / "test_runs"
