@@ -518,7 +518,8 @@ class PreflightTests(unittest.TestCase):
             check = preflight._check_db_connectivity()
 
         self.assertFalse(check.passed)
-        self.assertIn("bad db", check.message)
+        self.assertIn("RuntimeError", check.message)
+        self.assertNotIn("bad db", check.message)
 
     def test_rag_api_failure_is_reported(self):
         with patch.object(preflight.requests, "get", side_effect=requests.RequestException("down")):
@@ -566,6 +567,7 @@ class PreflightTests(unittest.TestCase):
         self.assertEqual(
             [check["name"] for check in result["checks"]],
             [
+                "lab_lane",
                 "python_imports",
                 "pytest",
                 "db_connectivity",

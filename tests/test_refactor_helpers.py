@@ -532,7 +532,7 @@ class PromptHelperTests(unittest.TestCase):
 
         self.assertIn("Minikube Image Guidance", agent.prompt)
         self.assertIn("MINIKUBE_PROFILE", agent.prompt)
-        self.assertIn('minikube -p "$PROFILE" image build', agent.prompt)
+        self.assertIn("never infer a Minikube profile name from the kubectl current context", agent.prompt)
         self.assertIn("Do not recommend `docker push`", agent.prompt)
         self.assertNotIn("plama", agent.prompt)
 
