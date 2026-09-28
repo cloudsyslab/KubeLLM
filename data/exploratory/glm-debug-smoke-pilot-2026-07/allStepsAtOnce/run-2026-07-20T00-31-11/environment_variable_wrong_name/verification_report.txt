@@ -1,0 +1,73 @@
+
+Running:
+ - run_shell_command(command=kubectl get pods)
+
+
+Running:
+ - run_shell_command(command=kubectl describe pod kube-env-wrong-name)
+
+
+Running:
+ - run_shell_command(command=kubectl exec kube-env-wrong-name -- curl -s http://127.0.0.1:8765/)
+
+
+Running:
+ - run_shell_command(command=kubectl exec kube-env-wrong-name -- curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:8765/)
+
+
+Running:
+ - run_shell_command(command=kubectl exec kube-env-wrong-name -- python3 -V)
+
+
+Running:
+ - run_shell_command(command=...)
+
+
+Running:
+ - run_shell_command(command=...)
+
+Verification report:
+
+1) Pod existence and readiness
+- Command: kubectl get pods
+- Output: 
+  - kube-env-wrong-name   1/1     Running   0          15s
+- Status: Pod kube-env-wrong-name exists and is Running with 1/1 containers ready.
+
+2) Pod description and environment validation
+- Command: kubectl describe pod kube-env-wrong-name
+- Key findings:
+  - Status: Running
+  - IP: 10.244.0.224
+  - Container: kube-env-wrong-name
+  - Image: kube-env-wrong-name-app:latest
+  - Port: 8765/TCP
+  - Environment: APP_MODE = production
+  - Ready: True for container
+  - Events show normal lifecycle (Scheduled, Pulled, Created, Started) with no errors.
+
+Conclusion from this step: The APP_MODE environment variable is indeed defined in the container environment as APP_MODE production, and the container reports Ready.
+
+3) Service/check for external access
+- There is no Service manifest for this scenario, which is expected per the scenario guidance. Access must be verified directly from within the pod.
+
+4) In-pod reachability test (direct-access check)
+- Note: A direct curl inside the pod failed due to missing curl (exit code 126). This is expected if the minimal container image does not include curl.
+- Diagnostics:
+  - Command: kubectl exec kube-env-wrong-name -- python3 -V
+  - Output: Python 3.8.10
+  - Command: kubectl exec kube-env-wrong-name -- python3 -c "import urllib.request; print(urllib.request.urlopen('http://127.0.0.1:8765/').getcode())"
+  - Output: 200
+  - Command: kubectl exec kube-env-wrong-name -- python3 -c "import urllib.request; print(urllib.request.urlopen('http://127.0.0.1:8765/').read())"
+  - Output: b'mode=production'
+
+What this demonstrates:
+- The application is running and listening on port 8765 inside the pod.
+- The application successfully reads the APP_MODE environment variable and uses it to produce the response.
+- The HTTP response code is 200, and the body contains mode=production, confirming APP_MODE is correctly read by the application at runtime.
+
+Overall assessment:
+- The original problem, where KeyError: 'APP_MODE' occurred despite APP_MODE being present in the manifest, does not persist in the current cluster state. The container environment variable APP_MODE is correctly set and read by the application, and the in-pod HTTP response confirms the expected behavior.
+- All relevant pods are Running and Ready, and the direct access test via in-pod HTTP request succeeds.
+
+Verification result: <|VERIFIED|>
