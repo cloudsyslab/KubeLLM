@@ -1,0 +1,51 @@
+
+Running:
+ - run_shell_command(command=kubectl get pods --all-namespaces -o wide)
+
+
+Running:
+ - run_shell_command(command=kubectl describe pod resource-limits-oom-app)
+
+
+Running:
+ - run_shell_command(command=kubectl logs resource-limits-oom-app)
+
+- Pod and cluster state verification
+  - kubectl get pods --all-namespaces -o wide
+    - default/resource-limits-oom-app is 1/1 Running, Restarts 0, Age 17s
+    - Other system pods (kube-system) are Running
+
+  - kubectl describe pod resource-limits-oom-app
+    - Status: Running
+    - IP: 10.244.0.213
+    - Container: app
+      - Image: kube-resource-limits-oom-app
+      - Port: 8080/TCP
+      - State: Running (Started: Sun, 19 Apr 2026 19:58:53 +0000)
+      - Ready: True
+      - Restart Count: 0
+      - Limits: cpu 200m, memory 512Mi
+      - Requests: cpu 100m, memory 256Mi
+    - QoS: Burstable
+    - Node: minikube
+    - Events:
+      - Normal  Scheduled: Successfully assigned default/resource-limits-oom-app to minikube
+      - Normal  Pulled: Container image kube-resource-limits-oom-app already present
+      - Normal  Created: Created container app
+      - Normal  Started: Started container app
+
+  - kubectl logs resource-limits-oom-app
+    - 2026-04-19 19:58:55,276 - INFO - Starting server and allocating memory...
+    - 2026-04-19 19:58:55,392 - INFO - Memory allocated. List size: 80.00 MB
+    - 2026-04-19 19:58:55,687 - INFO - Server running on 0.0.0.0:8080
+
+- Observations
+  - The pod resource-limits-oom-app is Running with 0 restarts (no CrashLoopBackOff observed).
+  - The container started successfully and reported normal startup logs.
+  - The memory limit is 512Mi, and the application allocates roughly 80MB, well within the limit, which reduces the likelihood of OOMKilled under normal operation.
+  - There is no Service manifest in the provided YAML (the file defines a Pod, not a Deployment with a Service). Therefore, there is nothing to expose via a Service or Ingress for external access in this scenario.
+
+- Conclusion
+  - The original issue ( CrashLoopBackOff due to OOMKilled ) appears resolved in the current state: the pod is Running with readiness confirmed, no OOM events are visible, and the application is within the configured memory limit.
+
+<|VERIFIED|>

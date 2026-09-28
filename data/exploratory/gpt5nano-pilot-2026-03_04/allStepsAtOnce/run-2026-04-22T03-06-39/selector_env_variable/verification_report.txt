@@ -1,0 +1,61 @@
+
+Running:
+ - run_shell_command(command=kubectl get pods -A)
+
+
+Running:
+ - run_shell_command(command=kubectl get svc -A)
+
+
+Running:
+ - run_shell_command(command=kubectl describe pod selector-env-app -n default)
+
+
+Running:
+ - run_shell_command(command=kubectl get endpoints -n default)
+
+
+Running:
+ - run_shell_command(command=minikube -p minikube service selector-env-app-service --url)
+
+
+Running:
+ - run_shell_command(command=curl -sS -D - http://192.168.58.2:30167/ -o /dev/null | head -n 1)
+
+Verification summary
+
+- Pods status
+  - Pod: default/selector-env-app
+    - READY: 1/1
+    - STATUS: Running
+    - ContainersReady: True
+    - Note: The Pod was observed as Running with the APP_MESSAGE environment variable present (no crash observed).
+
+- Pod details (verification of startup and env)
+  - kubectl describe pod default/selector-env-app
+    - Container app: State: Running, Ready: True, Environment: APP_MESSAGE: Hello from selector_env_variable test!
+    - Events show container started successfully (Created, Started).
+
+- Service and endpoints
+  - kubectl get svc -A
+    - selector-env-app-service: NodePort, 80:30167/TCP, ClusterIP 10.111.5.109
+  - kubectl get endpoints -n default
+    - selector-env-app-service endpoints: 10.244.1.38:8080
+  - This confirms the service has a valid endpoint and is routable to the pod.
+
+- External access via Minikube
+  - minikube -p minikube service selector-env-app-service --url
+    - URL returned: http://192.168.58.2:30167
+
+- Connectivity test through NodePort
+  - curl -sS -D - http://192.168.58.2:30167/ -o /dev/null | head -n 1
+    - Response: HTTP/1.0 200 OK
+
+Conclusion
+
+- The original problem (pod crashes on startup due to missing APP_MESSAGE env var and service had no endpoints) appears fully resolved in the current cluster state:
+  - The selector-env-app pod is Running with the APP_MESSAGE environment variable set.
+  - The selector-env-app-service has valid endpoints and is reachable via NodePort from outside the cluster (Minikube environment).
+  - External access test via curl returns HTTP 200 OK.
+
+Result: <|VERIFIED|>

@@ -1,0 +1,82 @@
+
+Running:
+ - run_shell_command(command=kubectl get pods)
+
+
+Running:
+ - run_shell_command(command=kubectl describe pod kube-port-mismatch)
+
+
+Running:
+ - run_shell_command(command=kubectl get services -A)
+
+
+Running:
+ - run_shell_command(command=minikube -p minikube service app-service --url)
+
+
+Running:
+ - run_shell_command(command=kubectl logs kube-port-mismatch)
+
+
+Running:
+ - run_shell_command(command=kubectl describe pod kube-port-mismatch | sed -n '1,160p')
+
+- Verification steps and observed outputs
+
+1) kubectl get pods
+- Output:
+  - kube-port-mismatch 0/1 ErrImageNeverPull 0 105s
+
+2) kubectl describe pod kube-port-mismatch
+- Key status details:
+  - Namespace: default
+  - Node: minikube
+  - Status: Pending
+  - IP: 10.244.0.102
+  - Container: kube-port-mismatch
+    - Image: kube-port-mismatch-app:latest
+    - State: Waiting
+    - Reason: ErrImageNeverPull
+    - Ready: False
+  - Events:
+    - Normal Scheduled: Successfully assigned default/kube-port-mismatch to minikube
+    - Warning ErrImageNeverPull: Container image "kube-port-mismatch-app:latest" is not present with pull policy of Never (repeated multiple times)
+- Interpretation: The pod is not running due to image pull failure (ErrImageNeverPull). No container is ready.
+
+3) kubectl get services -A
+- Output:
+  - default app-service NodePort 10.107.184.223 <none> 8765:31775/TCP 4m21s
+  - default kubernetes ClusterIP 10.96.0.1 <none> 443/TCP 4h6m
+  - kube-system kube-dns ClusterIP 10.96.0.10 <none> 53/UDP,53/TCP,9153/TCP 4h6m
+- Observations:
+  - Service app-service exists as a NodePort service with port 8765 mapped to nodePort 31775.
+  - There is a ClusterIP assigned for the service.
+
+4) minikube -p minikube service app-service --url
+- Output:
+  - Error: X Exiting due to SVC_UNREACHABLE: service not available: no running pod for service app-service found
+  - Additional guidance text about minikube issues and logs (not essential for verification)
+- Interpretation: The service URL could not be retrieved because there is no running pod backing the service. Even though the Service object exists, without a running pod, the service cannot be reached from outside the cluster.
+
+5) kubectl logs kube-port-mismatch
+- Output:
+  - Error: Error from server (BadRequest): container "kube-port-mismatch" in pod "kube-port-mismatch" is waiting to start: ErrImageNeverPull
+- Interpretation: Logs are not available because the container cannot start due to the image pull issue.
+
+6) kubectl describe pod kube-port-mismatch (recheck)
+- Re-emphasizes:
+  - Status: Pending
+  - Reason: ErrImageNeverPull
+  - Events include repeated ErrImageNeverPull warnings
+- Interpretation: Confirms the root cause remains: the image kube-port-mismatch-app:latest is not present and the pull policy is Never, preventing the pod from starting.
+
+Conclusion
+- The original problem (HTTP 502 Bad Gateway) cannot be diagnosed as fixed because:
+  - The port-mismatch pod is not running due to image pull failure (ErrImageNeverPull).
+  - There is a NodePort service (app-service) configured, but with no running pod backing it, the service is not reachable from outside the cluster.
+  - Attempts to obtain the service URL via minikube fail because there is no running pod for the service.
+
+Status: Not fixed
+
+<|FAILED|>

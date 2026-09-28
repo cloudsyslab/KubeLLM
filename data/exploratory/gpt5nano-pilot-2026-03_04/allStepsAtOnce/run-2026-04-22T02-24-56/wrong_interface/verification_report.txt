@@ -1,0 +1,74 @@
+
+Running:
+ - run_shell_command(command=kubectl get pods -o wide)
+
+
+Running:
+ - run_shell_command(command=kubectl describe pod kube-wrong-interface)
+
+
+Running:
+ - run_shell_command(command=kubectl get service -A)
+
+
+Running:
+ - run_shell_command(command=minikube -p minikube service app-service --url)
+
+
+Running:
+ - run_shell_command(command=curl -sS -D - http://192.168.58.2:30177  | head -n 20)
+
+Verification steps and results
+
+1) Pod status
+- Command: kubectl get pods -o wide
+- Result:
+  NAME                   READY   STATUS    RESTARTS   AGE   IP            NODE       NOMINATED NODE   READINESS GATES
+  kube-wrong-interface   1/1     Running   0          18s   10.244.1.15   minikube   <none>           <none>
+
+2) Pod description and events
+- Command: kubectl describe pod kube-wrong-interface
+- Relevant output:
+  Status:           Running
+  IP:               10.244.1.15
+  Containers:
+    kube-wrong-interface:
+      Port:           8765/TCP
+      Ready:          True
+  Events:
+    Normal  Scheduled  22s   default-scheduler  Successfully assigned default/kube-wrong-interface to minikube
+    Normal  Pulled     22s   kubelet            Container image "kube-wrong-interface-app:latest" already present on machine
+    Normal  Created    22s   kubelet            Created container kube-wrong-interface
+    Normal  Started    22s   kubelet            Started container kube-wrong-interface
+
+3) Service status and port mapping
+- Command: kubectl get service -A
+- Result:
+  NAMESPACE     NAME          TYPE        CLUSTER-IP       EXTERNAL-IP   PORT(S)                  AGE
+  default       app-service   NodePort    10.101.135.166   <none>        8000:30177/TCP           112s
+  default       kubernetes    ClusterIP   10.96.0.1        <none>        443/TCP                  2d13h
+  kube-system   kube-dns      ClusterIP   10.96.0.10       <none>        53/UDP,53/TCP,9153/TCP   2d13h
+
+4) Access URL via Minikube
+- Command: minikube -p minikube service app-service --url
+- Result:
+  http://192.168.58.2:30177
+
+5) Reachability check with curl
+- Command: curl -sS -D - http://192.168.58.2:30177 | head -n 20
+- Result:
+  HTTP/1.0 200 OK
+  Server: SimpleHTTP/0.6 Python/3.8.10
+  Date: Wed, 22 Apr 2026 03:03:39 GMT
+  Content-type: text/html; charset=utf-8
+  Content-Length: 340
+  ...
+  <html>...</html>
+  Directory listing for /
+
+Conclusion
+- The application pod kube-wrong-interface is Running and Ready.
+- The Service app-service is exposed via NodePort 30177 and reachable from outside the cluster.
+- A curl request to the service URL (http://192.168.58.2:30177) returns HTTP 200 OK with the expected directory listing, confirming the service is accessible.
+
+Status: <|VERIFIED|>

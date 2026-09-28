@@ -1,0 +1,59 @@
+
+Running:
+ - run_shell_command(command=kubectl get pods -o wide)
+
+
+Running:
+ - run_shell_command(command=kubectl describe pod kube-port-mismatch)
+
+
+Running:
+ - run_shell_command(command=kubectl get service -o wide)
+
+
+Running:
+ - run_shell_command(command=minikube -p minikube service app-service --url)
+
+
+Running:
+ - run_shell_command(command=curl -sS -v http://192.168.58.2:32568)
+
+Verification results:
+
+- Pod status
+  - Command: kubectl get pods
+  - Output:
+    - kube-port-mismatch   1/1     Running   0          27s   10.244.0.253   minikube   <none>
+  - Command: kubectl describe pod kube-port-mismatch
+  - Key details:
+    - Status: Running
+    - Container kube-port-mismatch: Running, Ready: True
+    - Ports: containerPort 8765/TCP
+    - Events show normal scheduling, image pull, creation and start
+  - Status: The pod is Running and Ready (1/1), with container up and listening on port 8765 as expected per manifest.
+
+- Service status
+  - Command: kubectl get service -o wide
+  - Output:
+    - NAME        TYPE      CLUSTER-IP       EXTERNAL-IP   PORT(S)          AGE
+      app-service NodePort  10.106.211.209   <none>        8000:32568/TCP   105s
+  - Interpretation: Service app-service exists, type NodePort, port mapping 8000 -> 32568, selecting app=kube-port-mismatch. ClusterIP assigned.
+
+- Access method (Minikube service URL)
+  - Command: minikube -p minikube service app-service --url
+  - Output:
+    - http://192.168.58.2:32568
+  - This confirms the NodePort is exposed through Minikube and is reachable from outside the cluster via the provided URL.
+
+- External reachability test
+  - Command: curl -sS -v http://192.168.58.2:32568
+  - Output (highlights):
+    - HTML directory listing for /
+    - Directory contains server.py
+  - Interpretation: The HTTP server inside the pod is responding at the mapped port, and the service is effectively routing traffic to the pod's containerPort 8765 as configured.
+
+Conclusion:
+- The previously observed 502 Bad Gateway issue is not present in the current cluster state. The pod is Running and Ready, the service exists and is reachable via the Minikube URL, and an HTTP request to the exposed NodePort successfully returns content from the application.
+- Therefore, the issue described is resolved in the current cluster state.
+
+<|VERIFIED|>

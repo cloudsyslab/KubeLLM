@@ -1,0 +1,63 @@
+
+Running:
+ - run_shell_command(command=kubectl get pods --all-namespaces -o wide)
+
+
+Running:
+ - run_shell_command(command=kubectl describe pod kube-port-mismatch)
+
+
+Running:
+ - run_shell_command(command=kubectl describe service app-service -n default || true)
+
+
+Running:
+ - run_shell_command(command=minikube -p minikube service app-service --url)
+
+
+Running:
+ - run_shell_command(command=curl -s -i http://192.168.58.2:30267)
+
+Verification results
+
+1) Pods status
+- Command: kubectl get pods --all-namespaces -o wide
+- Observed:
+  - default, kube-port-mismatch, READY 1/1, STATUS Running, IP 10.244.0.125, Node minikube
+  - kube-system pods (coredns, etcd, etc.) also Running
+- Conclusion: The target pod kube-port-mismatch exists and is Running.
+
+2) Pod detail and readiness
+- Command: kubectl describe pod kube-port-mismatch
+- Observed:
+  - Container kube-port-mismatch running
+  - Port: 8765/TCP, Ready: True
+  - Events show the pod was scheduled, image pulled, container started successfully
+- Conclusion: The pod kube-port-mismatch is fully Ready and listening on port 8765 as expected.
+
+3) Service status and endpoints
+- Command: kubectl describe service app-service -n default
+- Observed:
+  - Name: app-service
+  - Type: NodePort
+  - Port: 8000/TCP
+  - TargetPort: 8765/TCP
+  - Endpoints: 10.244.0.125:8765
+  - NodePort: 30267
+- Conclusion: Service app-service exists, maps to port 8765 of the pod, and has a NodePort assigned (30267) with an endpoint to the running pod.
+
+4) Accessing the service via Minikube
+- Command: minikube -p minikube service app-service --url
+- Observed: http://192.168.58.2:30267
+
+5) End-to-end connectivity test
+- Command: curl -s -i http://192.168.58.2:30267
+- Observed:
+  - HTTP/1.1 200 OK
+  - Body: "hello" (from http-echo)
+
+Conclusion
+- The application is now reachable through the NodePort (30267) and responds successfully (200 OK) when accessed from outside the cluster using minikube service URL.
+- The original 502 Bad Gateway issue is considered fixed in the current cluster state.
+
+Verification result: <|VERIFIED|>

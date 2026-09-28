@@ -1,0 +1,57 @@
+
+Running:
+ - run_shell_command(command=kubectl get pods -o wide)
+
+
+Running:
+ - run_shell_command(command=kubectl describe pod kube-incorrect-selector)
+
+
+Running:
+ - run_shell_command(command=kubectl get service app-service -o wide)
+
+
+Running:
+ - run_shell_command(command=minikube -p minikube service app-service --url)
+
+
+Running:
+ - run_shell_command(command=curl -sS -I http://192.168.58.2:31010)
+
+Verification summary
+
+- Pod state
+  - kubectl get pods -o wide
+    - kube-incorrect-selector   1/1     Running   0          82s   10.244.1.20   minikube
+  - kubectl describe pod kube-incorrect-selector
+    - Status: Running
+    - Container kube-incorrect-selector: Running, Ready: True
+    - Events: No errors (Scheduled, Pulled, Created, Started)
+
+- Service state
+  - kubectl get service app-service -o wide
+    - NAME: app-service
+    - TYPE: NodePort
+    - CLUSTER-IP: 10.103.169.174
+    - PORT(S): 8000:31010/TCP
+    - SELECTOR: app=kube-incorrect-selector
+
+- Service accessibility from outside the cluster
+  - minikube -p minikube service app-service --url
+    - http://192.168.58.2:31010
+  - curl -I http://192.168.58.2:31010
+    - HTTP/1.0 200 OK
+    - Server: SimpleHTTP/0.6 Python/3.8.10
+    - Date: Wed, 22 Apr 2026 03:09:46 GMT
+    - Content-type: text/html; charset=utf-8
+    - Content-Length: 340
+
+Assessment
+
+- The pod kube-incorrect-selector is running and Ready.
+- The service app-service exists with a ClusterIP and a NodePort, and the selector matches the pod (app: kube-incorrect-selector).
+- The service is reachable from outside the cluster via Minikube's NodePort URL, and an HTTP 200 response is received on curl, indicating endpoints are effectively registered and reachable.
+
+Conclusion: The issue described as “no endpoints listed for the service” appears resolved in this cluster state.
+
+<|VERIFIED|>

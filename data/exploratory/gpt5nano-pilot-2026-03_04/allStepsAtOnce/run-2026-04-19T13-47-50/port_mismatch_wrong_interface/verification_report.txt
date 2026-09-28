@@ -1,0 +1,72 @@
+
+Running:
+ - run_shell_command(command=kubectl get pods -A)
+
+
+Running:
+ - run_shell_command(command=kubectl get pods -A)
+
+
+Running:
+ - run_shell_command(command=kubectl get service port-mismatch-app-service -n default -o wide)
+
+
+Running:
+ - run_shell_command(command=kubectl describe pod port-mismatch-wrong-interface-app -n default)
+
+
+Running:
+ - run_shell_command(command=minikube -p minikube service port-mismatch-app-service --url)
+
+
+Running:
+ - run_shell_command(command=curl -sS -v http://192.168.58.2:32363/)
+
+Here is the verified state of the cluster for the port_mismatch_wrong_interface scenario, with evidence from commands run in order.
+
+1) Pods check
+- Command: kubectl get pods -A
+- Result (excerpt):
+  - default port-mismatch-wrong-interface-app 1/1 Running 0 5m34s
+  - kube-system coredns-6f6b679f8f-qz6z5 Running 0
+  - ... (other system pods)
+
+2) Pod details and events
+- Command: kubectl describe pod port-mismatch-wrong-interface-app -n default
+- Key details:
+  - Status: Running
+  - IP: 10.244.0.13
+  - Containers: app (8765/TCP) - Ready: True
+  - Events (relevant excerpts):
+    - Normal Scheduled Successfully assigned default/port-mismatch-wrong-interface-app to minikube
+    - Warning Failed 3m34s (x12) kubelet: spec.containers{app}: Error: ErrImageNeverPull
+    - Warning ErrImageNeverPull 3m21s (x13): Container image "kube-port-mismatch-wrong-interface-app" is not present with pull policy of Never
+- Interpretation: The container image policy is Never, and the image may not be present locally, causing image pull issues in the logs. Despite these warnings, the pod is in a Running/Ready state.
+
+3) Service status
+- Command: kubectl get service port-mismatch-app-service -n default -o wide
+- Result:
+  - NAME: port-mismatch-app-service
+  - TYPE: NodePort
+  - CLUSTER-IP: 10.104.45.170
+  - PORT(S): 80:32363/TCP
+  - AGE: 6m30s
+  - SELECTOR: app=port-mismatch-wrong-interface-app
+- Interpretation: Service exists, has a ClusterIP, and is exposed via NodePort 32363 targeting port 8765 on the pod (as per targetPort 8765 in the manifest). The selector matches the pod.
+
+4) External access test (Minikube)
+- Command: minikube -p minikube service port-mismatch-app-service --url
+- Result: http://192.168.58.2:32363
+
+5) Functional test of the service
+- Command: curl -sS -v http://192.168.58.2:32363/
+- Result: Hello from port_mismatch_wrong_interface test!
+
+Assessment
+- The pod port-mismatch-wrong-interface-app is Running and Ready.
+- The service port-mismatch-app-service exists, is of type NodePort, and is reachable at the external URL http://192.168.58.2:32363.
+- A direct curl to the NodePort URL returns a valid response from the app, indicating proper routing to the pod.
+- The earlier issue (connection errors to the service) appears resolved in this cluster state, given successful access via NodePort from outside the cluster.
+
+Conclusion
+<|VERIFIED|>

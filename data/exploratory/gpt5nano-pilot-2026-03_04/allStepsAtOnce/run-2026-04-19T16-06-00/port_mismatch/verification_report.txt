@@ -1,0 +1,67 @@
+
+Running:
+ - run_shell_command(command=kubectl get pods -o wide)
+
+
+Running:
+ - run_shell_command(command=kubectl describe pod kube-port-mismatch)
+
+
+Running:
+ - run_shell_command(command=kubectl get services -o wide)
+
+
+Running:
+ - run_shell_command(command=minikube -p minikube service app-service --url)
+
+
+Running:
+ - run_shell_command(command=kubectl get endpoints app-service -o wide)
+
+Summary of verification
+- Context: Kubernetes cluster (Minikube) with a Deployment/Pod intended to expose port 8765 via a Service (NodePort 32759) on port 8000 externally.
+
+Evidence collected (commands and outputs)
+
+1) Check pods
+- Command: kubectl get pods -o wide
+- Output:
+  - kube-port-mismatch   1/1     Running   0          29s   10.244.0.42   minikube   <none>
+
+2) Inspect the pod for labels and status
+- Command: kubectl describe pod kube-port-mismatch
+- Key points from output:
+  - Status: Running
+  - IP: 10.244.0.42
+  - Containers: kube-port-mismatch (ports 8765/TCP)
+  - Labels: app=kube-port-mismatch   (Note: This is not matching the service selector which expects app.kubernetes.io/name=app)
+  - Events show the container started successfully
+
+3) Check services
+- Command: kubectl get services -o wide
+- Output:
+  - app-service   NodePort    10.103.131.28   <none>        8000:32759/TCP   2m49s   app.kubernetes.io/name=app
+  - kubernetes    ClusterIP   10.96.0.1      <none>        443/TCP          161m    <none>
+
+4) Check endpoints for the service
+- Command: kubectl get endpoints app-service -o wide
+- Output:
+  - app-service   <none>      2m55s
+
+5) Attempt to access the service externally via minikube
+- Command: minikube -p minikube service app-service --url
+- Output:
+  - Error: X Exiting due to SVC_UNREACHABLE: service not available: no running pod for service app-service found
+  - This indicates the service cannot be reached externally because there are no endpoints to route to.
+
+Diagnosis
+- The pod kube-port-mismatch is Running, but the service app-service has no endpoints available. This occurs because the pod’s labels do not match the service selector:
+  - Pod labels (from describe): app=kube-port-mismatch
+  - Service selector (from manifest and get services): app.kubernetes.io/name=app
+- Endpoints are listed as none, which confirms there is no Pod matching the Service selector, so the NodePort cannot route traffic to the app.
+
+Conclusion
+- The issue is not fixed. The root cause is a label mismatch between the Pod and the Service selector, resulting in no endpoints for the service. As a result, external access via the NodePort is not possible and the 502 Bad Gateway symptom would persist.
+
+Verdict
+<|FAILED|>

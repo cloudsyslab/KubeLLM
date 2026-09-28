@@ -1,0 +1,72 @@
+
+Running:
+ - run_shell_command(command=kubectl get pods)
+
+
+Running:
+ - run_shell_command(command=kubectl describe pod kube-incorrect-selector)
+
+
+Running:
+ - run_shell_command(command=kubectl get service app-service -o wide)
+
+
+Running:
+ - run_shell_command(command=minikube -p minikube service app-service --url)
+
+
+Running:
+ - run_shell_command(command=curl -sS http://192.168.94.2:32544)
+
+
+Running:
+ - run_shell_command(command=kubectl get pods -A)
+
+
+Running:
+ - run_shell_command(command=kubectl describe service app-service)
+
+- Verification steps and findings
+
+1) kubectl get pods
+- Pod found: kube-incorrect-selector
+- Status: Running
+- Ready: 1/1
+- Evidence: kube-incorrect-selector 1/1 Running
+
+2) kubectl describe pod kube-incorrect-selector
+- Pod: kube-incorrect-selector
+- IP: 10.244.0.102
+- Container: kube-incorrect-selector
+  - Image: nginx:latest
+  - Port: 8765/TCP
+  - State: Running, Ready: True
+- Events: Scheduled, Pulled, Created, Started (no errors)
+- Evidence: Pod is Running with container ready and port 8765 exposed
+
+3) kubectl get service app-service -o wide
+- Service: app-service
+- Type: NodePort
+- ClusterIP: 10.108.190.101
+- Port(s): 8000/TCP -> NodePort 32544
+- Selector: app=kube-incorrect-selector
+- Endpoints: 10.244.0.102:8765
+- Evidence: Endpoints exist for the service (10.244.0.102:8765)
+
+4) minikube -p minikube service app-service --url
+- URL returned: http://192.168.94.2:32544
+- Evidence: Service is exposed via NodePort at 192.168.94.2:32544
+
+5) curl test against external URL
+- curl -v http://192.168.94.2:32544
+- Result: Connection refused (curl could not connect to 192.168.94.2:32544)
+- Evidence: External reachability test failed
+
+- Summary of observations
+- The pod kube-incorrect-selector is Running and has its container Ready (port 8765 exposed).
+- The service app-service exists, selects the correct pod (app=kube-incorrect-selector), and has endpoints listed: 10.244.0.102:8765.
+- External reachability via the minikube service URL (http://192.168.94.2:32544) failed with a connection refused error when curling from the host.
+- Therefore, while the Endpoint is correctly populated inside the cluster, the service is not reachable from outside the cluster in this test.
+
+- Conclusion
+<|FAILED|>

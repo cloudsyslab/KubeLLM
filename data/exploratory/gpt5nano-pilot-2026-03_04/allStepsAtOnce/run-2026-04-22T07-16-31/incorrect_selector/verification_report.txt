@@ -1,0 +1,57 @@
+
+Running:
+ - run_shell_command(command=kubectl get pods)
+
+
+Running:
+ - run_shell_command(command=kubectl describe pod kube-incorrect-selector)
+
+
+Running:
+ - run_shell_command(command=kubectl get service app-service -o wide)
+
+
+Running:
+ - run_shell_command(command=minikube -p minikube service app-service --url)
+
+
+Running:
+ - run_shell_command(command=curl -s -I http://192.168.58.2:32558)
+
+
+Running:
+ - run_shell_command(command=kubectl get endpoints app-service -o wide)
+
+### Verification summary
+
+- Pods
+  - kubectl get pods
+    - kube-incorrect-selector is Running with 1/1 containers Ready.
+
+- Pod detail
+  - kubectl describe pod kube-incorrect-selector
+    - Pod status: Running
+    - Container kube-incorrect-selector: Running, Ready, image kube-incorrect-selector-app:latest
+
+- Service
+  - kubectl get service app-service -o wide
+    - Service type: NodePort
+    - ClusterIP: 10.100.244.204
+    - Endpoints selector: app=kube-incorrect-selector
+    - Endpoint: 10.244.1.205:8765 (matches the pod)
+
+- External access (Minikube)
+  - minikube -p minikube service app-service --url
+    - URL: http://192.168.58.2:32558
+
+  - curl -I http://192.168.58.2:32558
+    - HTTP/1.0 200 OK
+    - Server: SimpleHTTP/0.6 Python/3.8.10
+
+- Endpoints status
+  - kubectl get endpoints app-service -o wide
+    - Endpoints: 10.244.1.205:8765
+
+Conclusion: The original problem (service showing no endpoints) is resolved. The pod is Running, the service has endpoints, and the service is reachable from outside the cluster via the Minikube NodePort URL.
+
+<|VERIFIED|>

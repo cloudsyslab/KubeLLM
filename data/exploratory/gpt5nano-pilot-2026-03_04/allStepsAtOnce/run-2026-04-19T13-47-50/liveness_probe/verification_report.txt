@@ -1,0 +1,78 @@
+
+Running:
+ - run_shell_command(command=kubectl get pods -A)
+
+
+Running:
+ - run_shell_command(command=kubectl describe pod kube-liveness)
+
+
+Running:
+ - run_shell_command(command=kubectl exec kube-liveness -n default -- curl -sS http://localhost:8765/health || true)
+
+
+Running:
+ - run_shell_command(command=kubectl get svc -A)
+
+
+Running:
+ - run_shell_command(command=minikube -p minikube service kube-liveness --url)
+
+
+Running:
+ - run_shell_command(command=kubectl get deploy -A)
+
+Verification results
+
+1) Pods state (kubectl get pods -A)
+- default kube-liveness 1/1 Running 0 7m47s
+- kube-system coredns-6f6b679f8f-qz6z5 1/1 Running 0 20m
+- kube-system etcd-minikube 1/1 Running 0 20m
+- kube-system kube-apiserver-minikube 1/1 Running 0 20m
+- kube-system kube-controller-manager-minikube 1/1 Running 0 20m
+- kube-system kube-proxy-5f7z2 1/1 Running 0 20m
+- kube-system kube-scheduler-minikube 1/1 Running 0 20m
+- kube-system storage-provisioner 1/1 Running 1 (19m ago) 20m
+
+2) Pod description and events for kube-liveness (kubectl describe pod kube-liveness)
+- Status: Running
+- IP: 10.244.0.7
+- Container: kube-liveness
+  - Image: kube-liveness-app
+  - Port: 8765/TCP
+  - State: Running (Started: Sun, 19 Apr 2026 13:56:26 +0000)
+  - Ready: True
+- Liveness probe: http-get http://:8765/health with delay 30s, period 10s
+- Events:
+  - Normal Scheduled: Successfully assigned default/kube-liveness to minikube
+  - Warning Failed: ErrImageNeverPull
+  - Warning ErrImageNeverPull: Container image "kube-liveness-app" is not present with pull policy of Never
+
+Notes:
+- There is an image pull policy of Never and events indicate the image may not be present. Despite this, the container ended up in Running state at the time of describe, with the liveness probe configured.
+
+3) Services (kubectl get svc -A)
+- default/kubernetes ClusterIP 10.96.0.1
+- kube-system/kube-dns ClusterIP 10.96.0.10
+No service for kube-liveness exists in any namespace.
+
+4) External access attempt via Minikube (minikube service)
+- Command: minikube -p minikube service kube-liveness --url
+- Result: Service 'kube-liveness' not found in 'default' namespace. You may specify -n <namespace> or list services with minikube service list.
+
+5) Internal health check from within the pod (kubectl exec)
+- Command: kubectl exec kube-liveness -n default -- curl -sS http://localhost:8765/health
+- Result: OK
+
+6) Deployment overview (kubectl get deploy -A)
+- Only kube-system deployments shown (coredns, etcd, kube-apiserver, etc.). No deployment for kube-liveness is present; only a Pod exists as per the manifest.
+
+Assessment against verification rules
+
+- The kube-liveness pod is Running and Ready, with a healthy internal health endpoint (OK from inside the container).
+- However, there is no Service defined for the kube-liveness Pod, so there is no external entrypoint to reach the application from outside the cluster. The minikube service command fails due to the absence of a service, and there is no reachable external URL for curl from outside the cluster.
+- The original problem described inability to curl from outside the cluster. Since there is no Service (and thus no external route) to access the pod, the issue persists in terms of external accessibility.
+
+Conclusion
+
+<|FAILED|>

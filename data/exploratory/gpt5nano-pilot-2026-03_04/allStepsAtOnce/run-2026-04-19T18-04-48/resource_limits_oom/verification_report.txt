@@ -1,0 +1,60 @@
+
+Running:
+ - run_shell_command(command=kubectl get pods)
+
+
+Running:
+ - run_shell_command(command=kubectl describe pod resource-limits-oom-app)
+
+
+Running:
+ - run_shell_command(command=kubectl logs resource-limits-oom-app)
+
+Verifying resource-limits-oom scenario
+
+1) kubectl get pods
+- Pod status and readiness
+Output:
+resource-limits-oom-app   1/1     Running   0          17s
+
+Interpretation: The pod exists and has 1/1 containers Ready, with 0 restarts so far.
+
+2) kubectl describe pod resource-limits-oom-app
+Key details:
+- Status: Running
+- IP: 10.244.0.133
+- Containers:
+  - app
+    - Image: kube-resource-limits-oom-app
+    - Port: 8080/TCP
+    - State: Running (Started: Sun, 19 Apr 2026 18:27:21 +0000)
+    - Ready: True
+    - Restart Count: 0
+    - Limits: cpu 200m, memory 200Mi
+    - Requests: cpu 100m, memory 32Mi
+- Events:
+  - Normal  Scheduled: Successfully assigned default/resource-limits-oom-app to minikube
+  - Normal  Pulled: image already present
+  - Normal  Created: container app created
+  - Normal  Started: container app started
+
+Interpretation: Pod is Running with container ready. No OOM or crash events are present in the pod events. Memory limit is 200Mi and the container has started normally.
+
+3) kubectl logs resource-limits-oom-app
+Output:
+2026-04-19 18:27:23,580 - INFO - Starting server and allocating memory...
+2026-04-19 18:27:23,778 - INFO - Memory allocated. List size: 80.00 MB
+2026-04-19 18:27:24,074 - INFO - Server running on 0.0.0.0:8080
+
+Interpretation: Application started successfully and is serving as expected. Memory usage is around 80MB in the log, which is well below the 200Mi limit.
+
+Assessment
+- The pod resource-limits-oom-app is Running with 1/1 ready containers and has 0 restarts.
+- No OOMKilled or crash events were observed in describe pod events.
+- Logs show the application started and allocated memory around 80MB, within the configured memory limit of 200Mi.
+- There is no Service in the manifests (the provided YAML describes a Pod, not a Service), so no external service test is applicable.
+
+Conclusion
+Based on the current cluster state and diagnostic outputs, the issue appears to be resolved: the pod is healthy, not in CrashLoopBackOff, and memory usage is within limits.
+
+<|VERIFIED|>

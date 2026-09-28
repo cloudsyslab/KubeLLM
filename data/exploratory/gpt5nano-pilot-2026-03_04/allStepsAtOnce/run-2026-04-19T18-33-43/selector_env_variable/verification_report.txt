@@ -1,0 +1,80 @@
+
+Running:
+ - run_shell_command(command=kubectl get pods -A -o wide)
+
+
+Running:
+ - run_shell_command(command=kubectl get service -A -o wide)
+
+
+Running:
+ - run_shell_command(command=kubectl describe pod selector-env-app)
+
+
+Running:
+ - run_shell_command(command=kubectl logs selector-env-app -n default --tail=100)
+
+
+Running:
+ - run_shell_command(command=kubectl get pod selector-env-app -o jsonpath='{.status.containerStatuses[0].ready}')
+
+
+Running:
+ - run_shell_command(command=minikube -p minikube service selector-env-app-service --url)
+
+
+Running:
+ - run_shell_command(command=curl -s -I http://192.168.58.2:31289 -m 5)
+
+
+Running:
+ - run_shell_command(command=kubectl describe svc selector-env-app-service)
+
+
+Running:
+ - run_shell_command(command=curl -s http://192.168.58.2:31289/)
+
+### Verification results
+
+1) Pods state
+- Command: kubectl get pods -A -o wide
+- Result: 
+  - default/selector-env-app is Running and Ready (1/1)
+  - All other system pods are also Running
+- Conclusion: Target pod exists and is healthy.
+
+2) Pod details and events
+- Command: kubectl describe pod selector-env-app
+- Key points:
+  - Status: Running
+  - Container app: Ready: True, Restart Count: 0
+  - Environment: APP_MESSAGE is set to "Hello from selector_env_variable test!"
+  - Events show the container started successfully
+- Conclusion: Pod started without crashes; required env var is present in the container.
+
+3) Service state and endpoints
+- Command: kubectl get service -A -o wide
+- Result:
+  - default/selector-env-app-service is of Type NodePort
+  - NodePort: 31289 (mapping to port 80 on the service)
+  - Endpoints: 10.244.0.162:8080
+- Command: kubectl describe svc selector-env-app-service
+- Result: Selector matches app=selector-env-app; Endpoint listed as 10.244.0.162:8080
+- Conclusion: Service exists, has a ClusterIP, and endpoints are correctly registered.
+
+4) Accessing the service (Minikube)
+- Command: minikube -p minikube service selector-env-app-service --url
+- Result: http://192.168.58.2:31289
+
+5) End-to-end connectivity test
+- Command: curl -s http://192.168.58.2:31289/
+- Result: Hello from selector_env_variable test! (from env var)
+- Conclusion: Service is reachable from outside the cluster (via NodePort) and the application properly reads the APP_MESSAGE environment variable at startup.
+
+Overall assessment:
+- The previous crash scenario (KeyError on startup due to missing APP_MESSAGE) is resolved:
+  - The pod runs with APP_MESSAGE set
+  - The service has a valid endpoint
+  - The service is reachable from outside the cluster and returns the expected response
+
+Final verdict: <|VERIFIED|>

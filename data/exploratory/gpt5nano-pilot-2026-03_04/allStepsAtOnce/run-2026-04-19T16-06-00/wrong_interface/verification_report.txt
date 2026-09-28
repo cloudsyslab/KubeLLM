@@ -1,0 +1,53 @@
+
+Running:
+ - run_shell_command(command=kubectl get pods -o wide)
+
+
+Running:
+ - run_shell_command(command=kubectl describe pod kube-wrong-interface)
+
+
+Running:
+ - run_shell_command(command=kubectl get service -o wide)
+
+
+Running:
+ - run_shell_command(command=minikube -p minikube service app-service --url)
+
+
+Running:
+ - run_shell_command(command=curl -sS -v http://192.168.58.2:32241)
+
+Verification results
+
+- Pod status
+  - kubectl get pods -> kube-wrong-interface is Running with 1/1 containers ready.
+    - READY 1/1
+    - STATUS Running
+    - IP: 10.244.0.65
+- Pod details
+  - kubectl describe pod kube-wrong-interface
+    - Status: Running
+    - ContainersReady: True
+    - Events show standard lifecycle: Scheduled, Pulled, Created, Started
+- Service status
+  - kubectl get service -o wide
+    - app-service is a NodePort service
+    - ClusterIP: 10.103.21.16
+    - Ports: 8080:32241/TCP
+    - Selector: app=kube-wrong-interface
+- Service access (Minikube)
+  - minikube -p minikube service app-service --url
+    - URL: http://192.168.58.2:32241
+- Connectivity test
+  - curl -sS -v http://192.168.58.2:32241
+    - Response: HTML directory listing for /
+    - Indicates the server is reachable and responding through the NodePort
+
+Assessment
+- The pod kube-wrong-interface is Running and Ready.
+- The app-service is created with the expected NodePort (32241) and correctly selects the kube-wrong-interface pod.
+- The service is reachable from outside the cluster via Minikube’s NodePort URL, and curl returns a valid HTTP response (directory listing), not a timeout.
+
+Conclusion
+<|VERIFIED|>

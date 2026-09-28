@@ -1,0 +1,56 @@
+
+Running:
+ - run_shell_command(command=kubectl get pods -o wide)
+
+
+Running:
+ - run_shell_command(command=kubectl get svc -o wide)
+
+
+Running:
+ - run_shell_command(command=kubectl describe pod kube-incorrect-selector)
+
+
+Running:
+ - run_shell_command(command=kubectl describe service app-service)
+
+
+Running:
+ - run_shell_command(command=minikube -p minikube service app-service --url)
+
+
+Running:
+ - run_shell_command(command=curl -sS http://192.168.58.2:32561 -I | head -n 20)
+
+Verification results:
+
+- Pods
+  - kubectl get pods -o wide
+    - kube-incorrect-selector is Running with 1/1 ready (IP 10.244.1.69) on node minikube.
+  - kubectl describe pod kube-incorrect-selector
+    - Status: Running
+    - ContainersReady: True
+    - Events show container started successfully.
+
+- Service
+  - kubectl get svc -o wide
+    - app-service exists, NodePort type, selector app=kube-incorrect-selector
+    - Endpoints will be validated below
+  - kubectl describe service app-service
+    - Endpoints: 10.244.1.69:8765 (matching the pod’s container port 8765)
+    - TargetPort: 8765, NodePort: 32561 (port mapping 8000:32561)
+  
+- Accessibility from outside the cluster
+  - minikube -p minikube service app-service --url
+    - URL returned: http://192.168.58.2:32561
+  - curl -sS http://192.168.58.2:32561 -I
+    - HTTP/1.0 200 OK
+    - Server: SimpleHTTP/0.6 Python/3.8.10
+    - Content-Type: text/html; charset=utf-8
+    - Content-Length: 340
+
+Conclusion:
+- The pod is Running and Ready.
+- The app-service has endpoints pointing to the running pod, and the service is reachable from outside the cluster via the NodePort (32561) URL, with a successful HTTP 200 response.
+
+Status: <|VERIFIED|>

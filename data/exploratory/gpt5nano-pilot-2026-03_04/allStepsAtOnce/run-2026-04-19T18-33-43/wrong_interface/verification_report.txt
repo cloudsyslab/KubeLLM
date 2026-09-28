@@ -1,0 +1,75 @@
+
+Running:
+ - run_shell_command(command=kubectl get pods -A --no-headers)
+
+
+Running:
+ - run_shell_command(command=kubectl describe pod kube-wrong-interface -n default)
+
+
+Running:
+ - run_shell_command(command=kubectl get service -n default app-service -o yaml)
+
+
+Running:
+ - run_shell_command(command=minikube -p minikube service app-service --url)
+
+
+Running:
+ - run_shell_command(command=curl -v http://192.168.58.2:31047/)
+
+Verification Report
+
+1) Pods status
+- Command: kubectl get pods -A --no-headers
+- Output:
+  - default kube-wrong-interface 1/1 Running 0 29s
+  - kube-system coredns-6f6b679f8f-qz6z5 1/1 Running 0 5h24m
+  - kube-system etcd-minikube 1/1 Running 0 5h24m
+  - kube-system kube-apiserver-minikube 1/1 Running 0 5h24m
+  - kube-system kube-controller-manager-minikube 1/1 Running 0 5h24m
+  - kube-system kube-proxy-5f7z2 1/1 Running 0 5h24m
+  - kube-system kube-scheduler-minikube 1/1 Running 0 5h24m
+  - kube-system storage-provisioner 1/1 Running 1 (5h24m ago) 5h24m
+
+2) Pod description and events
+- Command: kubectl describe pod kube-wrong-interface -n default
+- Key findings:
+  - Status: Running
+  - IP: 10.244.0.166
+  - Containers: kube-wrong-interface
+    - Port: 8765/TCP
+  - Events:
+    - Normal  Scheduled: Successfully assigned default/kube-wrong-interface to minikube
+    - Normal  Pulled: image kube-wrong-interface-app:latest already present
+    - Normal  Created: container kube-wrong-interface created
+    - Normal  Started: container kube-wrong-interface started
+
+3) Service status and port mapping
+- Command: kubectl get service -n default app-service -o yaml
+- Key findings:
+  - name: app-service
+  - type: NodePort
+  - ports:
+    - port: 8000
+    - targetPort: 8765
+    - nodePort: 31047
+  - selector: app: kube-wrong-interface
+  - clusterIP: 10.108.51.114
+
+4) Access from outside the cluster
+- Command: minikube -p minikube service app-service --url
+- Output: http://192.168.58.2:31047
+
+5) Connection test
+- Command: curl -v http://192.168.58.2:31047/
+- Result: HTML directory listing is returned, indicating the HTTP server is reachable and serving content:
+  - Directory listing for /
+  - Link to server.py
+
+Conclusion
+- The pod kube-wrong-interface is Running and Ready.
+- The service app-service exists with a valid NodePort (31047) and is targeting port 8765 on the pod.
+- The service is accessible from outside the cluster via Minikube, and an actual curl request to the URL returns the application’s content (directory listing from server.py), confirming end-to-end accessibility.
+
+Status: <|VERIFIED|>

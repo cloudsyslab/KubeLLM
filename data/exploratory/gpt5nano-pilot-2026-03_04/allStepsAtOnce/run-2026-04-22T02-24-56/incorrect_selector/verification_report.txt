@@ -1,0 +1,75 @@
+
+Running:
+ - run_shell_command(command=kubectl get pods -o wide)
+
+
+Running:
+ - run_shell_command(command=kubectl describe pod kube-incorrect-selector)
+
+
+Running:
+ - run_shell_command(command=kubectl get service app-service -o wide)
+
+
+Running:
+ - run_shell_command(command=minikube -p minikube service app-service --url)
+
+
+Running:
+ - run_shell_command(command=curl -sS -I http://192.168.58.2:31094)
+
+
+Running:
+ - run_shell_command(command=kubectl get endpoints app-service -o wide)
+
+Verification results
+
+Exact resources from manifests used:
+- Pod: kube-incorrect-selector
+- Service: app-service
+- Label selector: app=kube-incorrect-selector
+- Pod container port: 8765
+- Service port: 8000 (targetPort 8765), NodePort 31094
+
+What I checked and observed:
+
+1) Pods
+- kubectl get pods -o wide
+  - kube-incorrect-selector is Running with 1/1 containers ready (IP 10.244.0.248 on node minikube).
+
+2) Pod details
+- kubectl describe pod kube-incorrect-selector
+  - Status: Running
+  - ContainersReady: True
+  - Port: 8765/TCP (container)
+  - No errors in Events; container started successfully.
+
+3) Service
+- kubectl get service app-service -o wide
+  - Type: NodePort
+  - ClusterIP: 10.103.221.222
+  - Ports: 8000:31094/TCP
+  - Selector: app=kube-incorrect-selector
+
+4) Endpoints
+- kubectl get endpoints app-service -o wide
+  - Endpoints: 10.244.0.248:8765
+  - This confirms the service has an endpoint pointing to the pod IP and container port.
+
+5) Service accessibility (external reachability in Minikube)
+- minikube -p minikube service app-service --url
+  - URL: http://192.168.58.2:31094
+
+6) Reachability check
+- curl -I http://192.168.58.2:31094
+  - HTTP/1.0 200 OK
+  - Server: SimpleHTTP/0.6 Python/3.8.10
+  - Content-Type: text/html; charset=utf-8
+
+Conclusion
+
+- The original problem (service shows no endpoints) is resolved in this cluster:
+  - The service app-service has an active endpoint (10.244.0.248:8765) corresponding to the running pod kube-incorrect-selector.
+  - The service is reachable externally via NodePort 31094 on the Minikube host (URL provided by minikube service) and curl returns HTTP 200.
+
+Final verification token: <|VERIFIED|>

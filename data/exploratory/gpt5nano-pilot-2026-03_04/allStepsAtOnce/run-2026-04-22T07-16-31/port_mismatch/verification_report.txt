@@ -1,0 +1,59 @@
+
+Running:
+ - run_shell_command(command=kubectl get pods)
+
+
+Running:
+ - run_shell_command(command=kubectl describe pod kube-port-mismatch)
+
+
+Running:
+ - run_shell_command(command=kubectl get service)
+
+
+Running:
+ - run_shell_command(command=kubectl describe service app-service)
+
+
+Running:
+ - run_shell_command(command=minikube -p minikube service app-service --url)
+
+
+Running:
+ - run_shell_command(command=curl -v http://192.168.58.2:31244)
+
+### Verification Summary
+The previous 502 Bad Gateway issue appears resolved. The pod is running, the service is configured correctly (NodePort mapping to the container port 8765), and the service is reachable from outside the cluster via Minikube.
+
+Evidence from verified commands:
+- Pod status
+  - kubectl get pods
+    - kube-port-mismatch 1/1 Running 0 59s
+
+- Pod description (sanity check of container readiness)
+  - kubectl describe pod kube-port-mismatch
+    - Status: Running
+    - ContainersReady: True
+    - Port: 8765/TCP
+
+- Service status and endpoints
+  - kubectl get service
+    - app-service NodePort 8000:31244/TCP
+    - Endpoints: 10.244.1.211:8765
+  - kubectl describe service app-service
+    - TargetPort: 8765/TCP
+    - NodePort: 31244/TCP
+    - Endpoints: 10.244.1.211:8765
+
+- External URL for the NodePort service
+  - minikube -p minikube service app-service --url
+    - http://192.168.58.2:31244
+
+- End-to-end HTTP test
+  - curl -v http://192.168.58.2:31244
+    - Response: Directory listing for /
+      - Shows server is responding on port 8765 inside the container and port 31244 on the NodePort
+
+Conclusion: The application is accessible via the NodePort (31244) and serves HTTP correctly, indicating the 502 Bad Gateway issue is resolved in this cluster state.
+
+<|VERIFIED|>

@@ -1,0 +1,59 @@
+
+Running:
+ - run_shell_command(command=kubectl get pods -A -o wide)
+
+
+Running:
+ - run_shell_command(command=kubectl describe pod resource-limits-oom-app)
+
+Verification results
+
+1) Pod existence and status
+- Command: kubectl get pods -A -o wide
+- Result snippet:
+  NAMESPACE     NAME                               READY   STATUS    RESTARTS        AGE     IP             NODE       NOMINATED NODE   READINESS GATES
+  default       resource-limits-oom-app            1/1     Running   0               21s     10.244.1.127   minikube   <none>           <none>
+  kube-system   coredns-6f6b679f8f-qz6z5           1/1     Running   0               2d15h   10.244.0.2     minikube   <none>           <none>
+  ...
+
+- The pod resource-limits-oom-app is Present, Running, with 1/1 containers Ready and 0 restarts.
+
+2) Pod details and events
+- Command: kubectl describe pod resource-limits-oom-app
+- Result snippet:
+  Status:           Running
+  IP:               10.244.1.127
+  Containers:
+    app:
+      Container ID:   docker://e9880708eb6f702fed076d2584f7ba767ee6b6a71d91aaadc873df9a3dfccf14
+      Image:          kube-resource-limits-oom-app
+      Image ID:       docker://sha256:e61db93ac2410ea5de059013ba4e3ec22f78d231a5b999fc3878b17689d41a67
+      Port:           8080/TCP
+      State:          Running
+        Started:      Wed, 22 Apr 2026 05:34:15 +0000
+      Ready:          True
+      Restart Count:  0
+      Limits:
+        cpu:     200m
+        memory:  512Mi
+      Requests:
+        cpu:        100m
+        memory:     128Mi
+  QoS Class:                   Burstable
+  Events:
+    Type    Reason     Age   From               Message
+    ----    ------     ----  ----               -------
+    Normal  Scheduled  28s   default-scheduler  Successfully assigned default/resource-limits-oom-app to minikube
+    Normal  Pulled     28s   kubelet            spec.containers{app}: Container image "kube-resource-limits-oom-app" already present on machine
+    Normal  Created    28s   kubelet            spec.containers{app}: Created container app
+    Normal  Started    28s   kubelet            spec.containers{app}: Started container app
+
+Observations:
+- The container runs with memory limit 512Mi and CPU limit 200m, which matches the manifest.
+- Restart Count is 0, and the container is in Running/Ready state.
+- There are no OOMKilled or related error events in the pod events.
+
+Conclusion
+- The previously reported CrashLoopBackOff due to OOMKilled does not appear in the current state. The pod is Running with appropriate resource limits and no OOM events observed.
+
+Result: <|VERIFIED|>

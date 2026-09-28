@@ -1,0 +1,68 @@
+
+Running:
+ - run_shell_command(command=kubectl get pods -o wide)
+
+
+Running:
+ - run_shell_command(command=kubectl describe pod kube-incorrect-selector)
+
+
+Running:
+ - run_shell_command(command=...)
+
+
+Running:
+ - run_shell_command(command=kubectl describe service app-service)
+
+
+Running:
+ - run_shell_command(command=minikube -p minikube service app-service --url)
+
+
+Running:
+ - run_shell_command(command=curl -v http://192.168.58.2:30938)
+
+Verification summary:
+- Pod status: kube-incorrect-selector is Running with 1/1 containers Ready.
+- Service status: app-service exists, of type NodePort, with ClusterIP 10.109.224.63 and port 8000 (targetPort 8765).
+- Endpoints: Endpoints for app-service include 10.244.0.35:8765, matching the pod IP and container port.
+- External reachability: Service is accessible from outside the cluster via minikube NodePort URL and responds to HTTP requests.
+
+Evidence and commands run
+
+1) Check pods
+- Command: kubectl get pods -o wide
+- Output:
+  kube-incorrect-selector   1/1     Running   0          88s   10.244.0.35   minikube
+
+2) Describe the pod to verify readiness and events
+- Command: kubectl describe pod kube-incorrect-selector
+- Key details:
+  - Status: Running
+  - Containers: kube-incorrect-selector - Ready: True
+  - Events show: Successfully assigned, Container image pulled, Container started
+
+3) Check service existence and basic details
+- Command: kubectl get service app-service -o jsonpath='{.spec.type} {.spec.clusterIP} {.spec.ports[0].port} {.spec.ports[0].targetPort}'
+- Output:
+  NodePort 10.109.224.63 8000 8765
+
+4) Describe the service to confirm endpoints
+- Command: kubectl describe service app-service
+- Endpoints: 10.244.0.35:8765
+
+5) Retrieve external URL for the service (Minikube)
+- Command: minikube -p minikube service app-service --url
+- Output: http://192.168.58.2:30938
+
+6) Validate service accessibility from outside the cluster
+- Command: curl -v http://192.168.58.2:30938
+- Output is an HTTP 1.0/HTML directory listing indicating the server is reachable and responding.
+
+Conclusion:
+All required checks pass:
+- The pod is Running and Ready.
+- The service has an endpoint associated with the pod (EndPoints lists 10.244.0.35:8765).
+- The service is reachable from outside the cluster via the Minikube NodePort URL, and the backend responds to HTTP requests.
+
+Result: <|VERIFIED|>

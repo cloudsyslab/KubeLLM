@@ -1,0 +1,72 @@
+
+Running:
+ - run_shell_command(command=kubectl get pods -A)
+
+
+Running:
+ - run_shell_command(command=kubectl describe pod selector-env-app -n default)
+
+
+Running:
+ - run_shell_command(command=kubectl get service -A)
+
+
+Running:
+ - run_shell_command(command=minikube -p minikube service selector-env-app-service --url)
+
+
+Running:
+ - run_shell_command(command=curl -sS -I http://192.168.58.2:32668)
+
+
+Running:
+ - run_shell_command(command=curl -sS http://192.168.58.2:32668/)
+
+### Verification steps and results
+
+1) kubectl get pods
+- Command: kubectl get pods -A
+- Result (highlights):
+  - default: selector-env-app 1/1 Running 0 15s
+  - kube-system: various system pods Running
+- Interpretation: The expected pod selector-env-app exists and is in Running state with 1/1 containers ready.
+
+2) kubectl describe pod selector-env-app -n default
+- Command: kubectl describe pod selector-env-app -n default
+- Key observations:
+  - Status: Running
+  - Container app:
+    - State: Running (Started: ... )
+    - Ready: True
+    - Environment: APP_MESSAGE: Hello from selector_env_variable test!
+  - Events show the container was Scheduled, Pulled, Created, and Started successfully.
+- Interpretation: The pod is healthy, the APP_MESSAGE environment variable is correctly set inside the container, and the container is ready and running without crashes.
+
+3) kubectl get service
+- Command: kubectl get service -A
+- Result (highlights):
+  - default: selector-env-app-service NodePort 10.106.86.151:80->32668/TCP
+- Interpretation: The service selector-env-app-service exists and is of type NodePort with a mapped external port 32668 on the node.
+
+4) minikube service URL
+- Command: minikube -p minikube service selector-env-app-service --url
+- Result:
+  - http://192.168.58.2:32668
+- Interpretation: The service is exposed via a NodePort and is reachable from outside the cluster through Minikube.
+
+5) Reachability check
+- Command: curl -sS http://192.168.58.2:32668/
+- Result:
+  - Hello from selector_env_variable test! (from env var)
+- Interpretation: The application starts correctly, reads APP_MESSAGE from the environment, and responds as expected when accessed via the service URL.
+
+Additional context (sanity check on server startup):
+- The server code in server.py reads APP_MESSAGE from the environment at startup (APP_MESSAGE = os.environ['APP_MESSAGE']), so having APP_MESSAGE defined in the Pod spec is required to avoid KeyError. The pod shows APP_MESSAGE in the environment, and the HTTP response confirms the value is being used.
+
+Conclusion
+- The original issue (pod crashes on startup due to KeyError and the service showing no endpoints) is not observed in the current state:
+  - The selector-env-app pod is Running with 1/1 containers Ready.
+  - The service selector-env-app-service exists and is accessible via a Minikube URL, and the app responds correctly to requests.
+- Therefore, the issue appears to be fixed in this cluster state.
+
+<|VERIFIED|>

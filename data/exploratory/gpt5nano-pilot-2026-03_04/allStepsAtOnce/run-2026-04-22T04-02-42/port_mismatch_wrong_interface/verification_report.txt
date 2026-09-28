@@ -1,0 +1,58 @@
+
+Running:
+ - run_shell_command(command=kubectl get pods -A)
+
+
+Running:
+ - run_shell_command(command=kubectl describe pod port-mismatch-wrong-interface-app -n default)
+
+
+Running:
+ - run_shell_command(command=kubectl get service port-mismatch-app-service -n default -o wide)
+
+
+Running:
+ - run_shell_command(command=minikube -p minikube service port-mismatch-app-service --url)
+
+
+Running:
+ - run_shell_command(command=curl -sS -i http://192.168.58.2:30108/)
+
+Verification steps and results:
+
+- kubectl get pods -A
+  - Default namespace shows:
+    - port-mismatch-wrong-interface-app  1/1  Running  0  2m23s
+  - Other system pods are Running as expected.
+
+- kubectl describe pod port-mismatch-wrong-interface-app -n default
+  - Status: Running
+  - IP: 10.244.1.75
+  - Container:
+    - Name: app
+    - Port: 8765/TCP
+    - Ready: True
+  - Events indicate container started successfully (Scheduled, Pulled, Created, Started).
+
+- kubectl get service port-mismatch-app-service -n default -o wide
+  - Type: NodePort
+  - Cluster IP: 10.103.112.61
+  - Ports: 80:30108/TCP
+  - Selector: app=port-mismatch-wrong-interface-app
+
+- minikube -p minikube service port-mismatch-app-service --url
+  - URL: http://192.168.58.2:30108
+
+- curl -sS -i http://192.168.58.2:30108/
+  - HTTP/1.0 200 OK
+  - Server: BaseHTTP/0.6 Python/3.9.25
+  - Date: Wed, 22 Apr 2026 04:23:17 GMT
+  - Content-type: text/html
+  - Response body: Hello from port_mismatch_wrong_interface test!
+
+Conclusion:
+- The pod port-mismatch-wrong-interface-app is Running and Ready.
+- The service port-mismatch-app-service exists, is of type NodePort, and is reachable via the NodePort 30108.
+- The NodePort URL tested through Minikube returns HTTP 200 with the expected application response.
+
+<|VERIFIED|>

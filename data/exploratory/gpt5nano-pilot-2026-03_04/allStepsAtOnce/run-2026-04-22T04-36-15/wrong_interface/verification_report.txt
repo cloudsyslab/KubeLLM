@@ -1,0 +1,46 @@
+
+Running:
+ - run_shell_command(command=kubectl get pods)
+
+
+Running:
+ - run_shell_command(command=kubectl describe pod kube-wrong-interface)
+
+
+Running:
+ - run_shell_command(command=kubectl get service app-service -o wide)
+
+
+Running:
+ - run_shell_command(command=minikube -p minikube service app-service --url)
+
+
+Running:
+ - run_shell_command(command=curl -v http://192.168.58.2:31268)
+
+- Verification steps and results
+
+  - kubectl get pods
+    - kube-wrong-interface   1/1     Running   0          30s
+
+  - kubectl describe pod kube-wrong-interface
+    - Status: Running
+    - IP: 10.244.1.107
+    - Container kube-wrong-interface: Ready: True
+
+  - kubectl get service app-service -o wide
+    - NAME          TYPE       CLUSTER-IP     EXTERNAL-IP   PORT(S)          AGE     SELECTOR
+      app-service   NodePort   10.97.106.88   <none>        8000:31268/TCP   2m33s   app=kube-wrong-interface
+
+  - minikube -p minikube service app-service --url
+    - http://192.168.58.2:31268
+
+  - curl -v http://192.168.58.2:31268
+    - Response shows a directory listing for / with a link to server.py, indicating the server is reachable and serving content on port 8765 inside the container, mapped to NodePort 31268 externally.
+
+- Conclusion
+  - The pod is Running and Ready.
+  - The service is present and exposed via NodePort.
+  - The application is reachable from outside the cluster via the NodePort URL, and curl succeeds (not a timeout).
+
+<|VERIFIED|>

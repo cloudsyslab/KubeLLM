@@ -1,0 +1,48 @@
+
+Running:
+ - run_shell_command(command=kubectl get pods --all-namespaces -o wide)
+
+
+Running:
+ - run_shell_command(command=kubectl describe pod resource-limits-oom-app)
+
+- Verification steps and observed state:
+
+1) kubectl get pods --all-namespaces -o wide
+- Observed pod:
+  - Namespace: default
+  - Pod name: resource-limits-oom-app
+  - Status: Running
+  - Ready: 1/1
+  - Restart(s): 0
+  - Age: 28s
+  - IP: 10.244.0.160
+  - Node: minikube
+
+2) kubectl describe pod resource-limits-oom-app
+- Status: Running
+- IP: 10.244.0.160
+- Containers:
+  - app
+    - Image: kube-resource-limits-oom-app
+    - Port: 8080/TCP
+    - State: Running (Started: Sun, 19 Apr 2026 18:56:08 +0000)
+    - Ready: True
+    - Restart Count: 0
+    - Limits: memory: 256Mi, cpu: 200m
+    - Requests: memory: 128Mi, cpu: 100m
+- Conditions: PodReadyToStartContainers True, Initialized True, Ready True, ContainersReady True, PodScheduled True
+- QoS: Burstable
+- Events:
+  - Normal Scheduled: Successfully assigned default/resource-limits-oom-app to minikube
+  - Normal Pulled: Container image "kube-resource-limits-oom-app" already present on machine
+  - Normal Created: Created container app
+  - Normal Started: Started container app
+
+3) Service check
+- There is no Service manifest in the provided files for this pod, and no Service is reported in the current output. No Service URL testing was applicable.
+
+Conclusion:
+- The pod resource-limits-oom-app is currently Running with 1/1 ready containers and Restart Count 0. There are no OOMKilled-related events in the pod description, and the container has memory limit 256Mi (as defined). The original OOMKilled/CrashLoopBackOff scenario does not appear present in the current state.
+
+<|VERIFIED|>

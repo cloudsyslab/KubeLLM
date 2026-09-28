@@ -1,0 +1,59 @@
+
+Running:
+ - run_shell_command(command=kubectl get pods -A -o wide)
+
+
+Running:
+ - run_shell_command(command=kubectl describe pod selector-env-app)
+
+
+Running:
+ - run_shell_command(command=kubectl get service -A -o wide)
+
+
+Running:
+ - run_shell_command(command=minikube -p minikube service selector-env-app-service --url)
+
+
+Running:
+ - run_shell_command(command=curl -sS -i http://192.168.58.2:31001/)
+
+Verification steps and results
+
+1) kubectl get pods -A
+- Result: 
+  - default   selector-env-app                   1/1     Running   0               16s
+  - kube-system   coredns-...                   Running
+  - (other system pods)
+- Observation: The target pod selector-env-app exists and is Running with 1/1 containers ready.
+
+2) kubectl describe pod selector-env-app
+- Key details:
+  - Name: selector-env-app
+  - Status: Running
+  - Containers: app (image: kube-selector-env-app) - State: Running, Ready: True
+  - Environment: APP_MESSAGE = Hello from selector_env_variable test!
+- Observation: The pod is healthy and the APP_MESSAGE environment variable is indeed set as expected (resolving the prior KeyError on startup).
+
+3) kubectl get service -A
+- Result:
+  - default/selector-env-app-service: NodePort 80:31001/TCP, selector app=selector-env-app
+- Observation: The service exists and has a Cluster/NodePort mapping and the selector matches the pod label app=selector-env-app.
+
+4) minikube -p minikube service selector-env-app-service --url
+- Result: http://192.168.58.2:31001
+
+5) curl -sS -i http://192.168.58.2:31001/
+- Result:
+  - HTTP/1.0 200 OK
+  - Server: BaseHTTP/0.6 Python/3.9.25
+  - Content-type: text/html
+  - 
+  - Hello from selector_env_variable test! (from env var)
+
+Conclusion
+- The pod is Running with the container Ready.
+- The service has endpoints and is reachable from outside the cluster (via minikube node port).
+- The application returns the expected message using the APP_MESSAGE environment variable, addressing the original KeyError on startup.
+
+<|VERIFIED|>

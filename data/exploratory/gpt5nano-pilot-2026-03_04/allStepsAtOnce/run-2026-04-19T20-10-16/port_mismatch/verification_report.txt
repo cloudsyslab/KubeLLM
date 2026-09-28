@@ -1,0 +1,65 @@
+
+Running:
+ - run_shell_command(command=kubectl get pods -A)
+
+
+Running:
+ - run_shell_command(command=kubectl describe pod kube-port-mismatch)
+
+
+Running:
+ - run_shell_command(command=kubectl get service app-service -o wide)
+
+
+Running:
+ - run_shell_command(command=minikube -p minikube service app-service --url)
+
+
+Running:
+ - run_shell_command(command=curl -sSf http://192.168.58.2:31834)
+
+Verification steps and results
+
+1) Pods status
+- Command: kubectl get pods -A
+- Result: 
+  - default/kube-port-mismatch is Running with 1/1 containers ready
+  - Other pods in default namespace (curl-*, test-curl*, etc.) show Completed or Pending as applicable, but kube-port-mismatch is the target pod for this issue.
+
+2) Pod details and events
+- Command: kubectl describe pod kube-port-mismatch
+- Key observations:
+  - Status: Running
+  - Container kube-port-mismatch: Port 8765/TCP, Ready: True
+  - Events: 
+    - Successfully assigned to minikube
+    - Image pulled/Container started without errors
+- Conclusion: Pod is healthy and ready
+
+3) Service verification
+- Command: kubectl get service app-service -o wide
+- Result:
+  - Name: app-service
+  - Type: NodePort
+  - ClusterIP: 10.100.225.172
+  - Ports: 8765:31834/TCP
+  - Selector: app.kubernetes.io/name=app
+- The service exists and has a ClusterIP assigned with NodePort 31834 mapped to port 8765.
+
+4) Accessing the service via Minikube
+- Command: minikube -p minikube service app-service --url
+- Result: http://192.168.58.2:31834
+
+5) External accessibility and app response
+- Command: curl -sSf http://192.168.58.2:31834
+- Result:
+  - HTML directory listing for /
+  - Includes a link to server.py (indicating the server is serving files as expected)
+
+Assessment
+- The application pod (kube-port-mismatch) is Running and Ready.
+- The Service app-service exists with a ClusterIP and a NodePort (31834) is exposed.
+- The service is reachable from outside the cluster via Minikube and responds (the curl output confirms the server is serving content).
+- There is no evidence of a 502 Bad Gateway at the tested endpoint; the endpoint responds with a directory listing from the embedded Python HTTP server listening on port 8765.
+
+Conclusion: <|VERIFIED|>

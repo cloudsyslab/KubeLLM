@@ -1,0 +1,162 @@
+
+Running:
+ - run_shell_command(command=kubectl get pods -o wide)
+
+
+Running:
+ - run_shell_command(command=kubectl describe pod selector-env-app)
+
+
+Running:
+ - run_shell_command(command=kubectl get service -A)
+
+
+Running:
+ - run_shell_command(command=minikube -p minikube service selector-env-app-service --url)
+
+
+Running:
+ - run_shell_command(command=curl -sS http://192.168.58.2:32164/ -v)
+
+
+Running:
+ - run_shell_command(command=kubectl get endpoints selector-env-app-service -o wide)
+
+
+Running:
+ - run_shell_command(command=...)
+
+
+Running:
+ - run_shell_command(command=kubectl get pods -A -o wide)
+
+
+Running:
+ - run_shell_command(command=...)
+
+
+Running:
+ - run_shell_command(command=...)
+
+
+Running:
+ - run_shell_command(command=kubectl logs curl-client)
+
+
+Running:
+ - run_shell_command(command=kubectl get pods -A -o wide | grep curl | cat)
+
+
+Running:
+ - run_shell_command(command=kubectl describe pod curl-client)
+
+
+Running:
+ - run_shell_command(command=kubectl logs selector-env-app)
+
+
+Running:
+ - run_shell_command(command=...)
+
+
+Running:
+ - run_shell_command(command=kubectl logs curl-internal)
+
+
+Running:
+ - run_shell_command(command=kubectl describe service selector-env-app-service)
+
+
+Running:
+ - run_shell_command(command=kubectl describe pod selector-env-app | sed -n '1,120p')
+
+
+Running:
+ - run_shell_command(command=kubectl exec curl-internal -- curl -sS http://10.244.0.53:8080/ -i || true)
+
+
+Running:
+ - run_shell_command(command=...)
+
+
+Running:
+ - run_shell_command(command=kubectl logs curl-internal2)
+
+
+Running:
+ - run_shell_command(command=...)
+
+
+Running:
+ - run_shell_command(command=kubectl logs curl-internal3)
+
+
+Running:
+ - run_shell_command(command=kubectl describe pod curl-internal3)
+
+
+Running:
+ - run_shell_command(command=...)
+
+
+Running:
+ - run_shell_command(command=kubectl logs curl-pod)
+
+- Verification steps and findings
+
+- Step 1: kubectl get pods
+  - Result:
+    - selector-env-app 1/1 Running
+  - Evidence:
+    - NAME: selector-env-app
+    - READY: 1/1
+    - STATUS: Running
+    - IP: 10.244.0.53
+    - NODE: minikube
+
+- Step 2: kubectl describe pod selector-env-app
+  - Status: Running
+  - Containers: app
+    - Image: nginx:alpine
+    - Port: 8080/TCP
+    - Environment:
+      - APP_MESSAGE: Hello from selector_env_variable test!
+  - Events show normal pod lifecycle (Scheduled, Pulled, Created, Started)
+  - Evidence indicates the pod started with APP_MESSAGE environment variable present, no crash indicated in events.
+
+- Step 3: kubectl get service -A
+  - Services found:
+    - selector-env-app-service (NodePort)
+      - ClusterIP: 10.103.116.58
+      - Ports: 80:32164/TCP
+      - Endpoints: 10.244.0.53:8080
+  - Evidence:
+    - Service exists with a NodePort (32164) and endpoint 10.244.0.53:8080, matching the pod.
+
+- Step 4: minikube -p minikube service selector-env-app-service --url
+  - URL returned: http://192.168.58.2:32164
+
+- Step 5: curl to the external URL
+  - curl -sS http://192.168.58.2:32164/ -v
+  - Result: Connection refused
+  - Interpretation: External reachability to the NodePort is not working in this environment, so the service is not reachable from outside the cluster despite endpoints existing inside the cluster.
+
+- Step 6: Optional internal connectivity check
+  - Endpoint verification: kubectl get endpoints selector-env-app-service -o wide
+    - Endpoints: 10.244.0.53:8080
+  - This confirms that the service has an internal backend (the pod) and endpoints are registered.
+
+- Step 7: Internal DNS/service test (cluster-internal curl)
+  - Attempted: curl to http://selector-env-app-service.default.svc.cluster.local:80/
+  - Result: Connection refused from within cluster (no successful response observed in logs)
+  - This reinforces that external reachability is the blocker in this environment; internal path to the service endpoint is not producing a successful response in these tests, but the endpoints are present.
+
+Conclusion
+- The original problem described (pod crashes on startup with KeyError and service shows no endpoints) can be considered resolved from a pod/endpoint perspective in this cluster:
+  - The pod selector-env-app is Running.
+  - The APP_MESSAGE environment variable is present in the pod, avoiding the KeyError startup crash.
+  - The service selector-env-app-service exists and has endpoints (10.244.0.53:8080) pointing to the running pod.
+- However, the service is not reachable from outside the cluster in this environment. The external NodePort URL (http://192.168.58.2:32164) results in a connection refused, while endpoints exist internally.
+- Given the strict verification rule requiring external reachability for a complete resolution, this is not a full pass.
+
+Verdict: <|FAILED|>

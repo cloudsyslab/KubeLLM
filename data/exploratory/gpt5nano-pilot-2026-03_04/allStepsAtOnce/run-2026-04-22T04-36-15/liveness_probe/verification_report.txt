@@ -1,0 +1,80 @@
+
+Running:
+ - run_shell_command(command=kubectl get pods -A)
+
+
+Running:
+ - run_shell_command(command=kubectl describe pod kube-liveness)
+
+
+Running:
+ - run_shell_command(command=kubectl get svc -n default)
+
+
+Running:
+ - run_shell_command(command=minikube -p minikube service kube-liveness-svc --url)
+
+
+Running:
+ - run_shell_command(command=kubectl describe svc kube-liveness-svc -n default)
+
+
+Running:
+ - run_shell_command(command=kubectl get pods -A -o wide)
+
+Verification Report
+
+Evidence collected from the cluster (names taken exactly from manifests):
+
+1) Pod existence and status
+- Command: kubectl get pods -A
+- Result (relevant excerpt):
+  - NAMESPACE: default, NAME: kube-liveness, READY: 1/1, STATUS: Running, AGE: 41s
+  - IP: 10.244.1.92, NODE: minikube
+
+- Command: kubectl describe pod kube-liveness
+- Key details:
+  - Status: Running
+  - Containers: kube-liveness
+  - Image: kube-liveness-app
+  - Port: 8765/TCP
+  - Liveness: http-get http://:8765/health
+  - Labels: <none>
+  - Events: Pod scheduled, container started
+- Observations:
+  - The pod is Running and Ready True.
+  - The pod has no labels assigned (Labels: <none>), which matters for service selectors.
+
+2) Service existence and endpoints
+- Command: kubectl get svc -n default
+- Result:
+  - kube-liveness-svc: Type NodePort, Cluster-IP 10.106.223.13, NodePort 31583/TCP, Age 62m
+  - kubernetes: ClusterIP 10.96.0.1
+- Command: kubectl describe svc kube-liveness-svc -n default
+- Key details:
+  - Selector: app=kube-liveness
+  - Endpoints: (empty)
+  - Ports: 8765/TCP
+- Observations:
+  - The service kube-liveness-svc exists and has a NodePort, but the Endpoints list is empty. This means no pod matches the service selector, so the service has no backend to route to.
+
+- Additional confirmation (pod-label alignment):
+  - The kube-liveness pod has no labels (Labels: <none>), while the service expects label app=kube-liveness. This mismatch explains the empty Endpoints.
+
+3) Attempt to access service from Minikube
+- Command: minikube -p minikube service kube-liveness-svc --url
+- Result:
+  - Error: X Exiting due to SVC_UNREACHABLE: service not available: no running pod for service kube-liveness-svc found
+  - This aligns with Endpoints being empty and no backend to route to.
+
+4) Wide pod listing (for completeness)
+- Command: kubectl get pods -A -o wide
+- Relevant excerpt:
+  - default namespace: kube-liveness (IP 10.244.1.92) on node minikube
+- Observations:
+  - Pod is present and Running, but there is no label to satisfy the service selector.
+
+Conclusion
+- The original problem (curl access to the application timing out) is not resolved. The kube-liveness pod is Running, but the service kube-liveness-svc has no endpoints because the pod lacks the required label app=kube-liveness. Consequently, the service cannot be reached from outside the cluster, and minikube service cannot provide a URL to connect to. A fix would involve labeling the pod (or creating a Deployment with the correct label) so that the service selector matches the pod, e.g., add label app=kube-liveness to the pod specification or re-create the deployment with that label.
+
+Final verdict: <|FAILED|>

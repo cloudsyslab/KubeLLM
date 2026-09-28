@@ -1,0 +1,50 @@
+
+Running:
+ - run_shell_command(command=kubectl get pods -o wide)
+
+
+Running:
+ - run_shell_command(command=kubectl describe pod selector-env-app)
+
+
+Running:
+ - run_shell_command(command=kubectl get service -A)
+
+
+Running:
+ - run_shell_command(command=minikube -p minikube service selector-env-app-service --url)
+
+
+Running:
+ - run_shell_command(command=curl -sS -i http://192.168.58.2:32187/)
+
+- kubectl get pods -o wide
+  - selector-env-app   1/1     Running   0          42s   10.244.0.135   minikube
+
+- kubectl describe pod selector-env-app
+  - Status: Running
+  - Containers:
+    - app: Ready: True
+  - Environment:
+    - APP_MESSAGE: Hello from selector_env_variable test!
+  - Events:
+    - Normal Scheduled, Pulled, Created, Started (no errors)
+
+- kubectl get service -A
+  - NAMESPACE  NAME                    TYPE        CLUSTER-IP      EXTERNAL-IP   PORT(S)                  AGE
+  - default    selector-env-app-service  NodePort    10.100.104.47   <none>        80:32187/TCP             81s
+
+- minikube -p minikube service selector-env-app-service --url
+  - http://192.168.58.2:32187
+
+- curl -i http://192.168.58.2:32187/
+  - HTTP/1.0 200 OK
+  - Content-type: text/html
+  - Hello from selector_env_variable test! (from env var)
+
+Assessment:
+- The pod selector-env-app is Running with 1/1 containers Ready.
+- The service selector-env-app-service exists with a ClusterIP and NodePort, and is reachable externally via Minikube.
+- The application correctly reads APP_MESSAGE from the environment and serves the expected message, indicating the prior KeyError startup issue is resolved in this cluster state.
+
+Conclusion: <|VERIFIED|>
