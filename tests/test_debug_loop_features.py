@@ -1,4 +1,6 @@
 import json
+import os
+import subprocess
 import sys
 import tempfile
 import types
@@ -533,6 +535,28 @@ class PreflightTests(unittest.TestCase):
 
         self.assertFalse(check.passed)
         self.assertIn("not installed", check.message)
+
+    def test_resolve_minikube_profile_falls_back_to_current_context(self):
+        completed = subprocess.CompletedProcess(
+            ["kubectl", "config", "current-context"],
+            0,
+            stdout="minikube\n",
+            stderr="",
+        )
+
+        with patch.dict(os.environ, {}, clear=True), patch.object(
+            preflight.subprocess, "run", return_value=completed
+        ) as run_mock:
+            profile = preflight._resolve_minikube_profile([], {}, None)
+
+        self.assertEqual(profile, "minikube")
+        run_mock.assert_called_once_with(
+            ["kubectl", "config", "current-context"],
+            capture_output=True,
+            text=True,
+            timeout=10,
+            check=False,
+        )
 
     def test_run_preflight_returns_structured_json(self):
         checks = {
