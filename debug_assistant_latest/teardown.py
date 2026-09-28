@@ -160,6 +160,9 @@ TRANSIENT_K8S_POD_NAME_PATTERNS = [
     ]
 ]
 
+KUBECTL_COMMAND_TIMEOUT_S = 20
+
+
 def list_teardown_tests():
     return list(TEARDOWN_CONFIG.keys())
 
@@ -189,6 +192,7 @@ def cleanup_transient_k8s_resources(namespace: str = "default") -> None:
         subprocess.run(
             ["kubectl", "delete", kind, name, "-n", namespace, "--ignore-not-found=true"],
             check=False,
+            timeout=KUBECTL_COMMAND_TIMEOUT_S,
         )
 
     result = subprocess.run(
@@ -196,6 +200,7 @@ def cleanup_transient_k8s_resources(namespace: str = "default") -> None:
         capture_output=True,
         text=True,
         check=False,
+        timeout=KUBECTL_COMMAND_TIMEOUT_S,
     )
     if not result or result.returncode != 0:
         return
@@ -208,14 +213,25 @@ def cleanup_transient_k8s_resources(namespace: str = "default") -> None:
             subprocess.run(
                 ["kubectl", "delete", "pod", pod_name, "-n", namespace, "--ignore-not-found=true"],
                 check=False,
+                timeout=KUBECTL_COMMAND_TIMEOUT_S,
             )
 
 
 def cleanup_test_pods(namespace: str = "default") -> None:
     """Remove all pods after a test has completed verification."""
     subprocess.run(
-        ["kubectl", "delete", "pods", "--all", "-n", namespace, "--ignore-not-found=true"],
+        [
+            "kubectl",
+            "delete",
+            "pods",
+            "--all",
+            "-n",
+            namespace,
+            "--ignore-not-found=true",
+            "--wait=false",
+        ],
         check=False,
+        timeout=KUBECTL_COMMAND_TIMEOUT_S,
     )
 
 
@@ -244,6 +260,7 @@ def teardown_environment(test_env_name: str) -> None:
         subprocess.run(
             ["kubectl", "delete", "-f", str(manifest_path), "--grace-period=5", "--ignore-not-found=true"],
             check=False,
+            timeout=KUBECTL_COMMAND_TIMEOUT_S,
         )
 
     # Some legacy teardown entries only clean cluster resources and have no
