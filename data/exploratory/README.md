@@ -29,6 +29,7 @@ transcript is included.
 | [`knowledge-agent-prototype-failures/`](knowledge-agent-prototype-failures/) | 2 early prototype summaries | Incomplete architecture-stage/error outcomes; not technique comparisons. |
 | [`blocked-glm47-attempts-2026-07/`](blocked-glm47-attempts-2026-07/) | 2 archived run configs and provenance records | No case summaries were emitted; see the failure classification below. |
 | [`parser-corrective-smokes-2026-09/`](parser-corrective-smokes-2026-09/) | 16 outcomes across 2 cases and 4 techniques | Eight dirty pre-fix runs and eight clean post-fix runs; outcome-only exports, not a comparative benchmark. |
+| [`local-lab-consolidation-smoke-2026-09/`](local-lab-consolidation-smoke-2026-09/) | 4 `wrong_port` outcomes, one per technique | One smoke each; all Ground Truth passed, while single-agent Verification disagreed once. |
 
 New outcome-only exports use `scripts/archive_exploratory_run.py`, which reuses
 the audit reader's allowlisted projections and requires explicitly reviewed
