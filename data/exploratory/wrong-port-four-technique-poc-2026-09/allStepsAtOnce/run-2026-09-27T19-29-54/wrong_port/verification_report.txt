@@ -1,0 +1,119 @@
+
+Running:
+ - run_shell_command(command=kubectl get pods -o wide --no-headers)
+
+
+Running:
+ - run_shell_command(command=kubectl describe pod kube-wrong-port-6d68dc7dbf-9l4k2)
+
+
+Running:
+ - run_shell_command(command=...)
+
+
+Running:
+ - run_shell_command(command=kubectl get deployment kube-wrong-port -o jsonpath='{.status.readyReplicas}/{.spec.replicas} ready')
+
+
+Running:
+ - run_shell_command(command=kubectl get svc -l app=kube-wrong-port -o wide --no-headers || true)
+
+
+Running:
+ - run_shell_command(command=kubectl get pods -l app=kube-wrong-port -o wide --no-headers)
+
+
+Running:
+ - run_shell_command(command=kubectl describe pod kube-wrong-port-6d68dc7dbf-9l4k2 | sed -n '1,200p')
+
+
+Running:
+ - run_shell_command(command=kubectl exec kube-wrong-port-6d68dc7dbf-9l4k2 -- curl -sS -I http://127.0.0.1:8765/ || true)
+
+
+Running:
+ - run_shell_command(command=...)
+
+
+Running:
+ - run_shell_command(command=...)
+
+
+Running:
+ - run_shell_command(command=...)
+
+
+Running:
+ - run_shell_command(command=...)
+
+
+Running:
+ - run_shell_command(command=...)
+
+
+Running:
+ - run_shell_command(command=...)
+
+
+Running:
+ - run_shell_command(command=kubectl exec kube-wrong-port-6d68dc7dbf-9l4k2 -- /bin/sh -lc 'ss -tlnp | grep 8765 || true')
+
+
+Running:
+ - run_shell_command(command=kubectl exec kube-wrong-port-6d68dc7dbf-9l4k2 -- /bin/sh -lc 'ss -tlnp 2>&1 | grep 8765 || true')
+
+
+Running:
+ - run_shell_command(command=kubectl get pod kube-wrong-port-645895c98f-nnr8k -o wide || true)
+
+
+Running:
+ - run_shell_command(command=kubectl get pods -n default -l app=kube-wrong-port -o wide --no-headers)
+
+
+Running:
+ - run_shell_command(command=kubectl rollout status deployment/kube-wrong-port -n default --watch=false)
+
+- Pod kube-wrong-port-6d68dc7dbf-9l4k2 is Running and Ready (1/1)
+- Pod kube-wrong-port-645895c98f-nnr8k is Terminating (not part of the active rollout)
+- All active pods for deployment kube-wrong-port are Running and Ready
+
+Verification steps and evidence:
+- Step 1: kubectl get pods
+  - Output shows:
+    - kube-wrong-port-6d68dc7dbf-9l4k2 is Running, 1/1 ready
+    - kube-wrong-port-645895c98f-nnr8k is Terminating
+  - Conclusion: Expected 1/1 ready for the active pod; 1 pod Running and Ready satisfies the readiness for the active deployment pod.
+
+- Step 2: kubectl describe pod kube-wrong-port-6d68dc7dbf-9l4k2
+  - Status: Running
+  - IP: 10.244.0.15
+  - Container kube-wrong-port: Port 8765/TCP, Ready: True
+  - Events show successful pull, creation, and start of container
+  - Conclusion: Pod is Running with container exposing port 8765.
+
+- Step 3: Service check
+  - No Service manifest exists for this scenario (as expected). Skipping Service checks per guidance.
+
+- Step 4: Access test (direct in-pod HTTP check)
+  - kubectl exec into the active pod and perform a direct request to 127.0.0.1:8765
+  - Command: kubectl exec kube-wrong-port-6d68dc7dbf-9l4k2 -- python3 -c "import urllib.request; print(urllib.request.urlopen('http://127.0.0.1:8765/').getcode())"
+  - Result: 200
+  - Additional checks:
+    - curl is not installed in the container; curl-missing indicates curl unavailable, so Python-based request was used for in-container verification.
+  - Conclusion: Local HTTP server on port 8765 is responding with HTTP 200 from the in-pod test.
+
+- Step 5: Ingress/External access
+  - Not applicable since there is no Ingress or external service in this scenario.
+
+Rollout verification:
+- kubectl rollout status deployment/kube-wrong-port
+  - Output: deployment "kube-wrong-port" successfully rolled out
+- Active pod status is Running and Ready (kube-wrong-port-6d68dc7dbf-9l4k2)
+
+Conclusion:
+- The active pod is Running and Ready and responds to in-pod HTTP requests on port 8765.
+- There is no Kubernetes Service in use for direct access, which aligns with the scenario requirements.
+- Given the observed readiness and successful in-pod HTTP response, the issue described (direct access to the workload running on port 8765 without a Service) appears resolved for the active pod.
+
+Result: <|VERIFIED|>

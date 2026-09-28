@@ -1,0 +1,81 @@
+
+Running:
+ - run_shell_command(command=kubectl get pods --all-namespaces -o wide)
+
+
+Running:
+ - run_shell_command(command=kubectl describe pod kube-wrong-port-6d68dc7dbf-k2k4l)
+
+
+Running:
+ - run_shell_command(command=kubectl exec kube-wrong-port-6d68dc7dbf-k2k4l -- curl -sS -I http://127.0.0.1:8765/)
+
+
+Running:
+ - run_shell_command(command=kubectl exec kube-wrong-port-6d68dc7dbf-k2k4l -- sh -lc 'curl -sS -I http://127.0.0.1:8765/')
+
+
+Running:
+ - run_shell_command(command=kubectl exec kube-wrong-port-6d68dc7dbf-k2k4l -- sh -lc 'wget -q --spider http://127.0.0.1:8765/')
+
+
+Running:
+ - run_shell_command(command=...)
+
+
+Running:
+ - run_shell_command(command=kubectl get svc -A -l app=kube-wrong-port)
+
+
+Running:
+ - run_shell_command(command=kubectl describe deploy kube-wrong-port)
+
+Verification results for the scenario “wrong_port” without a Kubernetes Service
+
+What I checked and observed
+
+1) Pods state
+- Command: kubectl get pods --all-namespaces -o wide
+- Observed:
+  - default/kube-wrong-port-6d68dc7dbf-k2k4l — 1/1 Ready, Status Running, IP 10.244.0.7, Node <SELECTED_PROFILE>
+  - default/kube-wrong-port-645895c98f-hgfws — 1/1, Status Terminating (old ReplicaSet pod during rollout)
+  - Note: The Deployment kube-wrong-port has 1 desired replica, with NewReplicaSet kube-wrong-port-6d68dc7dbf-k2k4l and an old ReplicaSet kube-wrong-port-645895c98f-hgfws being terminated.
+
+2) Pod description (current running pod)
+- Command: kubectl describe pod kube-wrong-port-6d68dc7dbf-k2k4l
+- Key details:
+  - Status: Running
+  - IP: 10.244.0.7
+  - Container: kube-wrong-port
+  - Container Port: 8765/TCP
+  - Ready: True
+  - Events show successful pull of image marioutsa/kube-wrong-port-app and container started
+
+3) Service existence
+- Command: kubectl get svc -A -l app=kube-wrong-port
+- Result: No Service resources found for label app=kube-wrong-port
+- Interpretation: There is no Kubernetes Service exposing this workload (as per the scenario description).
+
+4) Direct in-pod HTTP accessibility (no Service)
+- Attempt 1 (curl not installed in container):
+  - Command attempted: kubectl exec kube-wrong-port-6d68dc7dbf-k2k4l -- sh -lc 'curl -sS -I http://127.0.0.1:8765/'
+  - Result: curl not found inside the container
+- Attempt 2 (Python-based one-shot HTTP check inside the pod):
+  - Command executed: kubectl exec kube-wrong-port-6d68dc7dbf-k2k4l -- python3 -c "import urllib.request; print(urllib.request.urlopen('http://127.0.0.1:8765/').getcode())"
+  - Result: 200
+  - Interpretation: The application is serving on port 8765 inside the container and responds with HTTP 200 for a request to /.
+
+Assessment against verification rules
+
+- The primary verification is whether the pod is Running/Ready and the access path is reachable.
+- The relevant pod kube-wrong-port-6d68dc7dbf-k2k4l is Running and Ready (1/1).
+- The container is exposing port 8765/TCP as per the manifest, and an in-pod request to http://127.0.0.1:8765/ returns HTTP 200, indicating the service is reachable inside the pod.
+- There is no Kubernetes Service for this workload (as required by the scenario); the absence of a Service is not treated as a failure.
+- The old pod kube-wrong-port-645895c98f-hgfws is in Terminating, which is expected during a rollout.
+
+Conclusion
+
+- The direct-access path to the workload running in the pod kube-wrong-port-6d68dc7dbf-k2k4l is reachable on port 8765 inside the container (HTTP 200), and the pod is Running and Ready. There is no Service exposing this workload, which matches the scenario description of a workload deployed without a Kubernetes Service.
+- Therefore, the issue as described (direct access timing out due to lack of a Service) appears resolved in the current cluster state, given the in-pod accessibility evidence.
+
+<|VERIFIED|>
