@@ -46,9 +46,12 @@ commands, tool output, model/provider names, configuration, IDs, and absolute
 paths. For `knowledgeAgentOnly`, it exposes generation, contract, execution,
 verification, and Ground Truth statuses plus action counts. Use the runner's
 `--diagnose <RUN_DIR>` or `--diagnose-last` locally for structured failure
-classification. Compare model, provider, technique, case, and run configuration
-locally before attributing cost or pass-rate differences; do not copy raw output
-into shared reports.
+classification. For `stepByStep`, an allowlisted
+`knowledge_output_invalid` outcome means no executable Bash steps were
+produced; it is a benchmark failure even when verification disagrees. Compare
+model, provider, technique, case, and run configuration locally before
+attributing cost or pass-rate differences; do not copy raw output into shared
+reports.
 
 ## Repository and architecture audits
 
