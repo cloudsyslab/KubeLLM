@@ -10,9 +10,14 @@ python analyze.py --data data --output outputs --seed 20260719
 # Use fewer resamples for a quick exploratory run.
 python analyze.py --data data --output outputs --bootstrap-replicates 1000
 # Analyze one configuration without combining it with the others.
-python analyze.py --data ../data/gpt5mini-gpt5nano --output outputs/gpt5mini-gpt5nano
+python analyze.py --data ../data/gpt5mini-gpt6luna --output outputs/gpt5mini-gpt6luna
 python -m unittest discover -s tests -v
 ```
+
+See the [benchmark data catalog](../data/README.md) for the seven current
+configurations and their export-integrity status. The analysis intentionally
+includes incomplete observations and reports missing evidence; it does not
+filter them to improve a score.
 
 The fixed seed makes bootstrap results repeatable. `--bootstrap-replicates` defaults to 10,000; lower it for exploratory runs. `analyze.py` removes and recreates the nominated output directory, so point `--output` only at generated artifacts.
 

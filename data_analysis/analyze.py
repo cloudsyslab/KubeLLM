@@ -378,6 +378,15 @@ def html_table(frame: pd.DataFrame) -> str:
     return frame.to_html(index=False, escape=True, classes="data", float_format=lambda x: f"{x:.3f}")
 
 
+def comparison_description(configuration_count: int) -> str:
+    if configuration_count < 2:
+        return "Only one configuration is present, so no between-configuration comparison is reported."
+    return (
+        f"This dataset contains {configuration_count} configurations. Differences use shared "
+        "test-case clusters, so repeated cases are not treated as independent observations."
+    )
+
+
 def make_report(df: pd.DataFrame, validation: pd.DataFrame, tables: dict[str, pd.DataFrame], images: dict[str, str], output: Path,
                 bootstrap_replicates: int) -> None:
     primary = tables["overall_success"].iloc[0]
@@ -386,6 +395,8 @@ def make_report(df: pd.DataFrame, validation: pd.DataFrame, tables: dict[str, pd
         f"<h3>{html.escape(str(configuration))}</h3><img alt='Success rate by test case for {html.escape(str(configuration))}' src='data:image/png;base64,{images[success_figure_filename(str(configuration), index)]}'>"
         for index, configuration in enumerate(sorted(df.configuration.dropna().unique()), start=1)
     )
+    configuration_count = int(df.configuration.dropna().nunique())
+    comparisons_description = html.escape(comparison_description(configuration_count))
     css = "body{font:15px system-ui,sans-serif;max-width:1200px;margin:36px auto;padding:0 20px;color:#17212b}.card{padding:16px;background:#f4f7fa;border-radius:8px}.data{border-collapse:collapse;width:100%;margin:12px 0}.data td,.data th{padding:7px;border:1px solid #d4dce5;text-align:left}.data th{background:#12395b;color:white}.data tr:nth-child(even){background:#f5f8fa}img{max-width:100%;border:1px solid #ddd}code{background:#eef2f5;padding:2px 4px}"
     text = f"""<!doctype html><html><head><meta charset='utf-8'><title>KubeLLM experimental analysis</title><style>{css}</style></head><body>
 <h1>KubeLLM experimental analysis</h1><p>Generated {html.escape(datetime.now(timezone.utc).isoformat())}. This report embeds its figures and opens directly in a browser.</p>
@@ -395,7 +406,7 @@ def make_report(df: pd.DataFrame, validation: pd.DataFrame, tables: dict[str, pd
 <h2>Per-test-case rates</h2>{html_table(tables['success_by_case'])}{html_table(tables['verification_by_case'])}{success_figures}
 <h2>Resources</h2><p>Resource accounting is reported separately for each configuration; totals do not combine configurations.</p>{html_table(tables['resources'])}<img alt='Latency and tokens' src='data:image/png;base64,{images['latency_and_tokens.png']}'>
 <h2>Failure categories</h2>{html_table(failures)}
-<h2>Configuration/model comparisons</h2>{html_table(tables['comparisons'])}<p>When multiple configurations are available, the difference analysis resamples shared test-case clusters rather than treating repeated cases as independent. This dataset contains two configurations and supports a paired, test-case-clustered comparison between them.</p>
+<h2>Configuration/model comparisons</h2>{html_table(tables['comparisons'])}<p>{comparisons_description}</p>
 <h2>Validation</h2><p>{len(validation)} findings ({int((validation.severity == 'error').sum()) if len(validation) else 0} errors; {int((validation.severity == 'warning').sum()) if len(validation) else 0} warnings). Full findings are in <code>validation_results.csv</code>.</p>{html_table(validation) if len(validation) else '<p>No validation findings.</p>'}
 <h2>Limitations</h2><p>The observed cases are a fixed benchmark, not a random sample of production incidents. Clustered bootstrap describes variation across benchmark test cases, not uncertainty from a broader deployment population. Costs are the logged estimates and are not repriced. Verifier agreement measures agreement with ground truth, not causal contribution to repair success.</p>
 </body></html>"""

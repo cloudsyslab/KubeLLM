@@ -7,23 +7,50 @@ import pandas as pd
 
 import sys
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from analyze import clustered_ci, figures, metric_summary, parse, rate_table, wilson
+from analyze import comparison_description, clustered_ci, figures, metric_summary, parse, rate_table, wilson
 
 
-ROOT = Path(__file__).resolve().parents[1]
+ROOT = Path(__file__).resolve().parents[2]
 
 
 class ParserTests(unittest.TestCase):
     def test_parse_real_export(self):
         records, issues = parse(ROOT / "data")
-        self.assertEqual(len(records), 135)
-        self.assertEqual(records.success.sum(), 131)
-        self.assertFalse((issues.severity == "error").any())
+        self.assertEqual(len(records), 944)
+        self.assertEqual(int(records.success.sum()), 555)
+        self.assertEqual(int(records.ground_truth_passed.notna().sum()), 866)
+        self.assertEqual(int((issues.severity == "error").sum()), 398)
+        self.assertEqual(int((issues.severity == "warning").sum()), 1)
+
+    def test_comparison_description_uses_actual_configuration_count(self):
+        self.assertIn("7 configurations", comparison_description(7))
+        self.assertIn("Only one configuration", comparison_description(1))
 
     def test_detects_missing_artifact(self):
-        records, issues = parse(ROOT / "tests" / "fixtures" / "incomplete_data")
-        self.assertEqual(len(records), 1)
-        self.assertIn("missing_required_artifact", set(issues.code))
+        with tempfile.TemporaryDirectory() as temp_dir:
+            data = Path(temp_dir) / "data"
+            run = data / "configuration-a" / "iter-001"
+            case = run / "case-a"
+            case.mkdir(parents=True)
+            (run / "run_config.json").write_text(json.dumps({"test_names": ["case-a"]}))
+            (run / "aggregate.json").write_text(json.dumps({
+                "total_tests": 1,
+                "ground_truth_passed": 0,
+                "passed": 0,
+            }))
+            (case / "summary.json").write_text(json.dumps({
+                "test_name": "case-a",
+                "status": "FAIL",
+                "verified": False,
+                "ground_truth_passed": False,
+                "duration_s": 1,
+                "metrics": {},
+            }))
+
+            records, issues = parse(data)
+
+            self.assertEqual(len(records), 1)
+            self.assertIn("missing_required_artifact", set(issues.code))
 
     def test_parse_follows_directory_symlink(self):
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -57,7 +84,9 @@ class ParserTests(unittest.TestCase):
         lo, hi = clustered_ci(records, "ground_truth_passed", seed=7, reps=300)
         self.assertLessEqual(lo, hi)
         table = rate_table(records, ["test_case"], "verification_correct", "wilson", seed=7)
-        self.assertTrue((table.n_known == 5).all())
+        expected_known = records.groupby("test_case").verification_correct.count().sort_index()
+        actual_known = table.set_index("test_case").n_known.sort_index()
+        pd.testing.assert_series_equal(actual_known, expected_known, check_names=False)
 
     def test_metric_summary_keeps_configurations_separate(self):
         records = pd.DataFrame({
