@@ -28,3 +28,18 @@ The two POC working-tree snapshots preserve unfinished variants. They are
 archive refs, not modules loaded by the runner. The active
 `knowledgeAgentOnly` technique remains the explicitly selected fourth runner
 technique on `main`; its default and Ground Truth behavior are unchanged.
+
+## Audit disposition
+
+- The old `main` tree contains the earlier monolithic runner and historical
+  artifacts. `minh` is the current implementation source, so those old files
+  remain available through history without being restored to the runtime tree.
+- `mario_changes` contains earlier `agents.py`, `kube_test.py`, `main.py`, and
+  `utils.py` revisions. They do not replace the current runner architecture;
+  the branch is retained for historical review.
+- The current `minh` tree already includes the guarded lane implementation and
+  integrated deterministic knowledge-agent technique. The v1/v2 POC branches
+  and the separate lab-isolation working draft are preserved as snapshots;
+  their alternate code is not added to the active runner.
+- `dev/testing` is already represented in the preserved pre-consolidation
+  ancestry. Its branch name is retired while its commit history stays reachable.
