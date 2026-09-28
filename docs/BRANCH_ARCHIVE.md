@@ -23,6 +23,8 @@ provide stable, named pointers for inspection.
 | `poc/lab-isolation`, including its local edits | `archive/branches/2026-09-28-lab-isolation` |
 | `mario_changes` | `archive/branches/2026-09-28-mario-changes` |
 | Local `dev/testing` | `archive/branches/2026-09-28-dev-testing` |
+| `refactor/consolidate-kubellm-guidance` | `archive/branches/2026-09-28-guidance-refactor` |
+| `fix/step-by-step-parser-outcomes` | `archive/branches/2026-09-28-step-by-step-parser-outcomes` |
 
 The two POC working-tree snapshots preserve unfinished variants. They are
 archive refs, not modules loaded by the runner. The active
