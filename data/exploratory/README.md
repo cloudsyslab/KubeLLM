@@ -31,6 +31,7 @@ transcript is included.
 | [`parser-corrective-smokes-2026-09/`](parser-corrective-smokes-2026-09/) | 16 outcomes across 2 cases and 4 techniques | Eight dirty pre-fix runs and eight clean post-fix runs; outcome-only exports, not a comparative benchmark. |
 | [`local-lab-consolidation-smoke-2026-09/`](local-lab-consolidation-smoke-2026-09/) | 4 `wrong_port` outcomes, one per technique | One smoke each; all Ground Truth passed, while single-agent Verification disagreed once. |
 | [`knowledgeagentonly-vs-allsteps-interrupted-2026-09/`](knowledgeagentonly-vs-allsteps-interrupted-2026-09/) | 27 all-steps summaries and 26 Knowledge stage artifacts | First 270-attempt comparison stopped during Knowledge repetition 1; see the archive's integrity diagnosis. |
+| [`knowledgeagentonly-vs-allsteps-integrity-stop-2026-09/`](knowledgeagentonly-vs-allsteps-integrity-stop-2026-09/) | 141 results: five complete suites and six cases from a partial suite | Stopped on a cleanup timeout; only repetitions 1–2 form complete pairs, so results are interim/exploratory. |
 
 New outcome-only exports use `scripts/archive_exploratory_run.py`, which reuses
 the audit reader's allowlisted projections and requires explicitly reviewed
