@@ -1323,6 +1323,24 @@ class ExecutionResultExtractionTests(unittest.TestCase):
         summary = result_to_summary(result, "allStepsAtOnce", {})
         self.assertIsNone(summary.verified)
 
+    def test_result_to_summary_preserves_teardown_recoveries(self):
+        result = TestResult(
+            test_name="t1",
+            success=False,
+            verified=False,
+            debug_self_report=False,
+            duration_s=1.0,
+            error=None,
+            metrics={},
+            log_dir=Path("/tmp/t1"),
+            started_at="2026-01-01T00:00:00",
+            finished_at="2026-01-01T00:00:01",
+            teardown_recoveries=["case_manifest_delete_timeout_confirmed"],
+        )
+        summary = result_to_summary(result, "knowledgeAgentOnly", {})
+
+        self.assertEqual(summary.to_dict()["teardown_recoveries"], ["case_manifest_delete_timeout_confirmed"])
+
 
 class ReportTests(unittest.TestCase):
     def test_generate_aggregate_report_tracks_ground_truth_and_costs(self):
@@ -1630,6 +1648,85 @@ class TeardownTests(unittest.TestCase):
 
             self.assertEqual((case_dir / "wrong_port.yaml").read_text(), "committed-baseline\n")
 
+    def test_teardown_recovers_manifest_timeout_after_read_only_checks_confirm_clean(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            case_dir = root / "wrong_port"
+            case_dir.mkdir()
+            (case_dir / "wrong_port.yaml").write_text("agent-edited\n")
+            baseline_root = root / "baselines"
+            baseline_dir = baseline_root / "wrong_port"
+            baseline_dir.mkdir(parents=True)
+            (baseline_dir / "wrong_port.yaml").write_text("committed-baseline\n")
+            commands = []
+
+            def fake_run(command, **kwargs):
+                commands.append(command)
+                if command[:3] == ["kubectl", "delete", "-f"]:
+                    raise subprocess.TimeoutExpired(command, kwargs.get("timeout"))
+                if command[:3] == ["kubectl", "get", "-f"]:
+                    return subprocess.CompletedProcess(command, 0, stdout="", stderr="")
+                if command[:3] == ["kubectl", "get", "pods,services"]:
+                    return subprocess.CompletedProcess(command, 0, stdout="", stderr="")
+                if command[:4] == ["minikube", "-p", "minh-lane", "image"]:
+                    return subprocess.CompletedProcess(command, 0, stdout="[]", stderr="")
+                return subprocess.CompletedProcess(command, 0, stdout="", stderr="")
+
+            with patch.object(teardown, "TROUBLESHOOTING_DIR", root), patch.object(
+                teardown, "FIXTURE_BASELINES_DIR", baseline_root
+            ), patch.object(teardown, "is_lane_active", return_value=True), patch.object(
+                teardown, "active_lane_config", return_value={"minikube_profile": "minh-lane"}
+            ), patch.object(teardown, "assert_lane_target"), patch(
+                "debug_assistant_latest.teardown.subprocess.run", side_effect=fake_run
+            ), patch.dict(
+                teardown.TEARDOWN_CONFIG,
+                {"wrong_port": {"docker_images": ["kube-wrong-port-app"], "k8s_manifests": ["{name}.yaml"]}},
+                clear=False,
+            ):
+                recoveries = teardown.teardown_environment("wrong_port")
+
+            self.assertEqual(recoveries, ["case_manifest_delete_timeout_confirmed"])
+            self.assertEqual((case_dir / "wrong_port.yaml").read_text(), "committed-baseline\n")
+            self.assertTrue(any(command[:3] == ["kubectl", "get", "-f"] for command in commands))
+            self.assertTrue(any(command[:3] == ["kubectl", "get", "pods,services"] for command in commands))
+            self.assertTrue(any(command[:4] == ["minikube", "-p", "minh-lane", "image"] for command in commands))
+            self.assertEqual(sum(command[:3] == ["kubectl", "delete", "-f"] for command in commands), 1)
+
+    def test_teardown_keeps_failure_when_timed_out_manifest_remains(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            case_dir = root / "wrong_port"
+            case_dir.mkdir()
+            baseline_root = root / "baselines"
+            baseline_dir = baseline_root / "wrong_port"
+            baseline_dir.mkdir(parents=True)
+            (baseline_dir / "wrong_port.yaml").write_text("baseline\n")
+
+            def fake_run(command, **kwargs):
+                if command[:3] == ["kubectl", "delete", "-f"]:
+                    raise subprocess.TimeoutExpired(command, kwargs.get("timeout"))
+                if command[:3] == ["kubectl", "get", "-f"]:
+                    return subprocess.CompletedProcess(command, 0, stdout="pod/wrong-port-app\n", stderr="")
+                if command[:4] == ["minikube", "-p", "minh-lane", "image"]:
+                    return subprocess.CompletedProcess(command, 0, stdout="[]", stderr="")
+                return subprocess.CompletedProcess(command, 0, stdout="", stderr="")
+
+            with patch.object(teardown, "TROUBLESHOOTING_DIR", root), patch.object(
+                teardown, "FIXTURE_BASELINES_DIR", baseline_root
+            ), patch.object(teardown, "is_lane_active", return_value=True), patch.object(
+                teardown, "active_lane_config", return_value={"minikube_profile": "minh-lane"}
+            ), patch.object(teardown, "assert_lane_target"), patch.object(
+                teardown, "TEARDOWN_RECOVERY_WINDOW_S", 0.01
+            ), patch(
+                "debug_assistant_latest.teardown.subprocess.run", side_effect=fake_run
+            ), patch.dict(
+                teardown.TEARDOWN_CONFIG,
+                {"wrong_port": {"docker_images": [], "k8s_manifests": ["{name}.yaml"]}},
+                clear=False,
+            ):
+                with self.assertRaisesRegex(teardown.TeardownFailure, "timed out"):
+                    teardown.teardown_environment("wrong_port")
+
     def test_teardown_treats_absent_minikube_image_as_idempotent(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             commands = []
@@ -1830,6 +1927,52 @@ class RunnerTests(unittest.TestCase):
             self.assertEqual(control["status"], "stopped_cleanup_failure")
             self.assertEqual(control["completed_test_names"], ["case_one"])
             self.assertEqual(control["unstarted_test_names"], ["case_two"])
+
+    def test_serial_run_continues_and_records_verified_teardown_recovery(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            output = Path(tmpdir)
+            results = [
+                TestResult(
+                    test_name=name,
+                    success=False,
+                    verified=False,
+                    debug_self_report=False,
+                    duration_s=1,
+                    error=None,
+                    metrics={},
+                    log_dir=output / name,
+                    started_at="start",
+                    finished_at="finish",
+                    teardown_attempted=True,
+                    teardown_recoveries=(
+                        ["case_manifest_delete_timeout_confirmed"] if name == "case_one" else []
+                    ),
+                )
+                for name in ("case_one", "case_two")
+            ]
+            with patch(
+                "debug_assistant_latest.parallel._has_ground_truth_config", return_value=False
+            ), patch(
+                "debug_assistant_latest.parallel.run_single_test", side_effect=results
+            ) as run_mock:
+                returned = run_tests_parallel(
+                    ["case_one", "case_two"],
+                    "allStepsAtOnce",
+                    {},
+                    output,
+                    max_workers=1,
+                    teardown_after_run=True,
+                )
+
+            self.assertEqual(len(returned), 2)
+            self.assertEqual(run_mock.call_count, 2)
+            control = json.loads((output / "run_control.json").read_text())
+            self.assertEqual(control["status"], "completed")
+            self.assertEqual(control["completed_test_names"], ["case_one", "case_two"])
+            first_summary = json.loads((output / "case_one" / "summary.json").read_text())
+            self.assertEqual(
+                first_summary["teardown_recoveries"], ["case_manifest_delete_timeout_confirmed"]
+            )
 
     def test_serial_run_continues_after_ordinary_benchmark_failure(self):
         with tempfile.TemporaryDirectory() as tmpdir:

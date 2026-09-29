@@ -52,6 +52,11 @@ SUMMARY_FIELDS = {
     "debug_self_report",
     "interrupted",
 }
+TEARDOWN_RECOVERY_VALUES = {
+    "transient_resource_delete_timeout_confirmed",
+    "case_image_delete_timeout_confirmed",
+    "case_manifest_delete_timeout_confirmed",
+}
 AGGREGATE_FIELDS = {
     "generated_at",
     "total_tests",
@@ -139,6 +144,11 @@ def _summary(value: Any) -> dict[str, Any]:
     teardown_status = value.get("teardown_status")
     if isinstance(teardown_status, str) and teardown_status in {"not_run", "passed", "failed"}:
         output["teardown_status"] = teardown_status
+    recoveries = value.get("teardown_recoveries")
+    if isinstance(recoveries, list) and all(
+        isinstance(item, str) and item in TEARDOWN_RECOVERY_VALUES for item in recoveries
+    ):
+        output["teardown_recoveries"] = recoveries
     for field in SUMMARY_FIELDS:
         if field in {"started_at", "finished_at"}:
             safe = _safe_timestamp(value.get(field))

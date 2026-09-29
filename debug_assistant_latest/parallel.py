@@ -367,10 +367,11 @@ def run_tests_parallel(
                     if teardown_after_run:
                         teardown_failed = False
                         teardown_error = None
+                        teardown_recoveries = []
                         try:
                             from teardown import teardown_environment
 
-                            teardown_environment(test_name)
+                            teardown_recoveries = teardown_environment(test_name)
                         except Exception as td_err:
                             teardown_failed = True
                             teardown_error = str(td_err)
@@ -379,6 +380,7 @@ def run_tests_parallel(
                         results[-1].teardown_attempted = True
                         results[-1].teardown_failed = teardown_failed
                         results[-1].teardown_error = teardown_error
+                        results[-1].teardown_recoveries = teardown_recoveries
                         if teardown_failed:
                             halt_reason = teardown_error or f"teardown failed for {test_name}"
 
