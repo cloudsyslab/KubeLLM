@@ -165,6 +165,36 @@ TRANSIENT_K8S_POD_NAME_PATTERNS = [
 KUBECTL_COMMAND_TIMEOUT_S = 20
 
 
+class TeardownFailure(RuntimeError):
+    """One or more case-scoped cleanup steps failed."""
+
+    def __init__(self, test_name: str, failures: list[str]):
+        self.test_name = test_name
+        self.failures = tuple(failures)
+        super().__init__(f"Teardown failed for {test_name}: {'; '.join(failures)}")
+
+
+def _cleanup_command(operation: str, command: list[str], timeout: int, failures: list[str]) -> subprocess.CompletedProcess | None:
+    try:
+        result = subprocess.run(
+            command,
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=timeout,
+        )
+    except subprocess.TimeoutExpired:
+        failures.append(f"{operation} timed out after {timeout}s")
+        return None
+    except OSError as exc:
+        failures.append(f"{operation} failed ({type(exc).__name__})")
+        return None
+
+    if result.returncode != 0:
+        failures.append(f"{operation} exited with status {result.returncode}")
+    return result
+
+
 def list_teardown_tests():
     return list(TEARDOWN_CONFIG.keys())
 
@@ -188,25 +218,45 @@ def restore_fixture_baseline(test_env_name: str) -> None:
     shutil.copytree(baseline_dir, test_dir)
 
 
-def cleanup_transient_k8s_resources(namespace: str = "default") -> None:
+def cleanup_transient_k8s_resources(
+    namespace: str = "default", *, strict: bool = False, validate_target: bool = True
+) -> None:
     """Remove helper resources that agents may create while probing services."""
-    if is_lane_active():
-        assert_lane_target()
+    failures: list[str] = []
+    if validate_target and is_lane_active():
+        try:
+            assert_lane_target()
+        except Exception as exc:
+            if strict:
+                raise TeardownFailure(
+                    "transient resources", [f"selected lane validation failed ({type(exc).__name__})"]
+                ) from exc
+            raise
     for kind, name in TRANSIENT_K8S_RESOURCES:
-        subprocess.run(
-            ["kubectl", "delete", kind, name, "-n", namespace, "--ignore-not-found=true"],
+        command = ["kubectl", "delete", kind, name, "-n", namespace, "--ignore-not-found=true"]
+        if strict:
+            _cleanup_command(f"delete transient {kind} {name}", command, KUBECTL_COMMAND_TIMEOUT_S, failures)
+        else:
+            subprocess.run(command, check=False, timeout=KUBECTL_COMMAND_TIMEOUT_S)
+
+    if strict:
+        result = _cleanup_command(
+            "list transient pods",
+            ["kubectl", "get", "pods", "-n", namespace, "-o", "name"],
+            KUBECTL_COMMAND_TIMEOUT_S,
+            failures,
+        )
+    else:
+        result = subprocess.run(
+            ["kubectl", "get", "pods", "-n", namespace, "-o", "name"],
+            capture_output=True,
+            text=True,
             check=False,
             timeout=KUBECTL_COMMAND_TIMEOUT_S,
         )
-
-    result = subprocess.run(
-        ["kubectl", "get", "pods", "-n", namespace, "-o", "name"],
-        capture_output=True,
-        text=True,
-        check=False,
-        timeout=KUBECTL_COMMAND_TIMEOUT_S,
-    )
     if not result or result.returncode != 0:
+        if failures:
+            raise TeardownFailure("transient resources", failures)
         return
 
     for line in result.stdout.splitlines():
@@ -214,11 +264,14 @@ def cleanup_transient_k8s_resources(namespace: str = "default") -> None:
         if not pod_name:
             continue
         if any(pattern.match(pod_name) for pattern in TRANSIENT_K8S_POD_NAME_PATTERNS):
-            subprocess.run(
-                ["kubectl", "delete", "pod", pod_name, "-n", namespace, "--ignore-not-found=true"],
-                check=False,
-                timeout=KUBECTL_COMMAND_TIMEOUT_S,
-            )
+            command = ["kubectl", "delete", "pod", pod_name, "-n", namespace, "--ignore-not-found=true"]
+            if strict:
+                _cleanup_command(f"delete transient pod {pod_name}", command, KUBECTL_COMMAND_TIMEOUT_S, failures)
+            else:
+                subprocess.run(command, check=False, timeout=KUBECTL_COMMAND_TIMEOUT_S)
+
+    if failures:
+        raise TeardownFailure("transient resources", failures)
 
 
 def cleanup_test_pods(namespace: str = "default") -> None:
@@ -249,45 +302,61 @@ def teardown_environment(test_env_name: str) -> None:
         raise ValueError(f"Unknown test case: {test_env_name}")
 
     lane = active_lane_config() if is_lane_active() else None
-    if lane:
-        # Validate every target before deleting even one resource.
-        assert_lane_target()
-
-    cleanup_transient_k8s_resources()
-
-    for image in config["docker_images"]:
+    failures: list[str] = []
+    may_mutate_lab = True
+    try:
         if lane:
-            subprocess.run(
-                ["minikube", "-p", lane["minikube_profile"], "image", "rm", image],
-                check=False,
-                timeout=120,
-            )
-            continue
-        # Get container IDs (cross-platform, no pipe/xargs)
-        result = subprocess.run(
-            ["docker", "ps", "-a", "-q", "--filter", f"ancestor={image}"],
-            capture_output=True,
-            text=True,
-        )
-        for cid in result.stdout.strip().split('\n'):
-            if cid:
-                subprocess.run(["docker", "rm", "-f", cid], check=False)
-        # Remove image
-        subprocess.run(["docker", "rmi", "-f", image], check=False)
+            # Validate every target before deleting even one resource.
+            try:
+                assert_lane_target()
+            except Exception as exc:
+                failures.append(f"selected lane validation failed ({type(exc).__name__})")
+                may_mutate_lab = False
 
-    for manifest in config["k8s_manifests"]:
-        manifest_path = TROUBLESHOOTING_DIR / test_env_name / manifest.format(name=test_env_name)
-        subprocess.run(
-            ["kubectl", "delete", "-f", str(manifest_path), "--grace-period=5", "--ignore-not-found=true"],
-            check=False,
-            timeout=KUBECTL_COMMAND_TIMEOUT_S,
-        )
+        if may_mutate_lab:
+            try:
+                cleanup_transient_k8s_resources(strict=True, validate_target=False)
+            except Exception as exc:
+                failures.append(f"transient resource cleanup failed ({type(exc).__name__})")
 
-    # Some legacy teardown entries only clean cluster resources and have no
-    # runnable fixture directory. Full restoration applies when a committed
-    # baseline exists for the case.
-    if (FIXTURE_BASELINES_DIR / test_env_name).is_dir():
-        restore_fixture_baseline(test_env_name)
+            for image in config["docker_images"]:
+                if lane:
+                    _cleanup_command(
+                        f"remove case image {image}",
+                        ["minikube", "-p", lane["minikube_profile"], "image", "rm", image],
+                        120,
+                        failures,
+                    )
+                    continue
+
+                result = _cleanup_command(
+                    f"find containers for case image {image}",
+                    ["docker", "ps", "-a", "-q", "--filter", f"ancestor={image}"],
+                    30,
+                    failures,
+                )
+                for cid in (result.stdout.strip().splitlines() if result else []):
+                    _cleanup_command(f"remove case container for {image}", ["docker", "rm", "-f", cid], 30, failures)
+                _cleanup_command(f"remove case image {image}", ["docker", "rmi", "-f", image], 120, failures)
+
+            for manifest in config["k8s_manifests"]:
+                manifest_path = TROUBLESHOOTING_DIR / test_env_name / manifest.format(name=test_env_name)
+                _cleanup_command(
+                    f"delete case manifest {manifest}",
+                    ["kubectl", "delete", "-f", str(manifest_path), "--grace-period=5", "--ignore-not-found=true"],
+                    KUBECTL_COMMAND_TIMEOUT_S,
+                    failures,
+                )
+    finally:
+        # Restore local inputs even when lab cleanup times out or lane validation fails.
+        if (FIXTURE_BASELINES_DIR / test_env_name).is_dir():
+            try:
+                restore_fixture_baseline(test_env_name)
+            except Exception as exc:
+                failures.append(f"fixture restoration failed ({type(exc).__name__})")
+
+    if failures:
+        raise TeardownFailure(test_env_name, failures)
 
 
 # Backward-compatible alias while callers migrate.

@@ -211,6 +211,7 @@ class LabContextTests(unittest.TestCase):
         ), patch.object(teardown, "FIXTURE_BASELINES_DIR", Path(tmp)), patch.object(
             teardown.subprocess, "run"
         ) as run:
+            run.return_value = subprocess.CompletedProcess([], 0, stdout="", stderr="")
             teardown.teardown_environment("wrong_interface")
         commands = [call.args[0] for call in run.call_args_list]
         self.assertTrue(any(command[:5] == ["minikube", "-p", "minh-lane", "image", "rm"] for command in commands))

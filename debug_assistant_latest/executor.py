@@ -66,6 +66,10 @@ class TestResult:
     ground_truth_configured: bool = False
     environment_context: Optional[Dict[str, Any]] = None
     architecture_outcome: Optional[str] = None
+    teardown_attempted: bool = False
+    teardown_failed: bool = False
+    teardown_error: Optional[str] = None
+    interrupted: bool = False
 
 
 def get_timestamp_id() -> str:
@@ -212,6 +216,9 @@ def _result_status(result: TestResult) -> str:
     error_text = (result.error or "").lower()
     if "timeout" in error_text:
         return "TIMEOUT"
+
+    if result.interrupted:
+        return "ERROR"
 
     if result.architecture_outcome == "knowledge_output_invalid":
         return "FAIL"
@@ -417,6 +424,10 @@ def run_single_test_in_process(
     architecture_outcome = None
     knowledge_execution = None
     ground_truth_error = None
+    interrupted = False
+    teardown_attempted = False
+    teardown_failed = False
+    teardown_error = None
 
     try:
         # Import here to avoid circular imports in worker process
@@ -432,7 +443,7 @@ def run_single_test_in_process(
         config = load_config_with_overrides(config_path, overrides)
         ground_truth_configured = bool(config.get("ground-truth"))
 
-        cleanup_transient_k8s_resources()
+        cleanup_transient_k8s_resources(strict=True)
 
         # Save effective config for audit trail
         save_effective_config(config, log_dir / "config_effective.json")
@@ -510,7 +521,7 @@ def run_single_test_in_process(
                 if ground_truth_configured:
                     print("\n" + "=" * 60)
                     print("Running ground truth verification...")
-                    cleanup_transient_k8s_resources()
+                    cleanup_transient_k8s_resources(strict=True)
                     gt_result = run_ground_truth_checks(config)
                     if gt_result:
                         print(format_ground_truth_results(gt_result))
@@ -531,7 +542,19 @@ def run_single_test_in_process(
             finally:
                 sys.stdout, sys.stderr = old_stdout, old_stderr
 
+    except KeyboardInterrupt:
+        interrupted = True
+        success = False
+        error = error or "Interrupted by user"
+        with open(stderr_log, "a", encoding="utf-8") as f:
+            f.write("\n\nINTERRUPTED: run stopped by user.\n")
     except Exception as e:
+        from teardown import TeardownFailure
+
+        if isinstance(e, TeardownFailure):
+            teardown_attempted = True
+            teardown_failed = True
+            teardown_error = str(e)
         if error is None:  # Don't overwrite backup error
             error = str(e)
         if (
@@ -550,7 +573,15 @@ def run_single_test_in_process(
             f.write(f"\n\nEXCEPTION:\n{traceback.format_exc()}")
 
     if technique == KNOWLEDGE_AGENT_ONLY:
-        if knowledge_execution is None:
+        if teardown_failed and not test_started and knowledge_execution is None:
+            # A pre-run integrity cleanup failure means the technique never
+            # began; keep it out of architecture-stage failure counts.
+            architecture_outcome = None
+        elif interrupted and knowledge_execution is None:
+            # The call may have been interrupted mid-generation. Do not claim
+            # that Knowledge generation or later stages never started.
+            architecture_outcome = "interrupted"
+        elif knowledge_execution is None:
             knowledge_execution = {
                 "technique": KNOWLEDGE_AGENT_ONLY,
                 "knowledge_generation": {"status": "not_started", "error": None},
@@ -561,39 +592,46 @@ def run_single_test_in_process(
                 "_artifact_path": str(log_dir / "knowledge_execution.json"),
             }
             architecture_outcome = "execution_error"
-        architecture_outcome, success, knowledge_execution = _finalize_knowledge_agent_only(
-            architecture_outcome=architecture_outcome,
-            report=knowledge_execution,
-            ground_truth_configured=ground_truth_configured,
-            ground_truth_passed=ground_truth_passed,
-            verified=verified,
-        )
-        if ground_truth_error and isinstance(knowledge_execution.get("ground_truth"), dict):
-            knowledge_execution["ground_truth"].update(status="error", error=ground_truth_error)
-            try:
-                from knowledge_agent_only import write_json_artifact
+        if knowledge_execution is not None:
+            architecture_outcome, success, knowledge_execution = _finalize_knowledge_agent_only(
+                architecture_outcome=architecture_outcome,
+                report=knowledge_execution,
+                ground_truth_configured=ground_truth_configured,
+                ground_truth_passed=ground_truth_passed,
+                verified=verified,
+            )
+            if ground_truth_error and isinstance(knowledge_execution.get("ground_truth"), dict):
+                knowledge_execution["ground_truth"].update(status="error", error=ground_truth_error)
+                try:
+                    from knowledge_agent_only import write_json_artifact
 
-                write_json_artifact(log_dir / "knowledge_execution.json", knowledge_execution)
-            except Exception as artifact_error:
-                error = error or f"Could not save knowledge execution artifact: {artifact_error}"
-        stage_error = _knowledge_architecture_error(architecture_outcome, knowledge_execution)
-        if stage_error:
-            error = error or stage_error
+                    write_json_artifact(log_dir / "knowledge_execution.json", knowledge_execution)
+                except Exception as artifact_error:
+                    error = error or f"Could not save knowledge execution artifact: {artifact_error}"
+            stage_error = _knowledge_architecture_error(architecture_outcome, knowledge_execution)
+            if stage_error:
+                error = error or stage_error
 
     # Opt-in teardown after run (only if test started; log warnings to stderr.log)
     if teardown_after_run and test_started:
+        teardown_attempted = True
         try:
             teardown_environment(test_name)
         except Exception as teardown_err:
+            teardown_failed = True
+            teardown_error = str(teardown_err)
             # Route warning to per-test stderr.log
             with open(stderr_log, "a", encoding="utf-8") as f:
                 f.write(f"\n\n[WARNING] Teardown failed for {test_name}: {teardown_err}\n")
                 f.write(traceback.format_exc())
 
     if test_started:
+        teardown_attempted = True
         try:
             cleanup_test_pods()
         except Exception as pod_cleanup_err:
+            teardown_failed = True
+            teardown_error = "; ".join(filter(None, [teardown_error, str(pod_cleanup_err)]))
             with open(stderr_log, "a", encoding="utf-8") as f:
                 f.write(f"\n\n[WARNING] Post-test pod cleanup failed for {test_name}: {pod_cleanup_err}\n")
                 f.write(traceback.format_exc())
@@ -616,6 +654,10 @@ def run_single_test_in_process(
         ground_truth_configured=ground_truth_configured,
         environment_context=environment_context,
         architecture_outcome=architecture_outcome,
+        teardown_attempted=teardown_attempted,
+        teardown_failed=teardown_failed,
+        teardown_error=teardown_error,
+        interrupted=interrupted,
     )
 
 
@@ -654,6 +696,10 @@ def run_single_test(
     architecture_outcome = None
     knowledge_execution = None
     ground_truth_error = None
+    interrupted = False
+    teardown_attempted = False
+    teardown_failed = False
+    teardown_error = None
     runtime_context.setdefault("blocked_threshold", 3)
     runtime_context["log_dir"] = str(log_dir)
     progress_writer = runtime_context.get("progress_writer")
@@ -682,7 +728,7 @@ def run_single_test(
         config = load_config_with_overrides(config_path, overrides)
         ground_truth_configured = bool(config.get("ground-truth"))
 
-        cleanup_transient_k8s_resources()
+        cleanup_transient_k8s_resources(strict=True)
 
         # Save effective config for audit trail
         save_effective_config(config, log_dir / "config_effective.json")
@@ -783,7 +829,7 @@ def run_single_test(
                         progress_writer.write_event("ground_truth_start", test_name=test_name)
                     print("\n" + "=" * 60)
                     print("Running ground truth verification...")
-                    cleanup_transient_k8s_resources()
+                    cleanup_transient_k8s_resources(strict=True)
                     gt_result = run_ground_truth_checks(config)
                     if gt_result:
                         print(format_ground_truth_results(gt_result))
@@ -812,7 +858,23 @@ def run_single_test(
             finally:
                 sys.stdout, sys.stderr = old_stdout, old_stderr
 
+    except KeyboardInterrupt:
+        interrupted = True
+        success = False
+        error = error or "Interrupted by user"
+        if verbose:
+            print(f"[INTERRUPTED] {test_name}")
+        with open(stderr_log, "a", encoding="utf-8") as f:
+            f.write("\n\nINTERRUPTED: run stopped by user.\n")
+        if progress_writer:
+            progress_writer.write_event("test_interrupted", test_name=test_name)
     except Exception as e:
+        from teardown import TeardownFailure
+
+        if isinstance(e, TeardownFailure):
+            teardown_attempted = True
+            teardown_failed = True
+            teardown_error = str(e)
         if error is None:  # Don't overwrite backup error
             error = str(e)
         if (
@@ -835,7 +897,15 @@ def run_single_test(
             progress_writer.write_event("test_error", test_name=test_name, error=error)
 
     if technique == KNOWLEDGE_AGENT_ONLY:
-        if knowledge_execution is None:
+        if teardown_failed and not test_started and knowledge_execution is None:
+            # A pre-run integrity cleanup failure means the technique never
+            # began; keep it out of architecture-stage failure counts.
+            architecture_outcome = None
+        elif interrupted and knowledge_execution is None:
+            # The call may have been interrupted mid-generation. Do not claim
+            # that Knowledge generation or later stages never started.
+            architecture_outcome = "interrupted"
+        elif knowledge_execution is None:
             knowledge_execution = {
                 "technique": KNOWLEDGE_AGENT_ONLY,
                 "knowledge_generation": {"status": "not_started", "error": None},
@@ -846,32 +916,36 @@ def run_single_test(
                 "_artifact_path": str(log_dir / "knowledge_execution.json"),
             }
             architecture_outcome = "execution_error"
-        architecture_outcome, success, knowledge_execution = _finalize_knowledge_agent_only(
-            architecture_outcome=architecture_outcome,
-            report=knowledge_execution,
-            ground_truth_configured=ground_truth_configured,
-            ground_truth_passed=ground_truth_passed,
-            verified=verified,
-        )
-        if ground_truth_error and isinstance(knowledge_execution.get("ground_truth"), dict):
-            knowledge_execution["ground_truth"].update(status="error", error=ground_truth_error)
-            try:
-                from knowledge_agent_only import write_json_artifact
+        if knowledge_execution is not None:
+            architecture_outcome, success, knowledge_execution = _finalize_knowledge_agent_only(
+                architecture_outcome=architecture_outcome,
+                report=knowledge_execution,
+                ground_truth_configured=ground_truth_configured,
+                ground_truth_passed=ground_truth_passed,
+                verified=verified,
+            )
+            if ground_truth_error and isinstance(knowledge_execution.get("ground_truth"), dict):
+                knowledge_execution["ground_truth"].update(status="error", error=ground_truth_error)
+                try:
+                    from knowledge_agent_only import write_json_artifact
 
-                write_json_artifact(log_dir / "knowledge_execution.json", knowledge_execution)
-            except Exception as artifact_error:
-                error = error or f"Could not save knowledge execution artifact: {artifact_error}"
-        stage_error = _knowledge_architecture_error(architecture_outcome, knowledge_execution)
-        if stage_error:
-            error = error or stage_error
+                    write_json_artifact(log_dir / "knowledge_execution.json", knowledge_execution)
+                except Exception as artifact_error:
+                    error = error or f"Could not save knowledge execution artifact: {artifact_error}"
+            stage_error = _knowledge_architecture_error(architecture_outcome, knowledge_execution)
+            if stage_error:
+                error = error or stage_error
 
     # Opt-in teardown after run (only if test started; log warnings to stderr.log)
     if teardown_after_run and test_started:
+        teardown_attempted = True
         try:
             if verbose:
                 print(f"[TEARDOWN] Running teardown for {test_name}")
             teardown_environment(test_name)
         except Exception as teardown_err:
+            teardown_failed = True
+            teardown_error = str(teardown_err)
             warning_msg = f"[WARNING] Teardown failed for {test_name}: {teardown_err}"
             if verbose:
                 print(warning_msg, file=sys.stderr)
@@ -881,11 +955,14 @@ def run_single_test(
                 f.write(traceback.format_exc())
 
     if test_started:
+        teardown_attempted = True
         try:
             if verbose:
                 print(f"[CLEANUP] Deleting remaining test pods")
             cleanup_test_pods()
         except Exception as pod_cleanup_err:
+            teardown_failed = True
+            teardown_error = "; ".join(filter(None, [teardown_error, str(pod_cleanup_err)]))
             warning_msg = f"[WARNING] Post-test pod cleanup failed for {test_name}: {pod_cleanup_err}"
             if verbose:
                 print(warning_msg, file=sys.stderr)
@@ -913,6 +990,10 @@ def run_single_test(
             success=success,
             verified=verified,
             error=error,
+            teardown_status=(
+                "failed" if teardown_failed else "passed" if teardown_attempted else "not_run"
+            ),
+            interrupted=interrupted,
         )
 
     env_ctx = runtime_context.get("environment_context") if runtime_context else None
@@ -931,6 +1012,10 @@ def run_single_test(
         ground_truth_configured=ground_truth_configured,
         environment_context=env_ctx,
         architecture_outcome=architecture_outcome,
+        teardown_attempted=teardown_attempted,
+        teardown_failed=teardown_failed,
+        teardown_error=teardown_error,
+        interrupted=interrupted,
     )
 
 
@@ -955,6 +1040,13 @@ def result_to_summary(result: TestResult, technique: str, overrides: dict) -> Te
         ground_truth_configured=result.ground_truth_configured,
         environment_context=result.environment_context,
         architecture_outcome=result.architecture_outcome,
+        teardown_status=(
+            "failed" if result.teardown_failed
+            else "passed" if result.teardown_attempted
+            else "not_run"
+        ),
+        teardown_error=result.teardown_error,
+        interrupted=result.interrupted,
     )
 
 
@@ -1072,7 +1164,7 @@ def cmd_run_single(args, test_name: str):
         print_console_summary(aggregate, output_dir)
         _print_run_footer(output_dir, [summary])
 
-        exit_code = 0 if result.success else 1
+        exit_code = 130 if result.interrupted else 2 if result.teardown_failed else 0 if result.success else 1
         progress_writer.write_event(
             "run_end",
             test_name=test_name,
@@ -1098,7 +1190,7 @@ def cmd_run_single(args, test_name: str):
 
 def cmd_run_many(args):
     """Handle --run-many command."""
-    from debug_assistant_latest.parallel import PARALLEL_TEST_TIMEOUT, run_tests_parallel
+    from debug_assistant_latest.parallel import PARALLEL_TEST_TIMEOUT, _write_run_control, run_tests_parallel
 
     pattern = args.run_many
     matched = match_pattern(pattern)
@@ -1184,6 +1276,28 @@ def cmd_run_many(args):
     save_aggregate_report(aggregate, output_dir)
     print_console_summary(aggregate, output_dir)
     _print_run_footer(output_dir, summaries)
+
+    interrupted = any(result.interrupted for result in results)
+    teardown_failures = [result for result in results if result.teardown_failed]
+    if interrupted:
+        _write_run_control(
+            output_dir, matched, results, status="interrupted", stop_reason="keyboard_interrupt"
+        )
+        return 130
+    if teardown_failures:
+        _write_run_control(
+            output_dir,
+            matched,
+            results,
+            status="stopped_cleanup_failure",
+            stop_reason="; ".join(
+                f"{result.test_name}: {result.teardown_error or 'cleanup failed'}"
+                for result in teardown_failures
+            ),
+        )
+        return 2
+
+    _write_run_control(output_dir, matched, results, status="completed")
 
     # Return non-zero if any test failed
     failed = sum(1 for r in results if not r.success)

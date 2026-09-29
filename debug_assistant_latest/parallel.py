@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Parallel test execution with per-process workers, queues, and hard timeouts."""
 
+import json
 import queue
 import time
 import traceback
@@ -12,13 +13,68 @@ from typing import Any, Dict, List, Optional
 from debug_assistant_latest.executor import (
     TestResult,
     _has_ground_truth_config,
+    result_to_summary,
     run_single_test,
     run_single_test_in_process,
 )
 from debug_assistant_latest.provenance import build_environment_context
+from debug_assistant_latest.report import save_test_summary
 
 # Per-test timeout for parallel execution (seconds)
 PARALLEL_TEST_TIMEOUT = 600
+
+
+def _write_run_control(
+    output_dir: Path,
+    planned_names: List[str],
+    results: List[TestResult],
+    *,
+    status: str,
+    stop_reason: Optional[str] = None,
+    in_progress: Optional[List[str]] = None,
+) -> None:
+    completed = {result.test_name for result in results}
+    active = set(in_progress or ()) - completed
+    control = {
+        "status": status,
+        "stop_reason": stop_reason,
+        "planned_count": len(planned_names),
+        "completed_count": len(completed),
+        "planned_test_names": planned_names,
+        "completed_test_names": [name for name in planned_names if name in completed],
+        "in_progress_test_names": [name for name in planned_names if name in active],
+        "unstarted_test_names": [name for name in planned_names if name not in completed and name not in active],
+        "updated_at": datetime.now().isoformat(),
+    }
+    path = output_dir / "run_control.json"
+    temporary_path = path.with_suffix(".json.tmp")
+    with temporary_path.open("w", encoding="utf-8") as stream:
+        json.dump(control, stream, indent=2)
+    temporary_path.replace(path)
+
+
+def _record_result(
+    result: TestResult,
+    results: List[TestResult],
+    *,
+    test_names: List[str],
+    technique: str,
+    overrides: dict,
+    output_dir: Path,
+    status: str,
+    stop_reason: Optional[str] = None,
+    in_progress: Optional[List[str]] = None,
+) -> None:
+    results.append(result)
+    save_test_summary(result_to_summary(result, technique, overrides), result.log_dir)
+    _write_run_control(
+        output_dir,
+        test_names,
+        results,
+        status=status,
+        stop_reason=stop_reason,
+        in_progress=in_progress,
+    )
 
 
 def _worker_wrapper(
@@ -90,6 +146,9 @@ def run_tests_parallel(
         )
 
     results = []
+    gt_configured_by_test = {
+        test_name: _has_ground_truth_config(test_name, overrides) for test_name in test_names
+    }
     seq_runtime_context = None
     if run_uuid or run_id or environment_context is not None:
         seq_runtime_context = {
@@ -100,17 +159,74 @@ def run_tests_parallel(
 
     if max_workers == 1:
         # Sequential execution
+        _write_run_control(output_dir, test_names, results, status="running")
         for name in test_names:
-            result = run_single_test(
-                name,
-                technique,
-                overrides,
+            _write_run_control(
                 output_dir,
-                verbose=True,
-                teardown_after_run=teardown_after_run,
-                runtime_context=seq_runtime_context,
+                test_names,
+                results,
+                status="running",
+                in_progress=[name],
             )
-            results.append(result)
+            try:
+                result = run_single_test(
+                    name,
+                    technique,
+                    overrides,
+                    output_dir,
+                    verbose=True,
+                    teardown_after_run=teardown_after_run,
+                    runtime_context=seq_runtime_context,
+                )
+            except KeyboardInterrupt:
+                now = datetime.now().isoformat()
+                result = TestResult(
+                    test_name=name,
+                    success=False,
+                    verified=None,
+                    debug_self_report=None,
+                    duration_s=0.0,
+                    error="Interrupted by user before case completion",
+                    metrics={},
+                    log_dir=output_dir / name,
+                    started_at=now,
+                    finished_at=now,
+                    ground_truth_configured=gt_configured_by_test.get(name, False),
+                    architecture_outcome="interrupted" if technique == "knowledgeAgentOnly" else None,
+                    interrupted=True,
+                )
+                _record_result(
+                    result,
+                    results,
+                    test_names=test_names,
+                    technique=technique,
+                    overrides=overrides,
+                    output_dir=output_dir,
+                    status="interrupted",
+                    stop_reason="keyboard_interrupt",
+                )
+                break
+
+            if result.interrupted:
+                status, reason = "interrupted", "keyboard_interrupt"
+            elif result.teardown_failed:
+                status, reason = "stopped_cleanup_failure", result.teardown_error
+            else:
+                status, reason = "running", None
+            _record_result(
+                result,
+                results,
+                test_names=test_names,
+                technique=technique,
+                overrides=overrides,
+                output_dir=output_dir,
+                status=status,
+                stop_reason=reason,
+            )
+            if result.interrupted or result.teardown_failed:
+                break
+        else:
+            _write_run_control(output_dir, test_names, results, status="completed")
     else:
         # Parallel execution with hard per-test timeout
         print(f"Running {len(test_names)} tests with {max_workers} workers...")
@@ -122,13 +238,12 @@ def run_tests_parallel(
         # Track active processes: {test_name: (process, queue, start_time)}
         active: Dict[str, tuple] = {}
         pending = list(test_names)
-        gt_configured_by_test = {
-            test_name: _has_ground_truth_config(test_name, overrides) for test_name in test_names
-        }
+        _write_run_control(output_dir, test_names, results, status="running")
+        halt_reason = None
 
         while pending or active:
             # Launch new processes up to max_workers
-            while pending and len(active) < max_workers:
+            while pending and len(active) < max_workers and halt_reason is None:
                 test_name = pending.pop(0)
                 result_queue = Queue()
                 proc = Process(
@@ -150,6 +265,7 @@ def run_tests_parallel(
 
             # Check for completed or timed-out processes
             completed = []
+            previous_result_count = len(results)
             for test_name, (proc, result_queue, start_time) in active.items():
                 elapsed = time.perf_counter() - start_time
 
@@ -163,6 +279,10 @@ def run_tests_parallel(
                             results.append(result)
                             status = "PASS" if result.success else ("ERROR" if result.error else "FAIL")
                             print(f"[{status}] {test_name} ({result.duration_s:.1f}s)")
+                            if result.teardown_failed:
+                                halt_reason = result.teardown_error or f"teardown failed for {test_name}"
+                            elif result.interrupted:
+                                halt_reason = "keyboard_interrupt"
                         else:
                             # Error during execution
                             _, err_msg, _ = payload
@@ -245,19 +365,48 @@ def run_tests_parallel(
 
                     # Teardown after timeout kill
                     if teardown_after_run:
+                        teardown_failed = False
+                        teardown_error = None
                         try:
                             from teardown import teardown_environment
 
                             teardown_environment(test_name)
                         except Exception as td_err:
+                            teardown_failed = True
+                            teardown_error = str(td_err)
                             with open(stderr_log, "a", encoding="utf-8") as f:
                                 f.write(f"\n[WARNING] Post-timeout teardown failed: {td_err}\n")
+                        results[-1].teardown_attempted = True
+                        results[-1].teardown_failed = teardown_failed
+                        results[-1].teardown_error = teardown_error
+                        if teardown_failed:
+                            halt_reason = teardown_error or f"teardown failed for {test_name}"
 
                     completed.append(test_name)
 
             # Remove completed tests from active
             for test_name in completed:
                 del active[test_name]
+
+            for result in results[previous_result_count:]:
+                save_test_summary(result_to_summary(result, technique, overrides), result.log_dir)
+            if halt_reason is None and not pending and not active:
+                control_status = "completed"
+            elif halt_reason is not None:
+                control_status = "stopped_cleanup_failure" if halt_reason != "keyboard_interrupt" else "interrupted"
+            else:
+                control_status = "running"
+            _write_run_control(
+                output_dir,
+                test_names,
+                results,
+                status=control_status,
+                stop_reason=halt_reason,
+                in_progress=list(active),
+            )
+
+            if halt_reason is not None and not active:
+                break
 
             # Brief sleep to avoid busy-waiting
             if active:

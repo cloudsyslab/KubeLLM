@@ -69,6 +69,9 @@ class TestSummary:
     ground_truth_configured: bool = False
     environment_context: Optional[Dict[str, Any]] = None
     architecture_outcome: Optional[str] = None
+    teardown_status: str = "not_run"
+    teardown_error: Optional[str] = None
+    interrupted: bool = False
 
     def to_dict(self) -> dict:
         """Convert to dictionary for JSON serialization."""
@@ -87,6 +90,9 @@ class TestSummary:
             "error_context": self.error_context,
             "metrics": {},
             "config_overrides_applied": self.config_overrides_applied,
+            "teardown_status": self.teardown_status,
+            "teardown_error": self.teardown_error,
+            "interrupted": self.interrupted,
         }
         if self.environment_context is not None:
             result["environment_context"] = self.environment_context
@@ -149,6 +155,9 @@ def load_test_summary(summary_path: Path) -> TestSummary:
         ground_truth_configured=data.get("ground_truth_configured", data.get("ground_truth_passed") is not None),
         environment_context=data.get("environment_context"),
         architecture_outcome=data.get("architecture_outcome"),
+        teardown_status=data.get("teardown_status", "not_run"),
+        teardown_error=data.get("teardown_error"),
+        interrupted=data.get("interrupted", False),
     )
 
 

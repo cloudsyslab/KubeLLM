@@ -58,6 +58,7 @@ from debug_assistant_latest.executor import (
 )
 from debug_assistant_latest import executor
 from debug_assistant_latest import teardown
+from debug_assistant_latest.parallel import run_tests_parallel
 from debug_assistant_latest.test_discovery import list_test_cases
 import assistant
 import api_server
@@ -1579,7 +1580,11 @@ class TeardownTests(unittest.TestCase):
 
             def fake_run(*args, **kwargs):
                 recorded_calls.append((args, kwargs))
-                return None
+                command = args[0]
+                result = subprocess.CompletedProcess(command, 0, stdout="", stderr="")
+                if command == ["kubectl", "get", "pods", "-n", "default", "-o", "name"]:
+                    result.stdout = ""
+                return result
 
             with patch.object(teardown, "TROUBLESHOOTING_DIR", test_root), patch.object(
                 teardown, "FIXTURE_BASELINES_DIR", baseline_root
@@ -1594,6 +1599,36 @@ class TeardownTests(unittest.TestCase):
 
             self.assertEqual((case_dir / "wrong_port.yaml").read_text(), "restored\n")
             self.assertTrue(any("kubectl" in call[0][0][0] for call in recorded_calls if call[0]))
+
+    def test_teardown_restores_fixture_even_when_manifest_delete_times_out(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            case_dir = root / "wrong_port"
+            case_dir.mkdir()
+            (case_dir / "wrong_port.yaml").write_text("agent-edited\n")
+            baseline_root = root / "baselines"
+            baseline_dir = baseline_root / "wrong_port"
+            baseline_dir.mkdir(parents=True)
+            (baseline_dir / "wrong_port.yaml").write_text("committed-baseline\n")
+
+            def fake_run(command, **kwargs):
+                if command[:3] == ["kubectl", "delete", "-f"]:
+                    raise subprocess.TimeoutExpired(command, kwargs.get("timeout"))
+                return subprocess.CompletedProcess(command, 0, stdout="", stderr="")
+
+            with patch.object(teardown, "TROUBLESHOOTING_DIR", root), patch.object(
+                teardown, "FIXTURE_BASELINES_DIR", baseline_root
+            ), patch(
+                "debug_assistant_latest.teardown.subprocess.run", side_effect=fake_run
+            ), patch.dict(
+                teardown.TEARDOWN_CONFIG,
+                {"wrong_port": {"docker_images": [], "k8s_manifests": ["{name}.yaml"]}},
+                clear=False,
+            ):
+                with self.assertRaisesRegex(teardown.TeardownFailure, "timed out"):
+                    teardown.teardown_environment("wrong_port")
+
+            self.assertEqual((case_dir / "wrong_port.yaml").read_text(), "committed-baseline\n")
 
     def test_cleanup_transient_k8s_resources_deletes_known_helper_resources(self):
         recorded_calls = []
@@ -1691,6 +1726,113 @@ class TeardownTests(unittest.TestCase):
         self.assertEqual(recorded_calls[0][1]["timeout"], teardown.KUBECTL_COMMAND_TIMEOUT_S)
 
 class RunnerTests(unittest.TestCase):
+    def test_serial_run_persists_case_and_stops_after_teardown_failure(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            output = Path(tmpdir)
+            output.mkdir(exist_ok=True)
+            results = [
+                TestResult(
+                    test_name="case_one",
+                    success=True,
+                    verified=True,
+                    debug_self_report=True,
+                    duration_s=1,
+                    error=None,
+                    metrics={},
+                    log_dir=output / "case_one",
+                    started_at="start",
+                    finished_at="finish",
+                    teardown_attempted=True,
+                    teardown_failed=True,
+                    teardown_error="fixture cleanup timed out",
+                )
+            ]
+            with patch(
+                "debug_assistant_latest.parallel._has_ground_truth_config", return_value=False
+            ), patch(
+                "debug_assistant_latest.parallel.run_single_test", side_effect=results
+            ) as run_mock:
+                returned = run_tests_parallel(
+                    ["case_one", "case_two"],
+                    "allStepsAtOnce",
+                    {},
+                    output,
+                    max_workers=1,
+                    teardown_after_run=True,
+                )
+
+            self.assertEqual(len(returned), 1)
+            run_mock.assert_called_once()
+            self.assertTrue((output / "case_one" / "summary.json").is_file())
+            control = json.loads((output / "run_control.json").read_text())
+            self.assertEqual(control["status"], "stopped_cleanup_failure")
+            self.assertEqual(control["completed_test_names"], ["case_one"])
+            self.assertEqual(control["unstarted_test_names"], ["case_two"])
+
+    def test_serial_run_continues_after_ordinary_benchmark_failure(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            output = Path(tmpdir)
+            output.mkdir(exist_ok=True)
+            results = [
+                TestResult(
+                    test_name=name,
+                    success=False,
+                    verified=False,
+                    debug_self_report=False,
+                    duration_s=1,
+                    error="benchmark did not solve case",
+                    metrics={},
+                    log_dir=output / name,
+                    started_at="start",
+                    finished_at="finish",
+                )
+                for name in ("case_one", "case_two")
+            ]
+            with patch(
+                "debug_assistant_latest.parallel._has_ground_truth_config", return_value=False
+            ), patch(
+                "debug_assistant_latest.parallel.run_single_test", side_effect=results
+            ) as run_mock:
+                returned = run_tests_parallel(
+                    ["case_one", "case_two"],
+                    "allStepsAtOnce",
+                    {},
+                    output,
+                    max_workers=1,
+                )
+
+            self.assertEqual(len(returned), 2)
+            self.assertEqual(run_mock.call_count, 2)
+            control = json.loads((output / "run_control.json").read_text())
+            self.assertEqual(control["status"], "completed")
+            self.assertEqual(control["completed_count"], 2)
+
+    def test_interrupted_knowledge_run_is_not_reported_as_not_started(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            output = Path(tmpdir)
+            config = {"ground-truth": False}
+            with patch("main.knowledgeAgentOnly", side_effect=KeyboardInterrupt), patch(
+                "teardown.cleanup_transient_k8s_resources"
+            ), patch("teardown.cleanup_test_pods"), patch(
+                "debug_assistant_latest.executor.get_config_path", return_value=Path("case.json")
+            ), patch(
+                "debug_assistant_latest.executor.load_config_with_overrides", return_value=config
+            ), patch("debug_assistant_latest.executor.save_effective_config"):
+                result = executor.run_single_test(
+                    "case_one",
+                    "knowledgeAgentOnly",
+                    {},
+                    output,
+                    verbose=False,
+                )
+
+            summary = result_to_summary(result, "knowledgeAgentOnly", {})
+            self.assertTrue(result.interrupted)
+            self.assertEqual(result.architecture_outcome, "interrupted")
+            self.assertEqual(summary.status, "ERROR")
+            self.assertTrue(summary.interrupted)
+            self.assertFalse((output / "case_one" / "knowledge_execution.json").exists())
+
     def test_removed_backup_flag_is_rejected(self):
         with patch.object(sys, "argv", ["runner.py", "--backup-before-run"]):
             with self.assertRaises(SystemExit) as error:
@@ -1741,7 +1883,7 @@ class RunnerTests(unittest.TestCase):
                 events.append("agent")
                 return {"status": True}
 
-            def fake_cleanup():
+            def fake_cleanup(**kwargs):
                 events.append("cleanup")
 
             def fake_pod_cleanup():
@@ -1922,6 +2064,65 @@ class RunnerTests(unittest.TestCase):
             summary = json.loads(summary_path.read_text())
             self.assertEqual(summary["completed_iterations"], 1)
             self.assertEqual(summary["results"][0]["status"], "STALL")
+
+    def test_run_repeat_queue_stops_after_cleanup_failure(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp_base = Path(tmpdir)
+            args = argparse.Namespace(
+                repeat=3,
+                jobs=1,
+                teardown_after_run=True,
+                stall_limit_s=5,
+                output_dir=tmp_base / "runs",
+                test_case="wrong_port",
+            )
+            invocations = []
+
+            def fake_worker(result_queue, payload):
+                invocations.append(payload["iteration"])
+                iter_dir = (
+                    Path(payload["base_output_dir"])
+                    / payload["base_run_id"]
+                    / f"iter-{payload['iteration']:03d}"
+                )
+                result_queue.put(("ok", 2, str(iter_dir)))
+
+            class FakeProcess:
+                def __init__(self, target, args):
+                    self.target = target
+                    self.args = args
+                    self._alive = False
+
+                def start(self):
+                    self._alive = True
+                    try:
+                        self.target(*self.args)
+                    finally:
+                        self._alive = False
+
+                def join(self, timeout=None):
+                    return
+
+                def is_alive(self):
+                    return self._alive
+
+                def terminate(self):
+                    self._alive = False
+
+                def kill(self):
+                    self._alive = False
+
+            with patch("debug_assistant_latest.cli.Process", FakeProcess), patch(
+                "debug_assistant_latest.cli._repeat_iteration_worker", fake_worker
+            ):
+                exit_code = _run_repeat_queue(args, "single", "repeat-cleanup", tmp_base)
+
+            self.assertEqual(exit_code, 2)
+            self.assertEqual(invocations, [1])
+            summary = json.loads((tmp_base / "repeat-cleanup" / "queue_summary.json").read_text())
+            self.assertEqual(summary["status"], "stopped")
+            self.assertEqual(summary["stop_reason"], "cleanup_failure")
+            self.assertEqual(summary["results"][0]["status"], "CLEANUP_FAILURE")
 
     def test_verification_status_helpers(self):
         self.assertTrue(parse_verification_status("Solved <|VERIFIED|>"))
