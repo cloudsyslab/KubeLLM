@@ -6,7 +6,7 @@ import sys
 import time
 import traceback
 import uuid
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -69,6 +69,7 @@ class TestResult:
     teardown_attempted: bool = False
     teardown_failed: bool = False
     teardown_error: Optional[str] = None
+    teardown_recoveries: List[str] = field(default_factory=list)
     interrupted: bool = False
 
 
@@ -428,6 +429,7 @@ def run_single_test_in_process(
     teardown_attempted = False
     teardown_failed = False
     teardown_error = None
+    teardown_recoveries: List[str] = []
 
     try:
         # Import here to avoid circular imports in worker process
@@ -616,7 +618,7 @@ def run_single_test_in_process(
     if teardown_after_run and test_started:
         teardown_attempted = True
         try:
-            teardown_environment(test_name)
+            teardown_recoveries = teardown_environment(test_name)
         except Exception as teardown_err:
             teardown_failed = True
             teardown_error = str(teardown_err)
@@ -657,6 +659,7 @@ def run_single_test_in_process(
         teardown_attempted=teardown_attempted,
         teardown_failed=teardown_failed,
         teardown_error=teardown_error,
+        teardown_recoveries=teardown_recoveries,
         interrupted=interrupted,
     )
 
@@ -700,6 +703,7 @@ def run_single_test(
     teardown_attempted = False
     teardown_failed = False
     teardown_error = None
+    teardown_recoveries: List[str] = []
     runtime_context.setdefault("blocked_threshold", 3)
     runtime_context["log_dir"] = str(log_dir)
     progress_writer = runtime_context.get("progress_writer")
@@ -942,7 +946,7 @@ def run_single_test(
         try:
             if verbose:
                 print(f"[TEARDOWN] Running teardown for {test_name}")
-            teardown_environment(test_name)
+            teardown_recoveries = teardown_environment(test_name)
         except Exception as teardown_err:
             teardown_failed = True
             teardown_error = str(teardown_err)
@@ -1015,6 +1019,7 @@ def run_single_test(
         teardown_attempted=teardown_attempted,
         teardown_failed=teardown_failed,
         teardown_error=teardown_error,
+        teardown_recoveries=teardown_recoveries,
         interrupted=interrupted,
     )
 
@@ -1046,6 +1051,7 @@ def result_to_summary(result: TestResult, technique: str, overrides: dict) -> Te
             else "not_run"
         ),
         teardown_error=result.teardown_error,
+        teardown_recoveries=result.teardown_recoveries,
         interrupted=result.interrupted,
     )
 

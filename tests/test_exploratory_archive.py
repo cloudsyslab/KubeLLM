@@ -36,6 +36,7 @@ def fixture(tmp_path):
         "wrong_port/summary.json": {"status": "TIMEOUT", "ground_truth_passed": False,
                                     "verified": None, "error_message": "PRIVATE",
                                     "teardown_status": "failed", "teardown_error": "PRIVATE",
+                                    "teardown_recoveries": ["case_manifest_delete_timeout_confirmed"],
                                     "interrupted": True,
                                     "metrics": {"api": {"cost": 0.12, "secret": "PRIVATE"}}},
         "wrong_port/config_effective.json": {"api-agent": {"model": "gpt-5-mini", "key": "PRIVATE"}},
@@ -60,6 +61,7 @@ def test_export_preserves_outcomes_without_secrets_or_default_discovery(tmp_path
     assert summary["ground_truth_passed"] is False
     assert "verified" not in summary  # Unknown is never converted into success/failure.
     assert summary["teardown_status"] == "failed"
+    assert summary["teardown_recoveries"] == ["case_manifest_delete_timeout_confirmed"]
     assert summary["interrupted"] is True
     assert summary["metrics"]["api"]["cost"] == 0.12
     control = json.loads((destination / "run_control.json").read_text())

@@ -71,6 +71,7 @@ class TestSummary:
     architecture_outcome: Optional[str] = None
     teardown_status: str = "not_run"
     teardown_error: Optional[str] = None
+    teardown_recoveries: List[str] = field(default_factory=list)
     interrupted: bool = False
 
     def to_dict(self) -> dict:
@@ -92,6 +93,7 @@ class TestSummary:
             "config_overrides_applied": self.config_overrides_applied,
             "teardown_status": self.teardown_status,
             "teardown_error": self.teardown_error,
+            "teardown_recoveries": self.teardown_recoveries,
             "interrupted": self.interrupted,
         }
         if self.environment_context is not None:
@@ -157,6 +159,7 @@ def load_test_summary(summary_path: Path) -> TestSummary:
         architecture_outcome=data.get("architecture_outcome"),
         teardown_status=data.get("teardown_status", "not_run"),
         teardown_error=data.get("teardown_error"),
+        teardown_recoveries=data.get("teardown_recoveries", []),
         interrupted=data.get("interrupted", False),
     )
 
