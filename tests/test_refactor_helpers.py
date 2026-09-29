@@ -1630,6 +1630,68 @@ class TeardownTests(unittest.TestCase):
 
             self.assertEqual((case_dir / "wrong_port.yaml").read_text(), "committed-baseline\n")
 
+    def test_teardown_treats_absent_minikube_image_as_idempotent(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            commands = []
+
+            def fake_run(command, **kwargs):
+                commands.append(command)
+                output = "[]" if command[-2:] == ["ls", "--format=json"] else ""
+                return subprocess.CompletedProcess(command, 0, stdout=output, stderr="")
+
+            with patch.object(teardown, "is_lane_active", return_value=True), patch.object(
+                teardown, "active_lane_config", return_value={"minikube_profile": "minh-lane"}
+            ), patch.object(teardown, "assert_lane_target"), patch.object(
+                teardown, "cleanup_transient_k8s_resources"
+            ), patch.object(teardown, "FIXTURE_BASELINES_DIR", Path(tmpdir) / "baselines"), patch(
+                "debug_assistant_latest.teardown.subprocess.run", side_effect=fake_run
+            ), patch.dict(
+                teardown.TEARDOWN_CONFIG,
+                {"wrong_interface": {"docker_images": ["kube-wrong-interface-app"], "k8s_manifests": []}},
+                clear=False,
+            ):
+                teardown.teardown_environment("wrong_interface")
+
+            self.assertIn(
+                ["minikube", "-p", "minh-lane", "image", "ls", "--format=json"], commands
+            )
+            self.assertFalse(any(command[-2:] == ["rm", "kube-wrong-interface-app"] for command in commands))
+
+    def test_teardown_reports_failure_removing_confirmed_minikube_image(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            commands = []
+
+            def fake_run(command, **kwargs):
+                commands.append(command)
+                if command[-2:] == ["ls", "--format=json"]:
+                    return subprocess.CompletedProcess(
+                        command,
+                        0,
+                        stdout='[{"repoTags":["docker.io/library/kube-wrong-interface-app:latest"]}]',
+                        stderr="",
+                    )
+                if command[-2:] == ["rm", "kube-wrong-interface-app"]:
+                    return subprocess.CompletedProcess(command, 1, stdout="", stderr="remove failed")
+                return subprocess.CompletedProcess(command, 0, stdout="", stderr="")
+
+            with patch.object(teardown, "is_lane_active", return_value=True), patch.object(
+                teardown, "active_lane_config", return_value={"minikube_profile": "minh-lane"}
+            ), patch.object(teardown, "assert_lane_target"), patch.object(
+                teardown, "cleanup_transient_k8s_resources"
+            ), patch.object(teardown, "FIXTURE_BASELINES_DIR", Path(tmpdir) / "baselines"), patch(
+                "debug_assistant_latest.teardown.subprocess.run", side_effect=fake_run
+            ), patch.dict(
+                teardown.TEARDOWN_CONFIG,
+                {"wrong_interface": {"docker_images": ["kube-wrong-interface-app"], "k8s_manifests": []}},
+                clear=False,
+            ):
+                with self.assertRaisesRegex(teardown.TeardownFailure, "status 1"):
+                    teardown.teardown_environment("wrong_interface")
+
+            self.assertIn(
+                ["minikube", "-p", "minh-lane", "image", "rm", "kube-wrong-interface-app"], commands
+            )
+
     def test_cleanup_transient_k8s_resources_deletes_known_helper_resources(self):
         recorded_calls = []
 

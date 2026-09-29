@@ -211,7 +211,16 @@ class LabContextTests(unittest.TestCase):
         ), patch.object(teardown, "FIXTURE_BASELINES_DIR", Path(tmp)), patch.object(
             teardown.subprocess, "run"
         ) as run:
-            run.return_value = subprocess.CompletedProcess([], 0, stdout="", stderr="")
+            def fake_run(command, **kwargs):
+                stdout = (
+                    '[{"repoTags":["docker.io/library/kube-wrong-interface-app:latest"]}]'
+                    if command[:4] == ["minikube", "-p", "minh-lane", "image"]
+                    and command[4:6] == ["ls", "--format=json"]
+                    else ""
+                )
+                return subprocess.CompletedProcess(command, 0, stdout=stdout, stderr="")
+
+            run.side_effect = fake_run
             teardown.teardown_environment("wrong_interface")
         commands = [call.args[0] for call in run.call_args_list]
         self.assertTrue(any(command[:5] == ["minikube", "-p", "minh-lane", "image", "rm"] for command in commands))

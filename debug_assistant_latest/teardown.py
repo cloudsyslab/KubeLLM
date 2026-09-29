@@ -1,3 +1,4 @@
+import json
 import re
 import shutil
 import subprocess
@@ -195,6 +196,61 @@ def _cleanup_command(operation: str, command: list[str], timeout: int, failures:
     return result
 
 
+def _normalize_image_reference(reference: str) -> str:
+    """Normalize a listed or configured image name to Docker's default registry/tag."""
+    reference = reference.strip().lower()
+    if not reference or reference.endswith(":<none>"):
+        return ""
+    last_component = reference.rsplit("/", 1)[-1]
+    if ":" not in last_component and "@" not in last_component:
+        reference += ":latest"
+    first_component = reference.split("/", 1)[0]
+    if "/" not in reference:
+        reference = f"docker.io/library/{reference}"
+    elif "." not in first_component and ":" not in first_component and first_component != "localhost":
+        reference = f"docker.io/{reference}"
+    return reference
+
+
+def _list_case_images(lane: dict | None, failures: list[str]) -> set[str] | None:
+    if lane:
+        result = _cleanup_command(
+            "list selected-lane images",
+            ["minikube", "-p", lane["minikube_profile"], "image", "ls", "--format=json"],
+            30,
+            failures,
+        )
+        if result is None:
+            return None
+        try:
+            rows = json.loads(result.stdout)
+        except (TypeError, ValueError):
+            failures.append("list selected-lane images returned invalid JSON")
+            return None
+        if not isinstance(rows, list):
+            failures.append("list selected-lane images returned an unexpected shape")
+            return None
+        tags = {
+            _normalize_image_reference(tag)
+            for row in rows
+            if isinstance(row, dict)
+            for tag in row.get("repoTags", [])
+            if isinstance(tag, str)
+        }
+        return {tag for tag in tags if tag}
+
+    result = _cleanup_command(
+        "list local case images",
+        ["docker", "image", "ls", "--format", "{{.Repository}}:{{.Tag}}"],
+        30,
+        failures,
+    )
+    if result is None:
+        return None
+    tags = {_normalize_image_reference(tag) for tag in result.stdout.splitlines()}
+    return {tag for tag in tags if tag}
+
+
 def list_teardown_tests():
     return list(TEARDOWN_CONFIG.keys())
 
@@ -319,8 +375,13 @@ def teardown_environment(test_env_name: str) -> None:
             except Exception as exc:
                 failures.append(f"transient resource cleanup failed ({type(exc).__name__})")
 
+            available_images = _list_case_images(lane, failures) if config["docker_images"] else set()
             for image in config["docker_images"]:
                 if lane:
+                    if available_images is None or _normalize_image_reference(image) not in available_images:
+                        # Image removal is not idempotent in Minikube: an absent
+                        # image is a normal cleanup no-op, not an integrity error.
+                        continue
                     _cleanup_command(
                         f"remove case image {image}",
                         ["minikube", "-p", lane["minikube_profile"], "image", "rm", image],
@@ -337,7 +398,8 @@ def teardown_environment(test_env_name: str) -> None:
                 )
                 for cid in (result.stdout.strip().splitlines() if result else []):
                     _cleanup_command(f"remove case container for {image}", ["docker", "rm", "-f", cid], 30, failures)
-                _cleanup_command(f"remove case image {image}", ["docker", "rmi", "-f", image], 120, failures)
+                if available_images is not None and _normalize_image_reference(image) in available_images:
+                    _cleanup_command(f"remove case image {image}", ["docker", "rmi", "-f", image], 120, failures)
 
             for manifest in config["k8s_manifests"]:
                 manifest_path = TROUBLESHOOTING_DIR / test_env_name / manifest.format(name=test_env_name)
