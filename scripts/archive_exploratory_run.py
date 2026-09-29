@@ -68,6 +68,9 @@ def archive_run(source: Path, destination: Path, model_ids: set[str]) -> None:
     aggregate = read("aggregate.json")
     if aggregate is not None:
         outputs[Path("aggregate.json")] = reader._aggregate(aggregate)
+    run_control = read("run_control.json")
+    if run_control is not None:
+        outputs[Path("run_control.json")] = reader._run_control(run_control)
     for case in cases:
         for name, project in (("summary.json", reader._summary),
                               ("knowledge_execution.json", reader._knowledge_execution)):

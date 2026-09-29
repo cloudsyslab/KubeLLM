@@ -5,11 +5,12 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 from pathlib import Path
 from typing import Any
 
 
-ALLOWED = {"summary.json", "aggregate.json", "knowledge_execution.json"}
+ALLOWED = {"summary.json", "aggregate.json", "knowledge_execution.json", "run_control.json"}
 MAX_JSON_BYTES = 2 * 1024 * 1024
 STATUS_VALUES = {
     "action_failed",
@@ -40,6 +41,7 @@ ARCHITECTURE_OUTCOMES = {
     "knowledge_output_invalid",
     "pending_ground_truth",
 }
+RUN_CONTROL_STATUSES = {"running", "completed", "stopped_cleanup_failure", "interrupted"}
 SUMMARY_FIELDS = {
     "started_at",
     "finished_at",
@@ -48,6 +50,7 @@ SUMMARY_FIELDS = {
     "ground_truth_passed",
     "ground_truth_configured",
     "debug_self_report",
+    "interrupted",
 }
 AGGREGATE_FIELDS = {
     "generated_at",
@@ -133,6 +136,9 @@ def _summary(value: Any) -> dict[str, Any]:
     outcome = value.get("architecture_outcome")
     if isinstance(outcome, str) and outcome in ARCHITECTURE_OUTCOMES | {"execution_completed"}:
         output["architecture_outcome"] = outcome
+    teardown_status = value.get("teardown_status")
+    if isinstance(teardown_status, str) and teardown_status in {"not_run", "passed", "failed"}:
+        output["teardown_status"] = teardown_status
     for field in SUMMARY_FIELDS:
         if field in {"started_at", "finished_at"}:
             safe = _safe_timestamp(value.get(field))
@@ -215,6 +221,40 @@ def _knowledge_execution(value: Any) -> dict[str, Any]:
     return output
 
 
+def _run_control(value: Any) -> dict[str, Any]:
+    """Keep suite completeness metadata while excluding free-form stop details."""
+    if not isinstance(value, dict):
+        return {"shape": "unsupported"}
+    output: dict[str, Any] = {}
+    status = value.get("status")
+    if isinstance(status, str) and status in RUN_CONTROL_STATUSES:
+        output["status"] = status
+        if status == "stopped_cleanup_failure":
+            output["stop_reason"] = "cleanup_failure"
+        elif status == "interrupted":
+            output["stop_reason"] = "keyboard_interrupt"
+    for field in ("planned_count", "completed_count"):
+        number = value.get(field)
+        if type(number) is int and number >= 0:
+            output[field] = number
+    for field in (
+        "planned_test_names",
+        "completed_test_names",
+        "in_progress_test_names",
+        "unstarted_test_names",
+    ):
+        names = value.get(field)
+        if isinstance(names, list) and len(names) <= 500 and all(
+            isinstance(name, str) and re.fullmatch(r"[a-z][a-z0-9_]{0,100}", name)
+            for name in names
+        ):
+            output[field] = names
+    updated_at = _safe_timestamp(value.get("updated_at"))
+    if updated_at is not None:
+        output["updated_at"] = updated_at
+    return output
+
+
 def _project(name: str, value: Any) -> dict[str, Any]:
     if name == "summary.json":
         return _summary(value)
@@ -222,6 +262,8 @@ def _project(name: str, value: Any) -> dict[str, Any]:
         return _aggregate(value)
     if name == "knowledge_execution.json":
         return _knowledge_execution(value)
+    if name == "run_control.json":
+        return _run_control(value)
     return {"shape": "unsupported"}
 
 
