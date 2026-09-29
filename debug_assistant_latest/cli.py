@@ -267,6 +267,8 @@ def _repeat_iteration_worker(result_queue, payload):
         else:
             exit_code = cmd_run_many(iter_args)
         result_queue.put(("ok", exit_code, output_dir_str))
+    except KeyboardInterrupt:
+        result_queue.put(("ok", 130, output_dir_str))
     except Exception as exc:
         result_queue.put(("error", str(exc), output_dir_str))
 
@@ -318,6 +320,7 @@ def _run_repeat_queue(args, mode, base_run_id, base_output_dir):
 
     queue_started_at = datetime.now().isoformat()
     queue_start = time.perf_counter()
+    stop_reason = None
 
     for i in range(1, total + 1):
         iter_start = time.perf_counter()
@@ -334,8 +337,28 @@ def _run_repeat_queue(args, mode, base_run_id, base_output_dir):
         proc.start()
 
         # Wait for the process with stall timeout
-        proc.join(timeout=stall_limit)
+        parent_interrupted = False
+        try:
+            proc.join(timeout=stall_limit)
+        except KeyboardInterrupt:
+            parent_interrupted = True
+            print("\n[INTERRUPTED] Waiting briefly for the active iteration to record cleanup/results.")
+            proc.join(timeout=120)
         iter_duration = time.perf_counter() - iter_start
+
+        if proc.is_alive() and parent_interrupted:
+            print("[INTERRUPTED] Active iteration did not stop cleanly; terminating it.")
+            proc.terminate()
+            proc.join(timeout=5)
+            if proc.is_alive():
+                proc.kill()
+                proc.join(timeout=2)
+            result_q.close()
+            result_q.cancel_join_thread()
+            iter_out = str(Path(base_output_dir) / base_run_id / f"iter-{i:03d}")
+            results.append((i, 130, iter_duration, iter_out))
+            stop_reason = "keyboard_interrupt"
+            break
 
         if proc.is_alive():
             # Stall detected — hard-kill the iteration
@@ -388,6 +411,14 @@ def _run_repeat_queue(args, mode, base_run_id, base_output_dir):
         result_q.cancel_join_thread()
 
         results.append((i, exit_code, iter_duration, output_dir_str))
+        if parent_interrupted:
+            stop_reason = "keyboard_interrupt"
+            print("[STOP] Operator interruption received; remaining repeats will not run.")
+            break
+        if exit_code in (2, 130):
+            stop_reason = "cleanup_failure" if exit_code == 2 else "keyboard_interrupt"
+            print(f"[STOP] Iteration {i} ended with {stop_reason}; remaining repeats will not run.")
+            break
         print()
 
     # Queue summary (console)
@@ -400,8 +431,19 @@ def _run_repeat_queue(args, mode, base_run_id, base_output_dir):
     passed = sum(1 for _, ec, _, _ in results if ec == 0)
     failed = sum(1 for _, ec, _, _ in results if ec is not None and ec != 0)
     stalled = sum(1 for _, ec, _, _ in results if ec is None)
+    def _repeat_status(exit_code):
+        if exit_code == 0:
+            return "PASS"
+        if exit_code is None:
+            return "STALL"
+        if exit_code == 2:
+            return "CLEANUP_FAILURE"
+        if exit_code == 130:
+            return "INTERRUPTED"
+        return "FAIL"
+
     for iteration, ec, dur, _ in results:
-        tag = "PASS" if ec == 0 else ("STALL" if ec is None else "FAIL")
+        tag = _repeat_status(ec)
         print(f"  Iteration {iteration}: {tag} ({dur:.1f}s)")
     print()
     print(f"  Passed: {passed}  Failed: {failed}  Stalled: {stalled}")
@@ -415,11 +457,13 @@ def _run_repeat_queue(args, mode, base_run_id, base_output_dir):
         "stall_limit_s": stall_limit,
         "started_at": queue_started_at,
         "finished_at": queue_finished_at,
+        "status": "stopped" if stop_reason or stalled else "completed",
+        "stop_reason": stop_reason or ("stall" if stalled else None),
         "cli_overrides": build_overrides_from_args(args),
         "results": [],
     }
     for iteration, ec, dur, out_dir in results:
-        tag = "PASS" if ec == 0 else ("STALL" if ec is None else "FAIL")
+        tag = _repeat_status(ec)
         od = Path(out_dir)
         rc_path = od / "run_config.json"
         summary_obj["results"].append(
@@ -441,6 +485,10 @@ def _run_repeat_queue(args, mode, base_run_id, base_output_dir):
     print(f"\n  Queue summary written to: {summary_path}")
 
     # Return non-zero if any iteration failed/stalled
+    if stop_reason == "keyboard_interrupt":
+        return 130
+    if stop_reason == "cleanup_failure":
+        return 2
     if failed > 0 or stalled > 0:
         return 1
     return 0
