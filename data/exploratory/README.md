@@ -30,6 +30,7 @@ transcript is included.
 | [`blocked-glm47-attempts-2026-07/`](blocked-glm47-attempts-2026-07/) | 2 archived run configs and provenance records | No case summaries were emitted; see the failure classification below. |
 | [`parser-corrective-smokes-2026-09/`](parser-corrective-smokes-2026-09/) | 16 outcomes across 2 cases and 4 techniques | Eight dirty pre-fix runs and eight clean post-fix runs; outcome-only exports, not a comparative benchmark. |
 | [`local-lab-consolidation-smoke-2026-09/`](local-lab-consolidation-smoke-2026-09/) | 4 `wrong_port` outcomes, one per technique | One smoke each; all Ground Truth passed, while single-agent Verification disagreed once. |
+| [`knowledgeagentonly-vs-allsteps-interrupted-2026-09/`](knowledgeagentonly-vs-allsteps-interrupted-2026-09/) | 27 all-steps summaries and 26 Knowledge stage artifacts | First 270-attempt comparison stopped during Knowledge repetition 1; see the archive's integrity diagnosis. |
 
 New outcome-only exports use `scripts/archive_exploratory_run.py`, which reuses
 the audit reader's allowlisted projections and requires explicitly reviewed
@@ -38,7 +39,9 @@ older, richer archives, these exports omit verifier prose, Ground Truth check
 commands, and free-form errors entirely; summary Ground Truth/Verification
 outcomes remain separate. Missing or null outcomes stay unknown. They are not
 complete inputs to the full integrity analyzer even if copied out of this
-archive. Raw evidence remains private under ignored `.local/`.
+archive. Run-control projections preserve queue completeness and categorical
+stop reasons without exporting free-form cleanup diagnostics. Raw evidence
+remains private under ignored `.local/`.
 
 The two July GLM 4.7 attempts stopped before producing benchmark observations:
 the earlier attempt was blocked by readiness/image-import failures (including a
