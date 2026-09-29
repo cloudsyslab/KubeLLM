@@ -22,8 +22,21 @@ def fixture(tmp_path):
         "run_config.json": {"run_id": "2026-09-28T11-48-23", "technique": "stepByStep",
                             "test_names": ["wrong_port"], "rag_api_url": "PRIVATE"},
         "provenance.json": {"git_commit": "a" * 40, "git_dirty": True, "environment": "PRIVATE"},
+        "run_control.json": {
+            "status": "stopped_cleanup_failure",
+            "stop_reason": "PRIVATE path / secret token",
+            "planned_count": 2,
+            "completed_count": 1,
+            "planned_test_names": ["wrong_port", "wrong_interface"],
+            "completed_test_names": ["wrong_port"],
+            "in_progress_test_names": [],
+            "unstarted_test_names": ["wrong_interface"],
+            "updated_at": "2026-09-28T11:48:23",
+        },
         "wrong_port/summary.json": {"status": "TIMEOUT", "ground_truth_passed": False,
                                     "verified": None, "error_message": "PRIVATE",
+                                    "teardown_status": "failed", "teardown_error": "PRIVATE",
+                                    "interrupted": True,
                                     "metrics": {"api": {"cost": 0.12, "secret": "PRIVATE"}}},
         "wrong_port/config_effective.json": {"api-agent": {"model": "gpt-5-mini", "key": "PRIVATE"}},
         "wrong_port/knowledge_execution.json": {
@@ -46,7 +59,13 @@ def test_export_preserves_outcomes_without_secrets_or_default_discovery(tmp_path
     assert summary["status"] == "TIMEOUT"  # Historical labels are not repaired.
     assert summary["ground_truth_passed"] is False
     assert "verified" not in summary  # Unknown is never converted into success/failure.
+    assert summary["teardown_status"] == "failed"
+    assert summary["interrupted"] is True
     assert summary["metrics"]["api"]["cost"] == 0.12
+    control = json.loads((destination / "run_control.json").read_text())
+    assert control["status"] == "stopped_cleanup_failure"
+    assert control["stop_reason"] == "cleanup_failure"
+    assert control["completed_test_names"] == ["wrong_port"]
     assert json.loads((destination / "provenance.archived.json").read_text())["git_dirty"] is True
     assert list(analyze.iter_run_dirs(destination.parent)) == []
     with pytest.raises(FileExistsError):
