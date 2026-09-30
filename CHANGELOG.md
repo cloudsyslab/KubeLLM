@@ -8,7 +8,7 @@ All notable documentation and workflow changes are listed here. For file-level r
 
 ## 2026-03-26 — Agentic debug loop (Phases 1–5)
 
-Autonomous iteration support: Windows timeouts, metrics on all debug paths, relaxed verification tokens, consistent `main.py` return shapes, `preflight.py`, `result_interpreter.py` / `error_catalog.py`, runner flags (`--diagnose-last`, `--latest-run`, `--dashboard`), `error_context` on `summary.json`, and a structured agent runbook. Current diagnosis guidance lives in [the audit skill](.agents/skills/audit-kubellm/references/diagnosis-loop.md).
+Autonomous iteration support: Windows timeouts, metrics on all debug paths, relaxed verification tokens, consistent `main.py` return shapes, `preflight.py`, `result_interpreter.py` / `error_catalog.py`, runner flags (`--diagnose-last`, `--latest-run`, `--dashboard`), `error_context` on `summary.json`, and a structured agent runbook. Current diagnosis guidance lives in [the benchmark skill](.agents/skills/kubellm-benchmarks/references/diagnosis-loop.md).
 
 Details: see the repository history for the implementation commits and [the archived sprint plan](docs/archive/sprint.md).
 

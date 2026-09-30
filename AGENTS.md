@@ -7,9 +7,7 @@ Keep its measurements reproducible and its Ground Truth honest.
 
 - `$grilling`, `$discovery`, and `$build-from-plan` cover alignment, research,
   and implementation.
-- `$audit-kubellm` inspects repository behavior and existing run evidence
-  without mutation.
-- `$run-kubellm-benchmarks` owns readiness, live runs, and their diagnosis.
+- `$kubellm-benchmarks` runs and reports suites or analyzes existing evidence.
 
 Load only the narrowest matching skill; benchmark operation details belong in
 those skills, not duplicated here.
@@ -43,7 +41,7 @@ those skills, not duplicated here.
 - Code changes: `python3 -m pytest tests/ -q`.
 - Case/runner changes: also run `python3 debug_assistant_latest/runner.py --list`
   and `--validate-ground-truth`.
-- Live cluster work: follow `$run-kubellm-benchmarks`; do not bypass its
+- Live cluster work: follow `$kubellm-benchmarks`; do not bypass its
   readiness or teardown gates.
 - Inspect the diff and current Git state. Commits, branches, pushes, and merges
   require an explicit user request.

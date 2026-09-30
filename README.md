@@ -8,7 +8,7 @@ The canonical interface is `debug_assistant_latest/runner.py`; cases live in
 `debug_assistant_latest/troubleshooting/`. Four techniques can be selected:
 `allStepsAtOnce`, `stepByStep`, `singleAgent`, and `knowledgeAgentOnly`. The
 last validates the Knowledge Agent's structured plan and executes it without
-a generative tools agent. See the [architecture reference](.agents/skills/audit-kubellm/references/architecture.md).
+a generative tools agent. See the [architecture reference](.agents/skills/kubellm-benchmarks/references/architecture.md).
 
 ## Quick start
 
@@ -26,7 +26,7 @@ and Kubernetes environment. Run `runner.py --preflight` before a live case.
 For an isolated/shared lab, select its owner-only lane explicitly with
 `KUBELLM_LAB_CONFIG` or `--lab-config`; do not rely on the current kubectl
 context or shared defaults. Full preparation and safe run commands are in
-[$run-kubellm-benchmarks](.agents/skills/run-kubellm-benchmarks/SKILL.md).
+[$kubellm-benchmarks](.agents/skills/kubellm-benchmarks/SKILL.md).
 
 Example after the selected environment is ready:
 
@@ -35,7 +35,8 @@ python3 debug_assistant_latest/runner.py wrong_port --technique knowledgeAgentOn
 ```
 
 Run unit tests with `python3 -m pytest tests/ -q`. Keep generated benchmark
-artifacts in ignored `.local/`; review them with `$audit-kubellm`. The
+artifacts in ignored `.local/`; use `$kubellm-benchmarks` to run and report a
+suite or analyze existing results. The
 [benchmark catalog](data/README.md) documents structured exports and their
 integrity status.
 

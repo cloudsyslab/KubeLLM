@@ -93,6 +93,29 @@ def iter_run_dirs(data: Path) -> Iterable[tuple[Path, Path, Path]]:
     A data root may contain configuration directories, or itself be one
     configuration directory whose immediate children are iterations.
     """
+    data = data.resolve()
+
+    # An explicitly selected runner output may itself be the iteration
+    # directory. Treat it as the run instead of guessing that its parent is a
+    # configuration and attempting to trim the input path from its parent.
+    direct_config = data / "run_config.json"
+    if direct_config.is_file():
+        yield data, data, direct_config
+        return
+
+    # Runner queues put their iteration directories directly below a queue
+    # directory. Walking that path recursively has the same answer today, but
+    # selecting the direct children makes queue boundaries explicit.
+    if (data / "queue_summary.json").is_file():
+        for run_dir in sorted(
+            (child for child in data.iterdir() if child.is_dir()),
+            key=lambda path: path.name,
+        ):
+            config_path = run_dir / "run_config.json"
+            if config_path.is_file():
+                yield data, run_dir, config_path
+        return
+
     config_paths: list[Path] = []
     pending = [data]
     visited: set[tuple[int, int]] = set()
@@ -223,6 +246,9 @@ def parse(data: Path) -> tuple[pd.DataFrame, pd.DataFrame]:
                 "debug_model": debug.get("model") or model_cfg.get("debug-agent", {}).get("model"),
                 "verification_model": verify.get("model") or model_cfg.get("verification-agent", {}).get("model"),
                 "status": summary.get("status"), "verified": verified, "ground_truth_passed": truth, "success": truth,
+                "debug_self_report": summary.get("debug_self_report") if isinstance(summary.get("debug_self_report"), bool) else None,
+                "started_at": summary.get("started_at") if isinstance(summary.get("started_at"), str) else None,
+                "finished_at": summary.get("finished_at") if isinstance(summary.get("finished_at"), str) else None,
                 "verification_correct": None if truth is None or verified is None else verified == truth,
                 "ground_truth_log_passed": log_truth,
                 "duration_s": number(summary.get("duration_s")), "failure_category": classify_failure(summary, gt),

@@ -15,7 +15,7 @@ from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[1]
 spec = importlib.util.spec_from_file_location(
-    "inspect_run", REPO / ".agents/skills/audit-kubellm/scripts/inspect_run.py"
+    "inspect_run", REPO / ".agents/skills/kubellm-benchmarks/scripts/inspect_run.py"
 )
 reader = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(reader)

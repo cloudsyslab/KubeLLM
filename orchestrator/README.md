@@ -13,4 +13,4 @@ contains optional helpers for separately selected environments:
 Do not use these helpers to bypass runner readiness, select another
 researcher's profile, or perform broad teardown. For complete preparation and
 benchmark operation, use
-[`$run-kubellm-benchmarks`](../.agents/skills/run-kubellm-benchmarks/SKILL.md).
+[`$kubellm-benchmarks`](../.agents/skills/kubellm-benchmarks/SKILL.md).

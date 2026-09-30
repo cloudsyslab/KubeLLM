@@ -21,6 +21,14 @@ filter them to improve a score.
 
 The fixed seed makes bootstrap results repeatable. `--bootstrap-replicates` defaults to 10,000; lower it for exploratory runs. `analyze.py` removes and recreates the nominated output directory, so point `--output` only at generated artifacts.
 
+For the standard Markdown suite summary, use the KubeLLM benchmark skill's
+reporter. It uses these integrity checks and writes beside ignored runs or
+under .local/benchmark_reports/ for tracked exports:
+
+~~~bash
+python3 .agents/skills/kubellm-benchmarks/scripts/summarize_run.py <RUN_OR_EXPORT_DIR>
+~~~
+
 ## Artifacts
 
 * `outputs/normalized_observations.csv`: normalized record for every parseable observation, including source path and explicitly missing values.
