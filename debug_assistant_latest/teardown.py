@@ -166,6 +166,10 @@ TRANSIENT_K8S_POD_NAME_PATTERNS = [
 ]
 
 KUBECTL_COMMAND_TIMEOUT_S = 20
+# Case manifests may include pods that take longer than helper-resource deletes
+# to terminate. Keep this budget separate so a slow case teardown does not
+# prematurely stop an otherwise healthy benchmark queue.
+CASE_MANIFEST_DELETE_TIMEOUT_S = 60
 TEARDOWN_RECOVERY_WINDOW_S = 60
 
 
@@ -563,7 +567,7 @@ def teardown_environment(test_env_name: str) -> list[str]:
                 _cleanup_command(
                     f"delete case manifest {manifest}",
                     ["kubectl", "delete", "-f", str(manifest_path), "--grace-period=5", "--ignore-not-found=true"],
-                    KUBECTL_COMMAND_TIMEOUT_S,
+                    CASE_MANIFEST_DELETE_TIMEOUT_S,
                     failures,
                     recoverable_timeouts,
                 )
