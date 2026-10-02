@@ -10,7 +10,14 @@ from pathlib import Path
 from typing import Any
 
 
-ALLOWED = {"summary.json", "aggregate.json", "knowledge_execution.json", "run_control.json"}
+ALLOWED = {
+    "summary.json",
+    "aggregate.json",
+    "ground_truth.json",
+    "verification_report.meta.json",
+    "knowledge_execution.json",
+    "run_control.json",
+}
 MAX_JSON_BYTES = 2 * 1024 * 1024
 STATUS_VALUES = {
     "action_failed",
@@ -82,6 +89,7 @@ AGGREGATE_FIELDS = {
     "wall_clock_s",
 }
 METRIC_FIELDS = {"cost", "duration_s", "input_tokens", "output_tokens", "total_tokens"}
+GROUND_TRUTH_STATUSES = {"PASS", "FAIL", "ERROR", "SKIP"}
 
 
 def _safe_status(value: Any) -> str | None:
@@ -161,6 +169,75 @@ def _summary(value: Any) -> dict[str, Any]:
     safe_metrics = _metrics(value.get("metrics"))
     if safe_metrics:
         output["metrics"] = safe_metrics
+    return output
+
+
+def _ground_truth(value: Any) -> dict[str, Any]:
+    """Keep check outcomes and timings while dropping commands and observations."""
+    if not isinstance(value, dict):
+        return {"shape": "unsupported"}
+    output: dict[str, Any] = {}
+    passed = _safe_bool(value.get("passed"))
+    if passed is not None:
+        output["passed"] = passed
+    checks = value.get("checks")
+    if isinstance(checks, list) and len(checks) <= 200:
+        safe_checks = []
+        for check in checks:
+            if not isinstance(check, dict):
+                continue
+            safe_check: dict[str, Any] = {}
+            name = check.get("name")
+            if isinstance(name, str) and re.fullmatch(r"[a-zA-Z][a-zA-Z0-9_. -]{0,100}", name):
+                safe_check["name"] = name
+            status = check.get("status")
+            if isinstance(status, str) and status in GROUND_TRUTH_STATUSES:
+                safe_check["status"] = status
+            for field in ("attempts", "duration_ms"):
+                number = check.get(field)
+                if type(number) is int and number >= 0:
+                    safe_check[field] = number
+            if safe_check:
+                safe_checks.append(safe_check)
+        output["checks"] = safe_checks
+    summary = value.get("summary")
+    if isinstance(summary, dict):
+        safe_summary = {
+            field: number
+            for field in ("PASS", "FAIL", "ERROR", "SKIP")
+            if type(number := summary.get(field)) is int and number >= 0
+        }
+        if safe_summary:
+            output["summary"] = safe_summary
+    duration = value.get("total_duration_ms")
+    if type(duration) is int and duration >= 0:
+        output["total_duration_ms"] = duration
+    timestamp = _safe_timestamp(value.get("timestamp"))
+    if timestamp is not None:
+        output["timestamp"] = timestamp
+    version = value.get("ground_truth_schema_version")
+    if isinstance(version, str) and re.fullmatch(r"[0-9][0-9A-Za-z._-]{0,31}", version):
+        output["ground_truth_schema_version"] = version
+    schema_hash = value.get("ground_truth_schema_sha256")
+    if isinstance(schema_hash, str) and re.fullmatch(r"[0-9a-f]{64}", schema_hash):
+        output["ground_truth_schema_sha256"] = schema_hash
+    return output
+
+
+def _verification_meta(value: Any) -> dict[str, Any]:
+    """Keep verifier verdict and report fingerprint, never verifier prose."""
+    if not isinstance(value, dict):
+        return {"shape": "unsupported"}
+    output: dict[str, Any] = {}
+    status = _safe_bool(value.get("verification_status"))
+    if status is not None:
+        output["verification_status"] = status
+    digest = value.get("content_sha256")
+    if isinstance(digest, str) and re.fullmatch(r"[0-9a-f]{64}", digest):
+        output["content_sha256"] = digest
+    length = value.get("content_length")
+    if type(length) is int and length >= 0:
+        output["content_length"] = length
     return output
 
 
@@ -270,6 +347,10 @@ def _project(name: str, value: Any) -> dict[str, Any]:
         return _summary(value)
     if name == "aggregate.json":
         return _aggregate(value)
+    if name == "ground_truth.json":
+        return _ground_truth(value)
+    if name == "verification_report.meta.json":
+        return _verification_meta(value)
     if name == "knowledge_execution.json":
         return _knowledge_execution(value)
     if name == "run_control.json":

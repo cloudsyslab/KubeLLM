@@ -12,14 +12,13 @@ therefore excludes this tree. If a focused analysis is needed, copy one
 experiment and technique directory to a disposable location and restore the
 run-config filename there; never rename the gate in this tracked archive.
 
-The curation keeps case summaries and measured metrics, Ground Truth files,
-effective model identifiers, aggregate counts, verifier reports, and a
-restricted provenance subset (`git_commit`, `git_dirty`, run ID). Verifier
-reports are redacted for personal paths, profile/context names, and database
-URLs; their metadata hash/length is recomputed over the redacted copy. It omits
-stdout/stderr, raw agent transcripts, knowledge plans/execution payloads,
-prompts, setup commands, endpoints, and private lane identifiers. No raw tool
-transcript is included.
+The curation keeps sanitized case summaries and metrics, Ground Truth
+check outcomes and timings, verifier verdict metadata, effective model IDs
+and generation settings, aggregate counts, run-control completeness, and a
+restricted provenance subset (`git_commit`, `git_dirty`, run ID). It omits
+commands, expected/actual values, verifier prose, stdout/stderr, raw agent
+transcripts, knowledge plans, prompts, endpoints, and private lane identifiers.
+No raw tool transcript is included.
 
 | Archive | Retained evidence | Limitation |
 |---|---:|---|
@@ -33,18 +32,16 @@ transcript is included.
 | [`knowledgeagentonly-vs-allsteps-interrupted-2026-09/`](knowledgeagentonly-vs-allsteps-interrupted-2026-09/) | 27 all-steps summaries and 26 Knowledge stage artifacts | First 270-attempt comparison stopped during Knowledge repetition 1; see the archive's integrity diagnosis. |
 | [`knowledgeagentonly-vs-allsteps-integrity-stop-2026-09/`](knowledgeagentonly-vs-allsteps-integrity-stop-2026-09/) | 141 results: five complete suites and six cases from a partial suite | Stopped on a cleanup timeout; only repetitions 1–2 form complete pairs, so results are interim/exploratory. |
 | [`knowledgeagentonly-vs-allsteps-cleanup-recovery-continuation-2026-09/`](knowledgeagentonly-vs-allsteps-cleanup-recovery-continuation-2026-09/) | 108 continuation outcomes plus derived analysis reconciling all 249 observations | Stopped during KAO repetition 5 after a cleanup postcondition found a configured image still present. Repetitions 1–4 provide 108 paired outcomes per technique; KAO rep 3 spans pre-patch and teardown-patch sources, and rep 5 is incomplete. See the [interim analysis](knowledgeagentonly-vs-allsteps-cleanup-recovery-continuation-2026-09/interim_analysis.md). |
-| [`kao-singleagent-gpt5mini-2026-10/`](kao-singleagent-gpt5mini-2026-10/) | 270 outcomes across 11 source runs; 135 per technique | Same 27 cases and five planned repetitions; KAO iteration 5 was completed in a separate recovery queue. Dirty source provenance and different active stages; exploratory only. |
+| [`kao-singleagent-gpt5mini-2026-10/`](kao-singleagent-gpt5mini-2026-10/) | 270 outcomes and sanitized structured evidence across 11 source runs; 135 per technique | Same 27 cases and five planned repetitions; KAO iteration 5 was completed in a separate recovery queue. Dirty source provenance and different active stages; exploratory only. Includes the comparison and per-run Markdown reports. |
 
-New outcome-only exports use `scripts/archive_exploratory_run.py`, which reuses
-the audit reader's allowlisted projections and requires explicitly reviewed
-model IDs. It rejects linked inputs and existing destinations. Unlike the
-older, richer archives, these exports omit verifier prose, Ground Truth check
-commands, and free-form errors entirely; summary Ground Truth/Verification
-outcomes remain separate. Missing or null outcomes stay unknown. They are not
-complete inputs to the full integrity analyzer even if copied out of this
-archive. Run-control projections preserve queue completeness and categorical
-stop reasons without exporting free-form cleanup diagnostics. Raw evidence
-remains private under ignored `.local/`.
+New sanitized packs use `scripts/archive_exploratory_run.py`, which reuses the
+audit reader's allowlisted projections and requires explicitly reviewed model
+IDs. It rejects linked inputs and existing destinations. Ground Truth check
+names, statuses, and timings and verifier verdict metadata are retained;
+commands, free-form results, and verifier prose are omitted. Missing or null
+outcomes stay unknown. Run-control projections preserve queue completeness
+and categorical stop reasons without exporting free-form cleanup diagnostics.
+Raw evidence remains private under ignored `.local/`.
 
 The two July GLM 4.7 attempts stopped before producing benchmark observations:
 the earlier attempt was blocked by readiness/image-import failures (including a

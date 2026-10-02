@@ -33,13 +33,28 @@ def fixture(tmp_path):
             "unstarted_test_names": ["wrong_interface"],
             "updated_at": "2026-09-28T11:48:23",
         },
-        "wrong_port/summary.json": {"status": "TIMEOUT", "ground_truth_passed": False,
+        "wrong_port/summary.json": {"test_name": "wrong_port", "status": "TIMEOUT", "ground_truth_passed": False,
                                     "verified": None, "error_message": "PRIVATE",
                                     "teardown_status": "failed", "teardown_error": "PRIVATE",
                                     "teardown_recoveries": ["case_manifest_delete_timeout_confirmed"],
                                     "interrupted": True,
                                     "metrics": {"api": {"cost": 0.12, "secret": "PRIVATE"}}},
-        "wrong_port/config_effective.json": {"api-agent": {"model": "gpt-5-mini", "key": "PRIVATE"}},
+        "wrong_port/ground_truth.json": {
+            "test_name": "wrong_port", "passed": False,
+            "checks": [{"name": "service_ready", "status": "FAIL", "attempts": 2,
+                        "duration_ms": 100, "cmd": "PRIVATE", "expected": "PRIVATE",
+                        "actual": "PRIVATE", "description": "PRIVATE", "error": "PRIVATE"}],
+            "summary": {"PASS": 0, "FAIL": 1, "ERROR": 0, "SKIP": 0},
+            "ground_truth_schema_sha256": "b" * 64,
+        },
+        "wrong_port/verification_report.meta.json": {
+            "verification_status": False, "content_sha256": "c" * 64,
+            "content_length": 123, "private": "PRIVATE",
+        },
+        "wrong_port/config_effective.json": {
+            "test-name": "wrong_port",
+            "api-agent": {"model": "gpt-5-mini", "temperature": 0.1, "key": "PRIVATE"},
+        },
         "wrong_port/knowledge_execution.json": {
             "execution": {"status": "completed", "completed_action_count": 1,
                           "actions": [{"status": "completed", "command": "PRIVATE", "stdout": "PRIVATE"}]}},
@@ -64,6 +79,18 @@ def test_export_preserves_outcomes_without_secrets_or_default_discovery(tmp_path
     assert summary["teardown_recoveries"] == ["case_manifest_delete_timeout_confirmed"]
     assert summary["interrupted"] is True
     assert summary["metrics"]["api"]["cost"] == 0.12
+    ground_truth = json.loads((destination / "wrong_port/ground_truth.json").read_text())
+    assert ground_truth == {
+        "checks": [{"attempts": 2, "duration_ms": 100, "name": "service_ready", "status": "FAIL"}],
+        "ground_truth_schema_sha256": "b" * 64,
+        "passed": False,
+        "summary": {"ERROR": 0, "FAIL": 1, "PASS": 0, "SKIP": 0},
+    }
+    verifier = json.loads((destination / "wrong_port/verification_report.meta.json").read_text())
+    assert verifier == {"content_length": 123, "content_sha256": "c" * 64,
+                        "verification_status": False}
+    effective = json.loads((destination / "wrong_port/config_effective.json").read_text())
+    assert effective == {"api-agent": {"model": "gpt-5-mini", "temperature": 0.1}}
     control = json.loads((destination / "run_control.json").read_text())
     assert control["status"] == "stopped_cleanup_failure"
     assert control["stop_reason"] == "cleanup_failure"
@@ -89,3 +116,12 @@ def test_unreviewed_model_and_symlink_fail_before_writing(tmp_path):
 
 def test_all_exploratory_evidence_stays_excluded():
     assert list(analyze.iter_run_dirs(ROOT / "data/exploratory")) == []
+
+
+def test_inspector_projects_ground_truth_and_verification_without_free_text(tmp_path):
+    source = fixture(tmp_path)
+    inspected = archive.reader.inspect(source)
+    serialized = json.dumps(inspected)
+    assert "PRIVATE" not in serialized
+    assert "service_ready" in serialized
+    assert "verification_report.meta.json" in inspected["allowed_names"]

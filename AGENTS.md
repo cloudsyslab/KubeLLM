@@ -32,8 +32,9 @@ those skills, not duplicated here.
 - Treat `data/` as benchmark evidence. Do not reformat, deduplicate, or
   reinterpret exports outside an explicit data task; never infer missing
   outcomes.
-- Keep credentials, raw sessions, local services, generated logs, and run
-  outputs outside Git (normally under ignored `.local/`). Preserve unrelated
+- Keep credentials, raw sessions, local services, generated logs, and raw run
+  outputs outside Git (normally under ignored `.local/`). Sanitized structured
+  benchmark packs and their reports belong in `data/`. Preserve unrelated
   worktree changes.
 
 ## Validation and Git
@@ -44,4 +45,6 @@ those skills, not duplicated here.
 - Live cluster work: follow `$kubellm-benchmarks`; do not bypass its
   readiness or teardown gates.
 - Inspect the diff and current Git state. Commits, branches, pushes, and merges
-  require an explicit user request.
+  require an explicit user request. A direct benchmark-run request invokes the
+  scoped pack commit and push defined in the `$kubellm-benchmarks` skill; it
+  does not authorize publishing unrelated changes.

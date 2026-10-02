@@ -10,7 +10,7 @@ discovery, build-from-plan, and KubeLLM benchmarks.
 - [Case design](../.agents/skills/kubellm-benchmarks/references/test-cases.md)
 - [Benchmark reporting](../.agents/skills/kubellm-benchmarks/references/reporting.md)
 - [Benchmark export catalog](../data/README.md)
-- [GPT-5 mini KAO vs SingleAgent report pack](benchmarks/2026-10-02-gpt5mini-kao-singleagent/README.md)
+- [GPT-5 mini KAO vs SingleAgent data pack and reports](../data/exploratory/kao-singleagent-gpt5mini-2026-10/README.md)
 - [Branch and prototype preservation record](BRANCH_ARCHIVE.md)
 
 [`archive/`](archive/) contains historical development notes; these are not

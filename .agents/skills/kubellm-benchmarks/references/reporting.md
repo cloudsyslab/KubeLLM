@@ -37,7 +37,7 @@ For repeated cases, discuss iteration variation descriptively. Five repetitions 
 
 ## Privacy and preservation
 
-Keep the generated report beside new ignored run artifacts. For an input under tracked data/, write it to .local/benchmark_reports/ unless the user selected another destination. Do not overwrite, reformat, move, or add reports to benchmark exports.
+For a new run, write the generated report beside its ignored source artifacts and copy the reviewed Markdown report into that run's `data/` pack during publication. For analysis-only work on tracked data, write to `.local/benchmark_reports/` unless the user selects another destination. Do not modify source summaries or aggregates.
 
 Never include secrets, private lane selectors or profile names, service endpoints, environment variables, raw prompts, raw tool output, free-form exception text, knowledge plans, or absolute paths. Model identifiers, technique, case names, hashes, counts, and numeric metrics may be included after validating their field and shape.
 
