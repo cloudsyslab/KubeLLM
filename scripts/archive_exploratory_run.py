@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Publish allowlisted run evidence, never raw logs or execution payloads.
+"""Publish sanitized structured run evidence, never raw logs or text payloads.
 
 The .archived config name deliberately excludes exports from default analysis.
 Model identifiers must be explicitly reviewed and supplied by the operator.
@@ -72,8 +72,12 @@ def archive_run(source: Path, destination: Path, model_ids: set[str]) -> None:
     if run_control is not None:
         outputs[Path("run_control.json")] = reader._run_control(run_control)
     for case in cases:
-        for name, project in (("summary.json", reader._summary),
-                              ("knowledge_execution.json", reader._knowledge_execution)):
+        for name, project in (
+            ("summary.json", reader._summary),
+            ("ground_truth.json", reader._ground_truth),
+            ("verification_report.meta.json", reader._verification_meta),
+            ("knowledge_execution.json", reader._knowledge_execution),
+        ):
             relative = Path(case) / name
             value = read(relative)
             if value is not None:
@@ -87,11 +91,18 @@ def archive_run(source: Path, destination: Path, model_ids: set[str]) -> None:
                     continue
                 safe_role = {}
                 if "model" in details:
-                    if details["model"] not in model_ids:
+                    model = details["model"]
+                    if not isinstance(model, str) or model not in model_ids:
                         raise ValueError("Unreviewed model identifier; inspect privately first")
-                    safe_role["model"] = details["model"]
-                if type(details.get("temperature")) in (int, float):
-                    safe_role["temperature"] = details["temperature"]
+                    safe_role["model"] = model
+                for field in ("temperature", "top_p", "frequency_penalty", "presence_penalty"):
+                    number = details.get(field)
+                    if type(number) in (int, float):
+                        safe_role[field] = number
+                for field in ("max_tokens", "seed"):
+                    number = details.get(field)
+                    if type(number) is int:
+                        safe_role[field] = number
                 safe_effective[role] = safe_role
             outputs[Path(case) / "config_effective.json"] = safe_effective
     # Prepare everything before creating a new destination; never overwrite evidence.
