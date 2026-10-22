@@ -41,8 +41,10 @@ suite or analyze existing results. The
 integrity status.
 
 Agent operating rules and skill routes are in [AGENTS.md](AGENTS.md). The
-`docs/` directory retains branch-history records; benchmark and operational
-guidance lives with the focused skills under `.agents/skills/`.
+[documentation map](docs/README.md) links benchmark, prediction-research, and
+branch-history material. The paired selector pilot and its limitations are
+documented in [data analysis](data_analysis/README.md) and its
+[sanitized evidence pack](data/exploratory/prediction-pilot-2026-10/README.md).
 
 ## Citation
 
