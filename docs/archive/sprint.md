@@ -1,8 +1,11 @@
 # Sprint archive — agentic development loop
 
-The original phased plan and retrospective moved into `docs/history/` so this file stays a short pointer.
+This historical note refers to an earlier agentic-development sprint. The
+source plan and retrospective are not present in the current checkout; the
+paths below are retained as plain text for context, not as working links.
 
-- **Original plan (Phases 1–6):** [../history/sprint-agentic-loop-plan.md](../history/sprint-agentic-loop-plan.md)
-- **What shipped (Phases 1–5) and validation:** [../history/2026-03-26-agentic-loop-development-update.md](../history/2026-03-26-agentic-loop-development-update.md)
-- **Canonical agent runbook:** [../agents/agent-loop.md](../agents/agent-loop.md)
+- **Original plan (Phases 1–6):** former path `docs/history/sprint-agentic-loop-plan.md`
+- **What shipped (Phases 1–5) and validation:** former path `docs/history/2026-03-26-agentic-loop-development-update.md`
+- **Current agent instructions:** [AGENTS.md](../../AGENTS.md)
+- **Current documentation map:** [docs/README.md](../README.md)
 - **Changelog:** [../../CHANGELOG.md](../../CHANGELOG.md)
