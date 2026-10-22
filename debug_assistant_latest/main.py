@@ -40,6 +40,8 @@ from pathlib import Path
 from typing import Any, Dict, Optional, Tuple
 from runtime_progress import PhaseHeartbeat
 
+KNOWLEDGE_RESPONSE_SCHEMA_VERSION = 1
+
 # Use relative path from script location
 SCRIPT_DIR = Path(__file__).parent.absolute()
 db_path = str(SCRIPT_DIR.parent / "token_metrics.db")
@@ -172,6 +174,98 @@ def _run_api_phase(
         api_metrics.get("task_status"),
     )
     return api_metrics
+
+
+def _sha256_text(value: str) -> str:
+    return hashlib.sha256(value.encode("utf-8", errors="replace")).hexdigest()
+
+
+def _write_private_text(path: Path, value: str) -> None:
+    """Create a private local artifact without overwriting an earlier capture."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    os.chmod(path.parent, 0o700)
+    flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL
+    fd = os.open(path, flags, 0o600)
+    with os.fdopen(fd, "w", encoding="utf-8") as stream:
+        stream.write(value)
+        stream.flush()
+        os.fsync(stream.fileno())
+
+
+def _save_knowledge_response_artifact(
+    path: Path,
+    *,
+    response: str,
+    prompt: str,
+    test_name: str,
+    api_model: str,
+    runtime_context: Optional[Dict[str, Any]],
+) -> dict:
+    artifact = {
+        "schema_version": KNOWLEDGE_RESPONSE_SCHEMA_VERSION,
+        "test_name": test_name,
+        "api_model": api_model,
+        "prompt": prompt,
+        "prompt_sha256": _sha256_text(prompt),
+        "response_sha256": _sha256_text(response),
+        "source_run_id": (runtime_context or {}).get("run_id") or None,
+        "source_run_uuid": (runtime_context or {}).get("run_uuid") or None,
+        "response": response,
+    }
+    # The response can contain sensitive task context. Keep both files owner-only.
+    _write_private_text(path, response)
+    try:
+        _write_private_text(path.with_suffix(path.suffix + ".json"), json.dumps(artifact, indent=2) + "\n")
+    except Exception:
+        path.unlink(missing_ok=True)
+        raise
+    return artifact
+
+
+def _load_knowledge_response_artifact(
+    path: Path,
+    *,
+    prompt: str,
+    test_name: str,
+) -> dict:
+    metadata_path = path.with_suffix(path.suffix + ".json")
+    metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+    response = path.read_text(encoding="utf-8")
+    if metadata.get("schema_version") != KNOWLEDGE_RESPONSE_SCHEMA_VERSION:
+        raise ValueError(f"Unsupported KnowledgeAgent response artifact schema: {metadata_path}")
+    if metadata.get("test_name") != test_name:
+        raise ValueError(
+            f"KnowledgeAgent response belongs to {metadata.get('test_name')!r}, not {test_name!r}"
+        )
+    saved_prompt = metadata.get("prompt")
+    if not isinstance(saved_prompt, str) or metadata.get("prompt_sha256") != _sha256_text(saved_prompt):
+        raise ValueError(f"KnowledgeAgent prompt artifact checksum does not match: {metadata_path}")
+    if metadata.get("prompt_sha256") != _sha256_text(prompt):
+        raise ValueError("KnowledgeAgent response prompt fingerprint does not match this task/configuration")
+    if metadata.get("response_sha256") != _sha256_text(response):
+        raise ValueError(f"KnowledgeAgent response checksum does not match: {path}")
+    metadata["response"] = response
+    return metadata
+
+
+def _write_knowledge_response_trace(
+    runtime_context: Optional[Dict[str, Any]],
+    artifact: dict,
+    *,
+    mode: str,
+    source_path: Path,
+) -> None:
+    if not runtime_context or not runtime_context.get("log_dir"):
+        return
+    log_dir = Path(runtime_context["log_dir"])
+    trace_path = log_dir / "knowledge_response.txt"
+    prompt_path = log_dir / "knowledge_prompt.txt"
+    meta_path = log_dir / "knowledge_response.meta.json"
+    _write_private_text(trace_path, artifact["response"])
+    _write_private_text(prompt_path, artifact.get("prompt", ""))
+    meta = {key: value for key, value in artifact.items() if key != "response"}
+    meta.update({"mode": mode, "artifact_path": str(source_path)})
+    _write_private_text(meta_path, json.dumps(meta, indent=2) + "\n")
 
 
 def _write_progress(runtime_context: Optional[Dict[str, Any]], event: str, **fields: Any) -> None:
@@ -500,11 +594,67 @@ def allStepsAtOnce(
     debugAgent = AgentDebug("debug-agent" , config)
     debugAgent.runtime_context = runtime_context or {}
     #set up the LLMs
-    apiAgent.setupAgent()
+    replay_path = (runtime_context or {}).get("replay_knowledge_response_path")
+    if replay_path:
+        apiAgent.preparePrompt()
+    else:
+        apiAgent.setupAgent()
     debugAgent.setupAgent()
 
-    #Run the LLMs as needed
-    api_metrics = _run_api_phase(config, runtime_context, apiAgent)
+    # Replays rebuild only the prompt locally, then feed the exact captured
+    # response to the same DebugAgent seam. They do not call the KnowledgeAgent.
+    replay_path = (runtime_context or {}).get("replay_knowledge_response_path")
+    capture_path = (runtime_context or {}).get("capture_knowledge_response_path")
+    if replay_path:
+        artifact = _load_knowledge_response_artifact(
+            Path(replay_path), prompt=apiAgent.prompt, test_name=config["test-name"]
+        )
+        apiAgent.response = artifact["response"]
+        _write_knowledge_response_trace(
+            runtime_context, artifact, mode="replay", source_path=Path(replay_path)
+        )
+        _write_progress(
+            runtime_context,
+            "knowledge_response_replayed",
+            response_sha256=artifact["response_sha256"],
+            prompt_sha256=artifact["prompt_sha256"],
+            source_run_id=artifact.get("source_run_id"),
+        )
+        api_metrics = _normalize_metrics(
+            config,
+            {
+                "model": artifact.get("api_model", ""),
+                "input_tokens": 0,
+                "output_tokens": 0,
+                "total_tokens": 0,
+                "task_status": 1,
+            },
+            "api",
+            model=artifact.get("api_model"),
+            task_status=1,
+        )
+        _finalize_metrics(api_metrics, 0.0)
+    else:
+        api_metrics = _run_api_phase(config, runtime_context, apiAgent)
+        if capture_path:
+            artifact = _save_knowledge_response_artifact(
+                Path(capture_path),
+                response=str(apiAgent.response or ""),
+                prompt=apiAgent.prompt,
+                test_name=config["test-name"],
+                api_model=str(api_metrics.get("model") or (apiAgent.agentProperties or {}).get("model", "")),
+                runtime_context=runtime_context,
+            )
+            _write_knowledge_response_trace(
+                runtime_context, artifact, mode="capture", source_path=Path(capture_path)
+            )
+            _write_progress(
+                runtime_context,
+                "knowledge_response_captured",
+                response_sha256=artifact["response_sha256"],
+                prompt_sha256=artifact["prompt_sha256"],
+                artifact_path=str(capture_path),
+            )
     debugAgent.agentAPIResponse = apiAgent.response
     debug_start_time = time.perf_counter()
     debug_metrics = _run_observed_phase(runtime_context, "debug", debugAgent.askQuestion)
@@ -517,6 +667,11 @@ def allStepsAtOnce(
         task_status=-1 if getattr(debugAgent, "_last_timeout", False) else _status_to_task_status(debugAgent.debugStatus),
     )
     _finalize_metrics(debug_metrics, debug_end_time - debug_start_time)
+
+    ground_truth_checkpoint = (runtime_context or {}).get("ground_truth_checkpoint")
+    ground_truth_after_debug = (
+        ground_truth_checkpoint("after_debug") if callable(ground_truth_checkpoint) else None
+    )
 
     if getattr(debugAgent, "_last_timeout", False):
         print("\nDebug agent timed out. Skipping verification phase.\n")
@@ -532,6 +687,9 @@ def allStepsAtOnce(
             "api_metrics": api_metrics,
             "debug_metrics": debug_metrics,
             "verification_metrics": None,
+            "ground_truth_checkpoints_recorded": callable(ground_truth_checkpoint),
+            "ground_truth_after_debug": ground_truth_after_debug,
+            "ground_truth_after_verification": None,
         }
 
     verification_out = _run_verification_phase_after_debug(
@@ -539,6 +697,11 @@ def allStepsAtOnce(
     )
     assert verification_out is not None
     verification_metrics, verification_status = verification_out
+    ground_truth_after_verification = (
+        ground_truth_checkpoint("after_verification")
+        if callable(ground_truth_checkpoint)
+        else None
+    )
     printFinishMessage()
 
     return {
@@ -546,6 +709,9 @@ def allStepsAtOnce(
         "api_metrics": api_metrics,
         "debug_metrics": debug_metrics,
         "verification_metrics": verification_metrics,
+        "ground_truth_checkpoints_recorded": callable(ground_truth_checkpoint),
+        "ground_truth_after_debug": ground_truth_after_debug,
+        "ground_truth_after_verification": ground_truth_after_verification,
     }
 
 def stepByStep(

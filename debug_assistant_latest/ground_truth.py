@@ -544,18 +544,26 @@ def _ground_truth_schema_provenance() -> Dict[str, str]:
     }
 
 
-def save_ground_truth_result(result: GroundTruthResult, output_dir: Path) -> Path:
+def save_ground_truth_result(
+    result: GroundTruthResult,
+    output_dir: Path,
+    *,
+    filename: str = "ground_truth.json",
+) -> Path:
     """Save ground truth results to JSON file.
 
     Args:
         result: GroundTruthResult to save
-        output_dir: Directory to save ground_truth.json
+        output_dir: Directory to save the Ground Truth result.
+        filename: Result filename; defaults to the historical ground_truth.json.
 
     Returns:
         Path to saved file
     """
     output_dir.mkdir(parents=True, exist_ok=True)
-    output_file = output_dir / "ground_truth.json"
+    if Path(filename).name != filename or not filename.endswith(".json"):
+        raise ValueError("Ground Truth result filename must be a simple .json filename")
+    output_file = output_dir / filename
 
     payload = result.to_dict()
     payload.update(_ground_truth_schema_provenance())

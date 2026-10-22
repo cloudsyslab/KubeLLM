@@ -21,7 +21,7 @@ import debug_assistant_latest.preflight as preflight
 import debug_assistant_latest.utils as debug_utils
 from rag_server_config import RAG_API_VERSION, STEP_BY_STEP_OUTPUT_MODE
 from debug_assistant_latest.dashboard import build_dashboard_data
-from debug_assistant_latest.debug_agents import AgentDebugStepByStep, SingleAgent, parse_bash_steps
+from debug_assistant_latest.debug_agents import AgentDebug, AgentDebugStepByStep, SingleAgent, parse_bash_steps
 from debug_assistant_latest.preflight import PreflightCheck
 from debug_assistant_latest.result_interpreter import FailureCategory, interpret_run
 from debug_assistant_latest.runner import TestResult, result_to_summary
@@ -141,6 +141,24 @@ class VerificationParsingTests(unittest.TestCase):
 
 
 class DebugAgentMetricsTests(unittest.TestCase):
+    def test_debug_agent_attaches_keep_alive_to_ollama_model(self):
+        config = {
+            "test-name": "wrong_port",
+            "debug-agent": {"model": "glm-4.7-flash:latest", "instructions": [], "guidelines": []},
+        }
+        agent = AgentDebug("debug-agent", config)
+        agent.runtime_context = {
+            "ollama_debug_warmup": {"keep_alive": "10m"},
+        }
+
+        with patch(
+            "debug_assistant_latest.debug_agents.build_llm_agent",
+            return_value=types.SimpleNamespace(model=object()),
+        ) as build_agent:
+            agent.prepareAgent()
+
+        self.assertEqual(build_agent.call_args.kwargs["model_kwargs"], {"keep_alive": "10m"})
+
     def test_step_parser_preserves_order_and_multiline_shell_blocks(self):
         fence = chr(96) * 3
         response = (
@@ -303,7 +321,18 @@ class LegacyMainReturnShapeTests(unittest.TestCase):
             result = legacy_main.allStepsAtOnce("ignored.json")
 
         stored_agent_types = [call.args[1]["agent_type"] for call in store_mock.call_args_list]
-        self.assertEqual(set(result.keys()), {"status", "api_metrics", "debug_metrics", "verification_metrics"})
+        self.assertEqual(
+            set(result.keys()),
+            {
+                "status",
+                "api_metrics",
+                "debug_metrics",
+                "verification_metrics",
+                "ground_truth_checkpoints_recorded",
+                "ground_truth_after_debug",
+                "ground_truth_after_verification",
+            },
+        )
         self.assertTrue(result["status"])
         self.assertIsInstance(result["api_metrics"], dict)
         self.assertIsInstance(result["debug_metrics"], dict)

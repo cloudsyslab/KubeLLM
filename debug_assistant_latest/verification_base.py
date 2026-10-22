@@ -2,9 +2,10 @@ import re
 
 from agent_base import Agent
 from agent_helpers import build_llm_agent, build_tool_kwargs
-from prompt_helpers import TOOL_USAGE_RULES, extract_metrics, get_case_specific_guidance
+from prompt_helpers import VERIFICATION_TOOL_USAGE_RULES, extract_metrics, get_case_specific_guidance
 from runtime_progress import BlockedCommandThresholdError
 from timeout_helpers import timeout as TIMEOUT_DECORATOR, withTimeout
+from prompt_trace import write_prompt_trace
 
 STATUS_MAP = {True: 1, False: 0, None: -1}
 
@@ -106,8 +107,15 @@ class VerificationAgentBase(Agent):
     def askQuestion(self):
         try:
             prompt = self.prompt
-            prompt += "\n" + TOOL_USAGE_RULES
+            prompt += "\n" + VERIFICATION_TOOL_USAGE_RULES
             prompt += get_case_specific_guidance(self.config, phase="verification")
+            prompt += (
+                "\n\n=== OBSERVATION-ONLY RULE ===\n"
+                "You may inspect Kubernetes resources, status, and logs. You must not repair or change anything. "
+                "Do not apply, delete, patch, edit, exec into pods, read Secrets, or make network requests. "
+                "The tool enforces this boundary and accepts only direct read-only inspection commands. "
+                "If the available evidence is insufficient, report UNKNOWN.\n"
+            )
             prompt += "\n\n=== CRITICAL: USE EXACT TOKENS ===\n"
             prompt += "You MUST conclude with EXACTLY one of these three tokens:\n"
             prompt += "1. <|VERIFIED|> if the issue has been completely resolved\n"
@@ -116,6 +124,7 @@ class VerificationAgentBase(Agent):
             prompt += "DO NOT make up your own tokens like <|FIX_VERIFIED_FAILED|> or anything else.\n"
             prompt += "Use ONLY: <|VERIFIED|>, <|FAILED|>, or <|VERIFICATION_ERROR|>\n"
 
+            write_prompt_trace(self.runtime_context, "verification", prompt)
             response = self.agent.run(prompt)
             self.verificationReport = response.content
             self.verificationStatus = parse_verification_status(self.verificationReport)
