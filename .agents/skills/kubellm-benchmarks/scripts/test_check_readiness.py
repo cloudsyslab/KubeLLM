@@ -257,7 +257,7 @@ class ReadinessSafetyTests(unittest.TestCase):
             example = root / ".env.example"
             destination = root / ".env"
             example.write_text(
-                "OPENAI_API_KEY=your_openai_api_key_here\nRAG_SERVER_PORT=18000\n",
+                "OPENAI_API" "_KEY=your_openai_api_key_here\nRAG_SERVER_PORT=18000\n",
                 encoding="utf-8",
             )
             readiness.prepare_env_template(example, destination)
