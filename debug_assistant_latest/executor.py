@@ -64,6 +64,9 @@ class TestResult:
     finished_at: str
     ground_truth_passed: Optional[bool] = None  # None if GT did not run
     ground_truth_configured: bool = False
+    ground_truth_after_debug_passed: Optional[bool] = None
+    ground_truth_after_verification_passed: Optional[bool] = None
+    ground_truth_integrity_match: Optional[bool] = None
     environment_context: Optional[Dict[str, Any]] = None
     architecture_outcome: Optional[str] = None
     teardown_attempted: bool = False
@@ -71,6 +74,49 @@ class TestResult:
     teardown_error: Optional[str] = None
     teardown_recoveries: List[str] = field(default_factory=list)
     interrupted: bool = False
+
+
+def _run_ground_truth_checkpoint(config: dict, log_dir: Path, progress_writer, stage: str) -> dict:
+    """Run and persist an explicitly named pipeline Ground Truth checkpoint."""
+    if stage not in {"after_debug", "after_verification"}:
+        raise ValueError(f"Unsupported Ground Truth checkpoint stage: {stage}")
+    if progress_writer:
+        progress_writer.write_event("ground_truth_checkpoint_start", stage=stage)
+    try:
+        result = run_ground_truth_checks(config)
+    except Exception as exc:
+        if progress_writer:
+            progress_writer.write_event(
+                "ground_truth_checkpoint_end",
+                stage=stage,
+                status="error",
+                passed=None,
+                error=str(exc),
+            )
+        return {"configured": bool(config.get("ground-truth")), "passed": None, "error": str(exc)}
+
+    if result is None:
+        if progress_writer:
+            progress_writer.write_event(
+                "ground_truth_checkpoint_end", stage=stage, status="not_configured", passed=None
+            )
+        return {"configured": False, "passed": None, "error": None}
+
+    filename = f"ground_truth_{stage}.json"
+    save_ground_truth_result(result, log_dir, filename=filename)
+    if stage == "after_verification":
+        # Preserve the historical artifact path for existing report readers.
+        save_ground_truth_result(result, log_dir)
+    if progress_writer:
+        progress_writer.write_event(
+            "ground_truth_checkpoint_end",
+            stage=stage,
+            status="ok",
+            passed=result.passed,
+            summary=result.summary,
+            artifact=filename,
+        )
+    return {"configured": True, "passed": result.passed, "error": None}
 
 
 def get_timestamp_id() -> str:
@@ -422,6 +468,9 @@ def run_single_test_in_process(
     test_started = False  # Guard: only teardown if test actually started
     ground_truth_passed = None
     ground_truth_configured = False
+    ground_truth_after_debug_passed = None
+    ground_truth_after_verification_passed = None
+    ground_truth_integrity_match = None
     architecture_outcome = None
     knowledge_execution = None
     ground_truth_error = None
@@ -466,6 +515,9 @@ def run_single_test_in_process(
             worker_runtime["run_uuid"] = run_uuid
         if run_id:
             worker_runtime["run_id"] = run_id
+        worker_runtime["ground_truth_checkpoint"] = lambda stage: _run_ground_truth_checkpoint(
+            config, log_dir, None, stage
+        )
 
         # Capture stdout/stderr
         with open(stdout_log, "w", encoding="utf-8") as stdout_f, open(stderr_log, "w", encoding="utf-8") as stderr_f:
@@ -520,7 +572,27 @@ def run_single_test_in_process(
                     raise ValueError(f"Unknown technique: {technique}")
 
                 # Run ground truth verification if configured
-                if ground_truth_configured:
+                checkpoints_recorded = bool(
+                    technique == "allStepsAtOnce" and result.get("ground_truth_checkpoints_recorded")
+                )
+                if checkpoints_recorded:
+                    after_debug = result.get("ground_truth_after_debug") or {}
+                    after_verification = result.get("ground_truth_after_verification") or {}
+                    ground_truth_after_debug_passed = after_debug.get("passed")
+                    ground_truth_after_verification_passed = after_verification.get("passed")
+                    ground_truth_passed = ground_truth_after_verification_passed
+                    ground_truth_configured = bool(
+                        after_debug.get("configured") or after_verification.get("configured")
+                    )
+                    ground_truth_integrity_match = (
+                        ground_truth_after_debug_passed == ground_truth_after_verification_passed
+                        if ground_truth_after_debug_passed is not None
+                        and ground_truth_after_verification_passed is not None
+                        else None
+                    )
+                    if ground_truth_configured:
+                        success = ground_truth_after_debug_passed is True
+                elif ground_truth_configured:
                     print("\n" + "=" * 60)
                     print("Running ground truth verification...")
                     cleanup_transient_k8s_resources(strict=True)
@@ -654,6 +726,9 @@ def run_single_test_in_process(
         finished_at=finished_at,
         ground_truth_passed=ground_truth_passed,
         ground_truth_configured=ground_truth_configured,
+        ground_truth_after_debug_passed=ground_truth_after_debug_passed,
+        ground_truth_after_verification_passed=ground_truth_after_verification_passed,
+        ground_truth_integrity_match=ground_truth_integrity_match,
         environment_context=environment_context,
         architecture_outcome=architecture_outcome,
         teardown_attempted=teardown_attempted,
@@ -695,6 +770,9 @@ def run_single_test(
     test_started = False  # Guard: only teardown if test actually started
     ground_truth_passed = None
     ground_truth_configured = False
+    ground_truth_after_debug_passed = None
+    ground_truth_after_verification_passed = None
+    ground_truth_integrity_match = None
     runtime_context = dict(runtime_context or {})
     architecture_outcome = None
     knowledge_execution = None
@@ -731,6 +809,9 @@ def run_single_test(
         config_path = get_config_path(test_name)
         config = load_config_with_overrides(config_path, overrides)
         ground_truth_configured = bool(config.get("ground-truth"))
+        runtime_context["ground_truth_checkpoint"] = lambda stage: _run_ground_truth_checkpoint(
+            config, log_dir, progress_writer, stage
+        )
 
         cleanup_transient_k8s_resources(strict=True)
 
@@ -827,8 +908,30 @@ def run_single_test(
                 else:
                     raise ValueError(f"Unknown technique: {technique}")
 
-                # Run ground truth verification if configured
-                if ground_truth_configured:
+                # allStepsAtOnce records GT immediately after debug and again
+                # after its observational verifier; other techniques retain
+                # their historical single post-technique checkpoint.
+                checkpoints_recorded = bool(
+                    technique == "allStepsAtOnce" and result.get("ground_truth_checkpoints_recorded")
+                )
+                if checkpoints_recorded:
+                    after_debug = result.get("ground_truth_after_debug") or {}
+                    after_verification = result.get("ground_truth_after_verification") or {}
+                    ground_truth_after_debug_passed = after_debug.get("passed")
+                    ground_truth_after_verification_passed = after_verification.get("passed")
+                    ground_truth_passed = ground_truth_after_verification_passed
+                    ground_truth_configured = bool(
+                        after_debug.get("configured") or after_verification.get("configured")
+                    )
+                    ground_truth_integrity_match = (
+                        ground_truth_after_debug_passed == ground_truth_after_verification_passed
+                        if ground_truth_after_debug_passed is not None
+                        and ground_truth_after_verification_passed is not None
+                        else None
+                    )
+                    if ground_truth_configured:
+                        success = ground_truth_after_debug_passed is True
+                elif ground_truth_configured:
                     if progress_writer:
                         progress_writer.write_event("ground_truth_start", test_name=test_name)
                     print("\n" + "=" * 60)
@@ -1014,6 +1117,9 @@ def run_single_test(
         finished_at=finished_at,
         ground_truth_passed=ground_truth_passed,
         ground_truth_configured=ground_truth_configured,
+        ground_truth_after_debug_passed=ground_truth_after_debug_passed,
+        ground_truth_after_verification_passed=ground_truth_after_verification_passed,
+        ground_truth_integrity_match=ground_truth_integrity_match,
         environment_context=env_ctx,
         architecture_outcome=architecture_outcome,
         teardown_attempted=teardown_attempted,
@@ -1043,6 +1149,9 @@ def result_to_summary(result: TestResult, technique: str, overrides: dict) -> Te
         config_overrides_applied=overrides,
         ground_truth_passed=result.ground_truth_passed,
         ground_truth_configured=result.ground_truth_configured,
+        ground_truth_after_debug_passed=result.ground_truth_after_debug_passed,
+        ground_truth_after_verification_passed=result.ground_truth_after_verification_passed,
+        ground_truth_integrity_match=result.ground_truth_integrity_match,
         environment_context=result.environment_context,
         architecture_outcome=result.architecture_outcome,
         teardown_status=(
@@ -1081,6 +1190,26 @@ def cmd_run_single(args, test_name: str):
         "teardown_after_run": teardown_after_run,
         "rag_api_url": rag_api_url,
     }
+    capture_path = getattr(args, "capture_knowledge_response", None)
+    replay_path = getattr(args, "replay_knowledge_response", None)
+    warmup_policy = None
+    if capture_path or replay_path:
+        run_config["knowledge_response"] = {
+            "mode": "capture" if capture_path else "replay",
+            "artifact_path": str(capture_path or replay_path),
+        }
+    if getattr(args, "ollama_debug_warmup", False):
+        warmup_policy = {
+            "model_id": args.debug_model,
+            "expected_digest": args.ollama_debug_warmup_digest,
+            "allowed_model_ids": [
+                value.strip()
+                for value in args.ollama_debug_warmup_allow_models.split(",")
+                if value.strip()
+            ],
+            "keep_alive": args.ollama_debug_keep_alive or "10m",
+        }
+        run_config["ollama_debug_warmup"] = warmup_policy
     save_run_config(run_config, output_dir)
     prov_payload = collect_run_provenance(REPO_ROOT, rag_api_url)
     prov_payload["run_uuid"] = run_uuid
@@ -1142,6 +1271,10 @@ def cmd_run_single(args, test_name: str):
                     "run_uuid": run_uuid,
                     "run_id": run_id,
                     "environment_context": env_ctx,
+                    "capture_knowledge_response_path": str(capture_path) if capture_path else None,
+                    "replay_knowledge_response_path": str(replay_path) if replay_path else None,
+                    "capture_prompts": bool(capture_path or replay_path),
+                    "ollama_debug_warmup": warmup_policy,
                 },
             )
         wall_end = time.perf_counter()

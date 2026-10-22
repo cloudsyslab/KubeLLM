@@ -163,6 +163,27 @@ class LabContextTests(unittest.TestCase):
                 self.assertEqual(cli.main(), 0)
         self.assertEqual(seen, ["allStepsAtOnce", "stepByStep", "singleAgent", "knowledgeAgentOnly"])
 
+    def test_ollama_warmup_is_restricted_to_paired_capture_replay_runs(self):
+        with patch.object(
+            cli.sys,
+            "argv",
+            [
+                "runner.py",
+                "wrong_port",
+                "--debug-model",
+                "glm-4.7-flash:latest",
+                "--ollama-debug-warmup",
+                "--ollama-debug-warmup-digest",
+                "a" * 64,
+                "--ollama-debug-warmup-allow-models",
+                "glm-4.7-flash:latest",
+            ],
+        ), patch.object(cli, "is_lane_active", return_value=False):
+            with self.assertRaises(SystemExit) as raised:
+                cli.main()
+
+        self.assertEqual(raised.exception.code, 2)
+
     def test_runner_lane_dry_run_bootstraps_all_techniques_without_execution(self):
         repo = Path(__file__).resolve().parents[1]
         with tempfile.TemporaryDirectory() as tmp:

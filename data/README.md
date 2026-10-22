@@ -38,3 +38,7 @@ They are intentionally gated with `run_config.archived.json` filenames, so
 the default recursive analyzer does not mix them into the seven canonical
 exports. Raw execution logs, generated commands, prompts, and private lab/path
 identifiers remain outside Git.
+
+The [October 2026 prediction selector pilot](exploratory/prediction-pilot-2026-10/README.md)
+is a sanitized paired-campaign evidence pack. It is not a canonical model
+comparison and does not establish predictor quality or generalization.
