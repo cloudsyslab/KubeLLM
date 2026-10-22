@@ -61,6 +61,13 @@ def get_minikube_image_guidance():
 
 
 TOOL_USAGE_RULES = get_tool_usage_rules()
+VERIFICATION_TOOL_USAGE_RULES = (
+    "### Verification Tool Rules\n"
+    "- Use one direct read-only `kubectl get`, `describe`, or `logs` command at a time.\n"
+    "- You may use `minikube status` for profile diagnostics.\n"
+    "- Do not use shell pipes, chaining, file commands, `kubectl exec`, resource mutations, or network probes.\n"
+    "- If the available evidence cannot establish the original symptom's status, report UNKNOWN.\n"
+)
 
 
 def get_case_specific_guidance(config, *, phase=None):
@@ -73,8 +80,8 @@ def get_case_specific_guidance(config, *, phase=None):
         guidance.append(
             "### SCENARIO-SPECIFIC VERIFICATION GUIDANCE\n"
             "- This scenario intentionally has no Kubernetes Service. Absence of a Service is not a failure.\n"
-            "- Do not verify this scenario via `minikube service`, external URL, Service existence, or Service endpoints.\n"
-            "- Verify the configured direct-access success criteria instead: resource readiness, expected container port, and in-pod/local HTTP response on the intended port.\n"
+            "- Do not verify this scenario via a Service, in-pod command, or active network request.\n"
+            "- Inspect pod readiness, expected container port, events, and logs; report UNKNOWN if reachability cannot be established from those observations.\n"
         )
 
     if _primary_manifest_is_deployment(config):
@@ -82,7 +89,7 @@ def get_case_specific_guidance(config, *, phase=None):
             "### DEPLOYMENT ROLLOUT VERIFICATION GUIDANCE\n"
             "- For Deployment rollouts, old ReplicaSet pods in Terminating state are acceptable after rollout.\n"
             "- Do not fail verification solely because an old ReplicaSet pod is Terminating.\n"
-            "- Verify `kubectl rollout status`, the current Deployment pod template, and a responding selected current pod.\n"
+            "- Inspect the current Deployment, ReplicaSets, pods, events, and logs using read-only commands.\n"
         )
 
     return "\n".join(guidance)

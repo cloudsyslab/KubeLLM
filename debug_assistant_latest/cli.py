@@ -5,6 +5,7 @@ import argparse
 import json
 import os
 import queue
+import re
 import sys
 import time
 from datetime import datetime
@@ -41,6 +42,7 @@ from debug_assistant_latest.executor import (
 from rag_server_config import RAG_API_URL_ENV
 
 from config_merge import apply_runner_llm_env_defaults, build_overrides_from_args, load_config_with_overrides
+from runtime_config import OLLAMA_PROVIDER, infer_chat_provider
 from ground_truth import (
     format_results as format_ground_truth_results,
     run_all_checks as run_ground_truth_checks,
@@ -653,6 +655,36 @@ Examples:
         help="Custom output directory (default: .local/test_runs/<timestamp>)",
     )
     parser.add_argument(
+        "--capture-knowledge-response",
+        type=Path,
+        metavar="PATH",
+        help="Save the exact KnowledgeAgent response and its prompt fingerprint (private .local artifact).",
+    )
+    parser.add_argument(
+        "--replay-knowledge-response",
+        type=Path,
+        metavar="PATH",
+        help="Replay a previously captured KnowledgeAgent response after checking its prompt fingerprint.",
+    )
+    parser.add_argument(
+        "--ollama-debug-warmup",
+        action="store_true",
+        help="Warm and verify the selected local DebugAgent model immediately before its paired debug phase.",
+    )
+    parser.add_argument(
+        "--ollama-debug-warmup-digest",
+        help="Expected full 64-character Ollama model digest; requires --ollama-debug-warmup.",
+    )
+    parser.add_argument(
+        "--ollama-debug-warmup-allow-models",
+        help="Comma-separated local candidate tags allowed to remain resident during the paired campaign.",
+    )
+    parser.add_argument(
+        "--ollama-debug-keep-alive",
+        default=None,
+        help="Request-level Ollama keep-alive for warm-up and DebugAgent requests (default: 10m).",
+    )
+    parser.add_argument(
         "--dry-run",
         action="store_true",
         help="Show what would be executed without running",
@@ -712,6 +744,63 @@ Examples:
     )
 
     args = parser.parse_args()
+    if args.capture_knowledge_response or args.replay_knowledge_response:
+        if args.capture_knowledge_response and args.replay_knowledge_response:
+            parser.error("choose only one of --capture-knowledge-response or --replay-knowledge-response")
+        if not args.test_case or args.run_many:
+            parser.error("KnowledgeAgent capture/replay requires one positional test case")
+        if args.technique != "allStepsAtOnce":
+            parser.error("KnowledgeAgent capture/replay is supported only with allStepsAtOnce")
+        if args.repeat != 1 or args.jobs != 1 or args.verify_only:
+            parser.error("KnowledgeAgent capture/replay requires one serial execution, not repeat or verify-only")
+        if not is_lane_active():
+            parser.error("KnowledgeAgent capture/replay requires an explicitly selected private lab lane")
+        private_root = (REPO_ROOT / ".local").resolve()
+        for artifact_path in (args.capture_knowledge_response, args.replay_knowledge_response):
+            if artifact_path is None:
+                continue
+            try:
+                artifact_path.expanduser().resolve().relative_to(private_root)
+            except ValueError:
+                parser.error("KnowledgeAgent response artifacts must be stored under the repository .local directory")
+        if args.output_dir is not None:
+            try:
+                args.output_dir.expanduser().resolve().relative_to(private_root)
+            except ValueError:
+                parser.error("Paired KnowledgeAgent traces require --output-dir under the repository .local directory")
+        os.umask(0o077)
+    warmup_values_present = bool(
+        args.ollama_debug_warmup_digest
+        or args.ollama_debug_warmup_allow_models
+        or args.ollama_debug_keep_alive
+    )
+    if args.ollama_debug_warmup or warmup_values_present:
+        if not args.ollama_debug_warmup:
+            parser.error("Ollama warm-up settings require --ollama-debug-warmup")
+        if not (args.capture_knowledge_response or args.replay_knowledge_response):
+            parser.error("Ollama DebugAgent warm-up is restricted to paired KnowledgeAgent capture/replay runs")
+        if args.technique != "allStepsAtOnce" or args.jobs != 1 or args.repeat != 1 or args.verify_only:
+            parser.error("Ollama DebugAgent warm-up requires one serial allStepsAtOnce execution")
+        if not args.debug_model:
+            parser.error("Ollama DebugAgent warm-up requires an explicit --debug-model")
+        try:
+            provider = infer_chat_provider(args.debug_model)
+        except ValueError as exc:
+            parser.error(f"Invalid --debug-model for Ollama warm-up: {exc}")
+        if provider != OLLAMA_PROVIDER:
+            parser.error("Ollama DebugAgent warm-up requires a local Ollama --debug-model")
+        if not args.ollama_debug_warmup_digest or not re.fullmatch(
+            r"[0-9a-fA-F]{64}", args.ollama_debug_warmup_digest
+        ):
+            parser.error("Ollama DebugAgent warm-up requires an exact 64-character digest")
+        allowed_models = [value.strip() for value in (args.ollama_debug_warmup_allow_models or "").split(",") if value.strip()]
+        if not allowed_models or len(set(allowed_models)) != len(allowed_models):
+            parser.error("Ollama DebugAgent warm-up requires unique --ollama-debug-warmup-allow-models")
+        if args.debug_model not in allowed_models:
+            parser.error("The selected --debug-model must appear in --ollama-debug-warmup-allow-models")
+        args.ollama_debug_keep_alive = args.ollama_debug_keep_alive or "10m"
+        if not re.fullmatch(r"\d+(?:ms|s|m|h)", args.ollama_debug_keep_alive):
+            parser.error("--ollama-debug-keep-alive must use a duration such as 10m or 600s")
     if is_lane_active():
         lane_config = bootstrap_from_argv()
         if args.jobs > 1:
