@@ -67,6 +67,9 @@ class TestSummary:
     config_overrides_applied: Dict[str, Any] = field(default_factory=dict)
     ground_truth_passed: Optional[bool] = None  # True/False if GT ran, None if GT did not run
     ground_truth_configured: bool = False
+    ground_truth_after_debug_passed: Optional[bool] = None
+    ground_truth_after_verification_passed: Optional[bool] = None
+    ground_truth_integrity_match: Optional[bool] = None
     environment_context: Optional[Dict[str, Any]] = None
     architecture_outcome: Optional[str] = None
     teardown_status: str = "not_run"
@@ -84,6 +87,9 @@ class TestSummary:
             "debug_self_report": self.debug_self_report,
             "ground_truth_passed": self.ground_truth_passed,
             "ground_truth_configured": self.ground_truth_configured or self.ground_truth_passed is not None,
+            "ground_truth_after_debug_passed": self.ground_truth_after_debug_passed,
+            "ground_truth_after_verification_passed": self.ground_truth_after_verification_passed,
+            "ground_truth_integrity_match": self.ground_truth_integrity_match,
             "started_at": self.started_at,
             "finished_at": self.finished_at,
             "duration_s": round(self.duration_s, 3),
@@ -155,6 +161,9 @@ def load_test_summary(summary_path: Path) -> TestSummary:
         config_overrides_applied=data.get("config_overrides_applied", {}),
         ground_truth_passed=data.get("ground_truth_passed"),
         ground_truth_configured=data.get("ground_truth_configured", data.get("ground_truth_passed") is not None),
+        ground_truth_after_debug_passed=data.get("ground_truth_after_debug_passed"),
+        ground_truth_after_verification_passed=data.get("ground_truth_after_verification_passed"),
+        ground_truth_integrity_match=data.get("ground_truth_integrity_match"),
         environment_context=data.get("environment_context"),
         architecture_outcome=data.get("architecture_outcome"),
         teardown_status=data.get("teardown_status", "not_run"),
@@ -259,6 +268,9 @@ def generate_aggregate_report(
             "status": s.status,
             "verified": s.verified,
             "ground_truth_passed": s.ground_truth_passed,
+            "ground_truth_after_debug_passed": s.ground_truth_after_debug_passed,
+            "ground_truth_after_verification_passed": s.ground_truth_after_verification_passed,
+            "ground_truth_integrity_match": s.ground_truth_integrity_match,
             "ground_truth_configured": s.ground_truth_configured or s.ground_truth_passed is not None,
             "duration_s": round(s.duration_s, 2),
             "error": s.error_message,

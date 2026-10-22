@@ -10,6 +10,7 @@ from agent_helpers import agent_debug_logging_enabled, build_llm_agent, build_mo
 from better_shell import BetterShellTools
 from runtime_progress import BlockedCommandThresholdError
 from runtime_config import DB_URL, build_resolved_embedder
+from ollama_warmup import warm_debug_model
 from prompt_helpers import (
     TOOL_USAGE_RULES,
     append_relevant_files,
@@ -20,6 +21,7 @@ from prompt_helpers import (
     get_minikube_image_guidance,
 )
 from timeout_helpers import timeout, withTimeout
+from prompt_trace import write_prompt_trace
 
 
 _BASH_STEP_RE = re.compile(r"```bash(?:[ \t]+|\r?\n)(.*?)```", re.DOTALL)
@@ -43,14 +45,54 @@ class AgentDebug(Agent):
         """Prepare the debug assistant based on the config file."""
         try:
             model_name = self.agentProperties["model"]
+            warmup_policy = self.runtime_context.get("ollama_debug_warmup")
+            model_kwargs = {"keep_alive": warmup_policy["keep_alive"]} if warmup_policy else None
             self.agent = build_llm_agent(
                 model_name,
                 instructions=[x for x in self.agentProperties["instructions"]],
                 guidelines=[x for x in self.agentProperties["guidelines"]],
                 tool_kwargs=build_tool_kwargs(self.runtime_context, phase="debug"),
+                model_kwargs=model_kwargs,
             )
         except Exception as e:
             raise RuntimeError(f"Error preparing debug agent: {e}") from e
+
+    def _warm_debug_model_at_entry(self):
+        policy = self.runtime_context.get("ollama_debug_warmup")
+        if not policy:
+            return
+        writer = self.runtime_context.get("progress_writer")
+        if writer:
+            writer.write_event(
+                "debug_model_warmup_start",
+                model_id=policy["model_id"],
+                keep_alive=policy["keep_alive"],
+            )
+        record = warm_debug_model(
+            model=getattr(self.agent, "model", None),
+            model_id=policy["model_id"],
+            expected_digest=policy["expected_digest"],
+            allowed_model_ids=policy["allowed_model_ids"],
+            keep_alive=policy["keep_alive"],
+        )
+        environment_context = self.runtime_context.get("environment_context")
+        if isinstance(environment_context, dict):
+            environment_context["debug_model_warmup"] = record
+        if writer:
+            writer.write_event(
+                "debug_model_warmup_end",
+                model_id=policy["model_id"],
+                status=record["status"],
+                ready=record["ready"],
+                reason=record.get("reason"),
+                duration_s=record.get("duration_s"),
+                load_duration_s=record.get("load_duration_s"),
+            )
+        if not record["ready"]:
+            raise RuntimeError(
+                "Debug model warm-up did not satisfy the campaign entry policy "
+                f"({record.get('reason') or record['status']})."
+            )
 
     def preparePrompt(self):
         """Prepare the debug agent prompt."""
@@ -80,6 +122,8 @@ class AgentDebug(Agent):
             prompt += TOOL_USAGE_RULES
             prompt += get_case_specific_guidance(self.config)
 
+            write_prompt_trace(self.runtime_context, "debug", prompt)
+            self._warm_debug_model_at_entry()
             response = self.agent.run(prompt, return_response=True)
             response_content = response.content
             self.response = response_content

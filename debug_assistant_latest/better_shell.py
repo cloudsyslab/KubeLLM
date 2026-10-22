@@ -1,5 +1,6 @@
 import os
 import re
+import shlex
 from collections import OrderedDict
 from dataclasses import asdict, dataclass
 from pathlib import Path
@@ -135,6 +136,7 @@ class BetterShellTools(Toolkit):
         progress_writer=None,
         phase: Optional[str] = None,
         blocked_threshold: Optional[int] = None,
+        read_only: bool = False,
     ):
         super().__init__(name="shell_tools")
 
@@ -145,6 +147,7 @@ class BetterShellTools(Toolkit):
         self.progress_writer = progress_writer
         self.phase = phase
         self.blocked_threshold = blocked_threshold
+        self.read_only = bool(read_only)
         self._consecutive_blocked = 0
 
         self._register_run_shell_command()
@@ -194,6 +197,51 @@ class BetterShellTools(Toolkit):
             if pattern.search(args):
                 return message
         return None
+
+    def _read_only_argv(self, command: str) -> tuple[Optional[list[str]], Optional[str]]:
+        """Parse and constrain verifier commands to observation-only operations."""
+        if "\n" in command or "\r" in command:
+            return None, "Verification accepts one direct read-only command at a time."
+        try:
+            argv = shlex.split(command, posix=True)
+        except ValueError:
+            return None, "Verification command could not be parsed as a direct command."
+        if not argv:
+            return None, "Verification requires a direct read-only command."
+        if any(token in {";", "|", "||", "&", "&&", "<", ">", ">>"} for token in argv):
+            return None, "Verification accepts one direct read-only command without shell operators."
+
+        executable = Path(argv[0]).name.lower()
+        if executable == "kubectl" and len(argv) > 1:
+            verb = argv[1].lower()
+            allowed_verbs = {
+                "api-resources",
+                "api-versions",
+                "cluster-info",
+                "describe",
+                "explain",
+                "get",
+                "logs",
+                "version",
+            }
+            if verb not in allowed_verbs:
+                return None, f"Verification cannot run kubectl {verb}; only read-only inspection commands are enabled."
+            lowered_args = [token.lower() for token in argv[2:]]
+            if verb == "get" and any(
+                token in {"--raw", "-f", "--filename"}
+                or token.startswith("--raw=")
+                or token.startswith("--filename=")
+                for token in lowered_args
+            ):
+                return None, "Verification cannot use raw API paths or file-backed kubectl get requests."
+            if any(re.match(r"^(?:secret|secrets|sec)(?:$|[./])", token) for token in lowered_args):
+                return None, "Verification cannot read Kubernetes Secrets."
+            return argv, None
+
+        if executable == "minikube" and len(argv) > 1 and argv[1].lower() in {"status", "version"}:
+            return argv, None
+
+        return None, "Verification is limited to kubectl inspection and Minikube status/version commands."
 
     def _normalize_command_value(self, value: Any) -> Optional[str]:
         if value is None:
@@ -259,6 +307,40 @@ class BetterShellTools(Toolkit):
                 timeout_s=timeout_s if isinstance(timeout_s, (int, float)) else 0,
             )
 
+        read_only_argv = None
+        if self.read_only:
+            read_only_argv, readonly_reason = self._read_only_argv(command)
+            if readonly_reason:
+                self._write_progress(
+                    "tool_blocked",
+                    command=command,
+                    blocked_count=self._consecutive_blocked + 1,
+                    reason=readonly_reason,
+                )
+                self._consecutive_blocked += 1
+                _safe_log("warning", "Blocked verification command: %s", command)
+                if (
+                    enforce_blocked_threshold
+                    and self.blocked_threshold
+                    and self._consecutive_blocked >= self.blocked_threshold
+                ):
+                    threshold_message = (
+                        f"{readonly_reason} Aborting after {self._consecutive_blocked} consecutive blocked commands."
+                    )
+                    self._write_progress(
+                        "tool_blocked_threshold",
+                        command=command,
+                        blocked_count=self._consecutive_blocked,
+                        reason=threshold_message,
+                    )
+                    raise BlockedCommandThresholdError(threshold_message)
+                return ShellCommandResult(
+                    command=command,
+                    status="blocked",
+                    blocked_reason=readonly_reason,
+                    timeout_s=float(timeout_s),
+                )
+
         blocked_reason = self._maybe_block_agent_command(command)
         if not blocked_reason:
             blocked_reason = self._maybe_block_windows_command(command)
@@ -317,7 +399,9 @@ class BetterShellTools(Toolkit):
         _safe_log("info", "Running shell command: %s", command)
 
         try:
-            if os.name == "nt":
+            if read_only_argv is not None:
+                result = subprocess.run(read_only_argv, shell=False, check=False, **run_kwargs)
+            elif os.name == "nt":
                 result = subprocess.run(
                     ["powershell", "-NoProfile", "-Command", command],
                     shell=False,

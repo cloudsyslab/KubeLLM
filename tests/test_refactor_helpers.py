@@ -408,6 +408,27 @@ class TimeoutHelperTests(unittest.TestCase):
 
 
 class AgentHelperTests(unittest.TestCase):
+    def test_build_llm_agent_passes_model_options_to_provider_model(self):
+        fake_factory = MagicMock(return_value="agent")
+        fake_model = types.SimpleNamespace(keep_alive=None)
+
+        with patch.object(agent_helpers, "llmAgent", fake_factory), patch.object(
+            agent_helpers, "build_model", return_value=fake_model
+        ) as build_model_mock, patch.object(
+            agent_helpers, "BetterShellTools", return_value="tool"
+        ):
+            agent_helpers.build_llm_agent(
+                "glm-4.7-flash:latest",
+                ["i"],
+                ["g"],
+                model_kwargs={"keep_alive": "10m"},
+            )
+
+        build_model_mock.assert_called_once_with(
+            "glm-4.7-flash:latest", temperature=None
+        )
+        self.assertEqual(fake_model.keep_alive, "10m")
+
     def test_build_llm_agent_disables_debug_logs_by_default_on_windows(self):
         fake_factory = MagicMock(return_value="agent")
 
@@ -545,7 +566,8 @@ class PromptHelperTests(unittest.TestCase):
         self.assertIn("intentionally has no Kubernetes Service", guidance)
         self.assertIn("Absence of a Service is not a failure", guidance)
         self.assertIn("old ReplicaSet pods in Terminating state are acceptable", guidance)
-        self.assertIn("current Deployment pod template", guidance)
+        self.assertIn("Inspect the current Deployment, ReplicaSets, pods, events, and logs", guidance)
+        self.assertNotIn("kubectl exec", guidance)
 
     def test_no_service_pod_variant_gets_no_service_guidance_only(self):
         guidance = prompt_helpers.get_case_specific_guidance(
@@ -553,7 +575,8 @@ class PromptHelperTests(unittest.TestCase):
         )
 
         self.assertIn("intentionally has no Kubernetes Service", guidance)
-        self.assertIn("Service endpoints", guidance)
+        self.assertIn("active network request", guidance)
+        self.assertIn("report UNKNOWN", guidance)
         self.assertNotIn("DEPLOYMENT ROLLOUT", guidance)
 
     def test_unrelated_case_gets_no_case_specific_guidance(self):
@@ -582,8 +605,8 @@ class PromptHelperTests(unittest.TestCase):
         agent.askQuestion()
         prompt = captured["prompt"]
 
-        self.assertIn("configured access path for this scenario is reachable", prompt)
-        self.assertIn("Only if a Service manifest exists", prompt)
+        self.assertIn("report UNKNOWN", prompt)
+        self.assertIn("Do not use `kubectl exec`, `minikube service`, curl", prompt)
         self.assertIn("Absence of a Service is not a failure", prompt)
         self.assertIn("old ReplicaSet pods in Terminating state are acceptable", prompt)
 
