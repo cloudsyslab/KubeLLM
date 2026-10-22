@@ -1,6 +1,6 @@
 ---
 name: grilling
-description: Relentless one-question-at-a-time alignment interviewing for plans, designs, specs, and implementation intentions, with factual discovery routed through the discovery skill when evidence is needed. Use when the user asks to be grilled, stress-tested, interviewed, aligned before action, or uses trigger phrases such as "grill me", "grill this plan", "stress-test this", "interview me", "blind spot pass", "unknown unknowns", "what am I missing", "before you build", "before you act", or "make sure you understand my intent".
+description: Relentless one-question-at-a-time alignment interviewing for plans, designs, specs, and implementation intentions, with factual discovery routed through the discovery skill when evidence is needed. Stay in grilling until the user freshly invokes $build-from-plan to execute the current plan. Use when the user asks to be grilled, stress-tested, interviewed, aligned before action, or uses trigger phrases such as "grill me", "grill this plan", "stress-test this", "interview me", "blind spot pass", "unknown unknowns", "what am I missing", "before you build", "before you act", or "make sure you understand my intent".
 ---
 
 # Grilling
@@ -13,7 +13,8 @@ The user owns decisions. Codex owns discovery: if a fact can be found by reading
 
 ## Operating Contract
 
-- Do not enact the plan, build, modify files, or make irreversible decisions until the user confirms shared understanding.
+- Do not enact the plan, build, modify files, or make irreversible decisions while grilling is active. Only the user's fresh, explicit `$build-from-plan` invocation permits the transition to execution; apply the Execution Gate below.
+- Keep discovery read-only. Do not install dependencies, provision or start runtimes, create implementation artifacts, or run implementation smoke tests as interview preparation.
 - Ask one question per assistant turn, then wait for the user's answer.
 - For every question, include Codex's recommended answer.
 - Prioritize questions where the answer would change architecture, scope, user experience, implementation order, risk, validation, or rollback.
@@ -21,9 +22,11 @@ The user owns decisions. Codex owns discovery: if a fact can be found by reading
 - Use `$discovery` when an interview depends on current, frontier, organization-private, GitHub, X/Twitter, arXiv, official-documentation, or source-system evidence. Do not spend user questions on facts the discovery workflow can route and verify.
 - When delegating fact-finding during an interview, use the `$discovery` subagent contract: objective, concrete questions, source lane, freshness need, search order, non-goals, source handles, source status, uncertainty, and stopping condition.
 - Walk the decision tree in dependency order. Resolve upstream intent before downstream details.
-- If the user asks to stop the interview, summarize current understanding and ask for explicit confirmation before acting.
+- If the user asks to stop or cancel the interview, honor that request and summarize current understanding. Pause or cancel the plan without executing it; stopping does not satisfy the Execution Gate.
 
 ## Unknowns Lens
+
+Any factual lane routed through Discovery, including implicit use during grilling, must be searched and read by its required gpt-6-luna subagent at xhigh effort. The grilling agent uses the returned evidence packet and does not search that lane itself.
 
 Use the map-versus-territory distinction: the map is the user's prompt, plan, and stated context; the territory is the actual codebase, constraints, users, workflows, and failure modes. Interview to reduce the gap.
 
@@ -37,7 +40,7 @@ Track four kinds of unknowns:
 Use pre-action patterns as needed:
 
 - **Blind spot pass**: Identify likely gaps, hidden constraints, prior art, edge cases, and what "good" might mean.
-- **Brainstorm/prototype optioning**: When the user may know it when they see it, propose distinct directions or a lightweight artifact before asking for commitment.
+- **Brainstorm/prototype optioning**: When the user may know it when they see it, propose distinct directions, in-chat sketches, or existing examples before asking for commitment. Keep these within read-only discovery.
 - **References**: Use existing code, docs, examples, screenshots, logs, tickets, and external references when they materially reduce ambiguity.
 - **Implementation plan**: Only after major decisions are resolved, produce a plan that preserves open decisions and validation points.
 
@@ -57,7 +60,7 @@ Use pre-action patterns as needed:
 5. Wait for the user's answer.
 6. Incorporate the answer, note any dependencies it resolves, then choose the next question.
 7. Continue until the remaining unknowns are low-risk assumptions or explicit deferrals.
-8. Present a concise shared-understanding summary, including discovery status for any evidence-backed assumptions, and ask for confirmation before action.
+8. Present a concise shared-understanding summary, including discovery status for any evidence-backed assumptions. Remain in grilling under the Execution Gate; agreement with the summary does not authorize action.
 
 ## Question Selection
 
@@ -74,17 +77,15 @@ Prefer questions in this order:
 
 Do not march through this list mechanically. Pick the single question whose answer most changes the rest of the tree.
 
-## During Action
+## Re-entering Grilling During a Build
 
-If the user has confirmed action and Codex later discovers an edge case that materially changes the plan:
+Every new grilling pass for a plan suspends implementation of that plan and resets its execution gate, including when the pass begins during an existing build. Preserve valid work and stop delegated implementation for that plan. Earlier build permission cannot be reused.
 
-- Pause if the decision is user-owned, expensive to reverse, or changes scope.
-- Ask one question with a recommended answer.
-- If the user explicitly authorized conservative autonomy, choose the conservative path, record the deviation in the work summary, and continue.
+Continue alignment and read-only discovery. Resume implementation only after the user's fresh `$build-from-plan` invocation for the current plan.
 
-## Confirmation Gate
+## Execution Gate
 
-Before implementing, say what is now understood in compact form:
+When the plan is understood, summarize it in compact form:
 
 - Goal
 - Scope and non-goals
@@ -92,12 +93,10 @@ Before implementing, say what is now understood in compact form:
 - Known risks or accepted tradeoffs
 - Validation plan
 
-Then ask one confirmation question:
+The only transition from grilling to execution is a fresh user instruction invoking `$build-from-plan` to execute this plan after the latest grilling pass began. An explicit skill command or skill chip used to request execution qualifies. A mention, link, quotation, attached skill text, or request to audit the skill does not qualify by itself.
 
-```markdown
-**Question:** Do you confirm this shared understanding and want me to act on it?
+Agreement such as “yes,” “sgtm,” or “go ahead,” an ordinary request to build or smoke-test, prior build invocations, and an agent's own decision to load or run `$build-from-plan` do not satisfy this gate. Never load the skill yourself to manufacture an exit from grilling.
 
-**Recommended answer:** Yes, proceed with this understanding.
-```
+Once the user gives the qualifying invocation, load and follow `$build-from-plan`, including its readiness checks, before implementing. The invocation authorizes that workflow; it does not resolve missing consequential decisions by itself.
 
-Only proceed after the user confirms.
+Do not ask a generic confirmation-to-act question or repeatedly suggest ending the interview. State once that the plan is ready and awaits the user's `$build-from-plan` invocation. If no consequential questions remain, wait without inventing filler questions or moving into execution.

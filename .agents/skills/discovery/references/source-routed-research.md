@@ -15,13 +15,13 @@ Treat local files as the active control plane, not the default home for durable 
 
 ## Workflow
 
-1. Frame the decision, concrete questions, freshness need, likely source lanes, and stopping condition.
+Every source-dependent Discovery request is delegated to a research worker using the skill's exact gpt-6-luna / xhigh requirement. Split independent work by source lane only when useful. Give each lane an objective, non-goals, source order, freshness requirement, expected evidence handles, uncertainty, and stopping condition. The main agent frames and synthesizes; the worker searches and reads.
+
+1. Frame the decision, concrete questions, freshness need, likely source lanes, and stopping condition. Keep on-demand research as the default; use broader collection only when the request calls for it.
 2. Query primary sources using relevance search first, exact/canonical filters second, and recency sorting only for freshness or change questions.
 3. Normalize durable handles: URLs, page paths, repository refs, issue or pull-request IDs, commit SHAs, publication dates, and tool status.
 4. Cross-check claims that would materially change the answer. Prefer primary, recent, direct observations over commentary.
 5. Synthesize the decision and evidence rather than narrating the search.
-
-When the user or an applicable instruction explicitly authorizes delegation, split independent work by source lane or concrete question. Give each lane an objective, non-goals, source order, freshness requirement, expected evidence handles, uncertainty, and stopping condition. Otherwise keep the work local.
 
 ## Evidence packet
 
@@ -49,5 +49,6 @@ Do not silently fill evidence gaps from model memory. Label model knowledge, loc
 - Keep private-source discovery read-only unless the user explicitly requests a visible write within scope.
 - Never expose, paste, log, commit, or summarize credentials or secret values.
 - Bound crawls with explicit limits and stopping conditions.
+- Never use paid endpoints or paid fallbacks. Distinguish input, authentication/access, upstream/rate-limit, local coverage, reader, and tool-dispatch errors. Continue independent source lanes when one fails.
 - Do not create recurring digests or durable knowledge stores unless requested and designed with provenance, deduplication, expiry, validation, and an update policy.
 - Ask the user only for decisions or non-discoverable intent; discoverable facts remain the agent's responsibility.

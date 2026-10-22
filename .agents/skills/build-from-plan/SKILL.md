@@ -1,6 +1,6 @@
 ---
 name: build-from-plan
-description: "Execute an already-understood development or implementation plan with high autonomy while preserving user comprehension and intent. Use after ideation, discovery, and planning are substantially complete when the user asks Codex to build, implement, carry out, hand off, or one-shot a plan but wants material product, customer-workflow, architecture, or validation changes brought back for collaborative reorientation. Supports fluid human steering and concurrent side work without routine approval gates."
+description: "Execute an already-understood development or implementation plan with high autonomy while preserving user comprehension and intent. Use after ideation, discovery, and planning are substantially complete when the user asks Codex to build, implement, carry out, hand off, or one-shot a plan but wants material product, customer-workflow, architecture, or validation changes brought back for collaborative reorientation. After any grilling pass, require the user's fresh explicit $build-from-plan invocation to execute the current plan. Supports fluid human steering and concurrent side work without routine approval gates."
 ---
 
 # Build From Plan
@@ -15,6 +15,14 @@ Treat this as the post-plan stage of the workflow:
 
 Use `$grilling` for initial intent alignment or substantial re-planning. Use `$discovery` for facts that require current, internal, or source-routed evidence. Do not restart either workflow merely as ceremony.
 
+## Entry After Grilling
+
+Before executing a plan that entered grilling, verify that the user freshly and explicitly invoked `$build-from-plan` to execute the current plan after the latest grilling pass began. A skill command or skill chip in an execution request qualifies. Agreement, ordinary build or smoke-test requests, earlier invocations, mentions or attached skill text without an execution request, and agent-initiated loading do not qualify.
+
+Without that invocation, remain in grilling and read-only discovery. Do not auto-select or load this skill to bypass the gate, ask a generic “shall I proceed?” question, or repeatedly prompt the user to end the interview. If the plan is ready, state once that it awaits the user's invocation.
+
+Every new grilling pass suspends implementation of that plan, including delegated execution, and resets this gate. Preserve valid work, but require a fresh user invocation before resuming; prior execution permission and conservative-autonomy instructions cannot substitute for it.
+
 ## Establish Readiness
 
 1. Read the plan and the context that gives it meaning, including linked tasks, artifacts, decisions, relevant code, and verification expectations.
@@ -22,7 +30,7 @@ Use `$grilling` for initial intent alignment or substantial re-planning. Use `$d
 3. Infer the user's comprehension from the preceding conversation and artifacts. Do not repeat alignment or demand a new teach-back when understanding is already demonstrated.
 4. Resolve factual gaps through inspection or `$discovery`. Delegate independent research lanes when useful.
 5. Ask the user only about a missing decision that is both user-owned and capable of changing the next concrete action. Include a recommendation.
-6. Begin execution when the map is complete enough to implement and remaining unknowns are local, reversible, or discoverable during the work.
+6. Begin execution when the entry gate is satisfied, the map is complete enough to implement, and remaining unknowns are local, reversible, or discoverable during the work.
 
 Do not turn readiness into a fresh planning interview. If the supplied plan is materially incomplete, explain the missing part and route back to focused planning or `$grilling` rather than quietly inventing it.
 
@@ -67,7 +75,7 @@ When a semantic blocker appears:
    - the viable paths and Codex's recommendation;
    - what completed work remains valid.
 4. Ask one decision question only if the paths lead to meaningfully different actions and the user owns the choice.
-5. Incorporate the resolution into the implementation map and resume autonomous execution.
+5. Incorporate the resolution into the implementation map and resume autonomous execution unless a new grilling pass began. After a new grilling pass, require the user's fresh `$build-from-plan` invocation under Entry After Grilling before resuming.
 
 Do not end with only a blocker report when a concrete user decision can unlock the work. State the recommended path and ask for that decision, then remain ready to resume.
 
