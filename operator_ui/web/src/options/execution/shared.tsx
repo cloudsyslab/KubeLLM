@@ -4,10 +4,9 @@ import { displayModel } from "@/components/charts";
 import { LabLogo } from "@/components/ModelCard";
 import { Tip } from "@/components/ui";
 import { labOf } from "@/data/models";
-import { PHASES, type AttemptState, type DemoAttempt, type DemoEvent, type DemoPhase } from "@/demo/campaign";
+import type { AttemptState, DemoAttempt, DemoEvent, DemoPhase, PhaseKey } from "@/demo/campaign";
 import { clock } from "@/demo/ReplayBar";
 import { useReplay } from "@/demo/replay";
-import { humanize } from "@/lib/cases";
 import { duration } from "@/lib/format";
 
 export function ModelLabel({ model, className }: { model: string; className?: string }) {
@@ -111,6 +110,40 @@ export function StateMark({ state, size = 14 }: { state: AttemptState; size?: nu
   return <span aria-label={look.word} className={clsx("inline-block shrink-0 rounded-[3px]", look.className)} style={{ width: size, height: size }} />;
 }
 
+export type PhaseStatus = "skipped" | "pending" | "current" | "done" | "error" | "pass" | "fail" | "unknown";
+
+// A phase in the grid's vocabulary: the live phase looks like a running cell,
+// Ground Truth carries the attempt's outcome, a runner error is amber.
+export function phaseStatus(attempt: DemoAttempt, key: PhaseKey, t: number, errorPhase?: PhaseKey): PhaseStatus {
+  const phase = attempt.phases.find((p) => p.key === key);
+  if (!phase) return "skipped";
+  if (t < phase.start) return "pending";
+  if (t < phase.end) return key === errorPhase ? "error" : "current";
+  if (key === errorPhase) return "error";
+  if (key === "truth") return attempt.outcome;
+  return "done";
+}
+
+export function phaseLook(status: PhaseStatus) {
+  switch (status) {
+    case "current":
+      return { className: "border border-accent bg-accent-soft", word: "Running" };
+    case "done":
+      return { className: "bg-fg-3", word: "Done" };
+    case "skipped":
+      return { className: "", word: "Skipped" };
+    case "pending":
+      return { className: "border border-dashed border-line-strong", word: "Not started" };
+    default:
+      return attemptLook(status);
+  }
+}
+
+export function PhaseMark({ status, size = 10 }: { status: PhaseStatus; size?: number }) {
+  const look = phaseLook(status);
+  return <span aria-hidden className={clsx("inline-block shrink-0 rounded-[2px]", look.className, status === "skipped" && "border border-line")} style={{ width: size, height: size }} />;
+}
+
 const SOURCE_LABEL: Record<DemoEvent["source"], string> = {
   runner: "runner",
   kubectl: "kubectl",
@@ -120,64 +153,49 @@ const SOURCE_LABEL: Record<DemoEvent["source"], string> = {
   truth: "truth",
 };
 
-export function LogLine({ event, showAttempt, dense }: { event: DemoEvent; showAttempt?: boolean; dense?: boolean }) {
-  const tone = {
-    info: "text-fg-2",
-    command: "text-fg",
-    output: "text-fg-3",
-    warn: "text-warn",
-    error: "text-bad",
-    pass: "text-good",
-    fail: "text-bad",
-  }[event.level];
+// Output lines use the grid's colors: Ground Truth checks and verdicts in green
+// or red (they carry ✓, ✗, PASS, or FAIL in the text), runner errors and
+// warnings in amber, the commands an agent ran in full strength.
+const LEVEL_TONE: Record<DemoEvent["level"], string> = {
+  info: "text-fg-2",
+  command: "text-fg",
+  output: "text-fg-3",
+  warn: "text-warn",
+  error: "text-warn",
+  pass: "text-good",
+  fail: "text-bad",
+};
+
+// The level's mark in the gutter, so a long stream scans like the grid. The
+// newest line of a live attempt takes the running accent instead.
+const LEVEL_MARK: Partial<Record<DemoEvent["level"], string>> = {
+  warn: "bg-warn",
+  error: "bg-warn",
+  pass: "bg-good",
+  fail: "bg-bad",
+};
+
+export function LogLine({ event, showAttempt, dense, live }: { event: DemoEvent; showAttempt?: boolean; dense?: boolean; live?: boolean }) {
+  const mark = live ? "bg-accent motion-safe:animate-pulse" : LEVEL_MARK[event.level];
   return (
-    <div className={clsx("grid items-baseline gap-3 font-mono text-[11.5px] leading-[1.55]", showAttempt ? "grid-cols-[52px_34px_72px_minmax(0,1fr)]" : "grid-cols-[52px_72px_minmax(0,1fr)]", dense ? "py-[1px]" : "py-0.5")}>
+    <div
+      className={clsx(
+        "relative grid items-baseline gap-x-3 pl-2.5 font-mono text-[11.5px] leading-[1.55]",
+        showAttempt ? "grid-cols-[40px_28px_minmax(0,1fr)] sm:grid-cols-[52px_34px_68px_minmax(0,1fr)]" : "grid-cols-[40px_minmax(0,1fr)] sm:grid-cols-[52px_68px_minmax(0,1fr)]",
+        dense ? "py-[1px]" : "py-0.5",
+      )}
+    >
+      {mark && <span aria-hidden className={clsx("absolute top-[0.5em] left-0 h-[0.8em] w-[3px] rounded-full", mark)} />}
       <span className="num text-fg-3">{clock(event.t)}</span>
       {showAttempt && <span className="num text-fg-3">#{event.attempt + 1}</span>}
-      <span className="truncate text-fg-3">{SOURCE_LABEL[event.source]}</span>
-      <span className={clsx("break-words", tone)}>
+      <span className="hidden truncate text-fg-3 sm:block">{SOURCE_LABEL[event.source]}</span>
+      <span className={clsx("break-words", LEVEL_TONE[event.level])}>
+        <span className="text-fg-3 sm:hidden">{SOURCE_LABEL[event.source]} </span>
         {event.level === "command" && <span className="text-fg-3 select-none">$ </span>}
         {event.text}
       </span>
     </div>
   );
-}
-
-export function PhaseSteps({ attempt, t }: { attempt: DemoAttempt; t: number }) {
-  return (
-    <ol className="grid grid-cols-3 gap-px overflow-hidden rounded-md border border-line bg-line sm:grid-cols-6">
-      {PHASES.map((meta) => {
-        const phase = attempt.phases.find((p) => p.key === meta.key);
-        const state = !phase ? "skipped" : t >= phase.end ? "done" : t >= phase.start ? "current" : "pending";
-        const elapsed = phase ? Math.min(t, phase.end) - phase.start : 0;
-        return (
-          <li key={meta.key} className={clsx("grid gap-1 bg-surface px-2.5 py-2", state === "current" && "bg-accent-soft")}>
-            <div className="flex items-center gap-1.5">
-              <span
-                aria-hidden
-                className={clsx(
-                  "size-1.5 rounded-full",
-                  state === "done" && "bg-fg-2",
-                  state === "current" && "bg-accent motion-safe:animate-pulse",
-                  state === "pending" && "border border-fg-3",
-                  state === "skipped" && "bg-transparent",
-                )}
-              />
-              <span className={clsx("text-[12px]", state === "current" ? "font-medium text-fg" : state === "done" ? "text-fg-2" : "text-fg-3")}>{meta.label}</span>
-            </div>
-            <span className="num text-[11.5px] text-fg-3">
-              {state === "skipped" ? "skipped" : state === "pending" ? "—" : duration(elapsed)}
-              {phase?.tokens && state !== "pending" ? ` · ${(phase.tokens / 1000).toFixed(1)}k tok` : ""}
-            </span>
-          </li>
-        );
-      })}
-    </ol>
-  );
-}
-
-export function caseShort(caseId: string) {
-  return humanize(caseId);
 }
 
 export function phaseOf(attempt: DemoAttempt | undefined, t: number): DemoPhase | undefined {
