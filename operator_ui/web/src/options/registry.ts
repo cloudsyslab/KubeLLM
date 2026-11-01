@@ -21,6 +21,12 @@ export interface OptionDef {
   tradeoff: string;
   reference: string;
   recommended?: boolean;
+  /**
+   * The user's decision for this surface, merged from the options named in
+   * `letter` (for example "A+B"). A decided surface lists only this option,
+   * under the id "chosen", so an older remembered pick falls back to it.
+   */
+  chosen?: boolean;
   component: LazyExoticComponent<ComponentType>;
 }
 
@@ -51,3 +57,6 @@ export const SURFACES: SurfaceDef[] = [
 ];
 
 export const surfaceDef = (surface: Surface) => SURFACES.find((s) => s.id === surface)!;
+
+/** A surface whose design is settled: it lists only the user's chosen option. */
+export const isDecided = (def: SurfaceDef) => def.options.length === 1 && def.options[0].chosen === true;

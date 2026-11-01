@@ -6,7 +6,7 @@ import { PageHeader, Tag } from "@/components/ui";
 import { ReplayBar } from "@/demo/ReplayBar";
 import { useOptionChoice } from "./choice";
 import { PickSheet } from "./PickSheet";
-import { SURFACES, surfaceDef, type OptionDef, type Surface } from "./registry";
+import { isDecided, SURFACES, surfaceDef, type OptionDef, type Surface } from "./registry";
 
 export function StageFallback() {
   return <div className="h-[560px] animate-pulse rounded-lg bg-surface" />;
@@ -22,9 +22,9 @@ function OptionCard({ option, shown, chosen, onShow, onChoose }: { option: Optio
     >
       <button type="button" onClick={onShow} aria-pressed={shown} className="grid cursor-pointer gap-2 text-left">
         <div className="flex items-center gap-2">
-          <span className={clsx("grid size-6 place-items-center rounded-md font-mono text-[12px] font-medium", shown ? "bg-accent text-accent-ink" : "bg-surface-3 text-fg-2")}>{option.letter}</span>
-          <span className="text-[14px] font-medium">{option.name}</span>
-          {option.recommended && <Tag tone="accent" className="ml-auto">Recommended</Tag>}
+          <span className={clsx("grid h-6 min-w-6 shrink-0 place-items-center rounded-md px-1 font-mono text-[12px] font-medium", shown ? "bg-accent text-accent-ink" : "bg-surface-3 text-fg-2")}>{option.letter}</span>
+          <span className="min-w-0 text-[14px] font-medium">{option.name}</span>
+          {option.chosen ? <Tag tone="accent" className="ml-auto">Decided</Tag> : option.recommended && <Tag tone="accent" className="ml-auto">Recommended</Tag>}
         </div>
         <p className="text-[13px] leading-relaxed text-fg-2">{option.idea}</p>
       </button>
@@ -42,22 +42,28 @@ function OptionCard({ option, shown, chosen, onShow, onChoose }: { option: Optio
           <dd className="text-fg-2">{option.reference}</dd>
         </div>
       </dl>
-      <button
-        type="button"
-        onClick={onChoose}
-        className={clsx(
-          "inline-flex h-8 cursor-pointer items-center justify-center gap-1.5 rounded-md text-[13px] font-medium transition-colors",
-          chosen ? "bg-accent-soft text-accent" : "border border-line-strong text-fg hover:bg-surface-2",
-        )}
-      >
-        {chosen ? (
-          <>
-            <Check className="size-3.5" strokeWidth={2.25} /> Shown on the page
-          </>
-        ) : (
-          "Use on the page"
-        )}
-      </button>
+      {option.chosen ? (
+        <p className="inline-flex h-8 items-center justify-center gap-1.5 rounded-md bg-accent-soft text-[13px] font-medium text-accent">
+          <Check className="size-3.5" strokeWidth={2.25} /> Your pick, shown on the page
+        </p>
+      ) : (
+        <button
+          type="button"
+          onClick={onChoose}
+          className={clsx(
+            "inline-flex h-8 cursor-pointer items-center justify-center gap-1.5 rounded-md text-[13px] font-medium transition-colors",
+            chosen ? "bg-accent-soft text-accent" : "border border-line-strong text-fg hover:bg-surface-2",
+          )}
+        >
+          {chosen ? (
+            <>
+              <Check className="size-3.5" strokeWidth={2.25} /> Shown on the page
+            </>
+          ) : (
+            "Use on the page"
+          )}
+        </button>
+      )}
     </div>
   );
 }
@@ -79,7 +85,7 @@ function SurfaceRoom({ surface }: { surface: Surface }) {
             Open the {def.label} page <ArrowUpRight className="size-3.5" strokeWidth={1.75} />
           </Link>
         ) : (
-          <span className="text-[13px] text-fg-3">Shown on every page once picked</span>
+          <span className="text-[13px] text-fg-3">{isDecided(def) ? "Shown on every page" : "Shown on every page once picked"}</span>
         )}
       </div>
       <div className="grid gap-3 [grid-template-columns:repeat(auto-fit,minmax(260px,1fr))]">
@@ -107,7 +113,7 @@ export const LIVE_SURFACES = new Set<Surface>(["execution", "resources", "topolo
 
 function SurfaceNav({ value, onChange }: { value: Surface | "overview"; onChange: (next: Surface | "overview") => void }) {
   const groups = [...new Set(SURFACES.map((s) => s.group))];
-  const item = (id: Surface | "overview", label: string, count?: number) => (
+  const item = (id: Surface | "overview", label: string, count?: number | "decided") => (
     <button
       key={id}
       type="button"
@@ -119,7 +125,11 @@ function SurfaceNav({ value, onChange }: { value: Surface | "overview"; onChange
       )}
     >
       {label}
-      {count !== undefined && <span className="num text-[11px] text-fg-3">{count}</span>}
+      {count === "decided" ? (
+        <Check className="size-3 text-fg-3" strokeWidth={2.25} aria-label="Decided" />
+      ) : (
+        count !== undefined && <span className="num text-[11px] text-fg-3">{count}</span>
+      )}
     </button>
   );
   return (
@@ -128,7 +138,7 @@ function SurfaceNav({ value, onChange }: { value: Surface | "overview"; onChange
       {groups.map((group) => (
         <div key={group} className="flex flex-wrap items-center gap-1 border-l border-line pl-2.5 ml-1.5">
           <span className="label mr-1 shrink-0 !text-[10px]">{group}</span>
-          {SURFACES.filter((s) => s.group === group).map((s) => item(s.id, s.label, s.options.length))}
+          {SURFACES.filter((s) => s.group === group).map((s) => item(s.id, s.label, isDecided(s) ? "decided" : s.options.length))}
         </div>
       ))}
     </nav>
@@ -139,13 +149,19 @@ export function OptionsRoomPage() {
   const [params, setParams] = useSearchParams();
   const requested = params.get("surface");
   const surface = (SURFACES.find((s) => s.id === requested)?.id ?? "overview") as Surface | "overview";
-  const total = SURFACES.reduce((sum, s) => sum + s.options.length, 0);
+  const open = SURFACES.filter((s) => !isDecided(s));
+  const total = open.reduce((sum, s) => sum + s.options.length, 0);
+  const decided = SURFACES.length - open.length;
   return (
     <div className="grid gap-6">
       <PageHeader
         eyebrow="Design review"
         title="Options room"
-        description={`${total} options across ${SURFACES.length} surfaces, each rendered with the same demo data. Compare them, then pick one per surface; your pick is what its page shows.`}
+        description={
+          open.length === 0
+            ? `All ${SURFACES.length} surfaces are decided; each page shows your pick.`
+            : `${total} options across ${open.length} open surfaces${decided ? ` (${decided} decided)` : ""}, each rendered with the same demo data. Compare them, then pick one per surface; your pick is what its page shows.`
+        }
       />
       <SurfaceNav value={surface} onChange={(next) => setParams(next === "overview" ? {} : { surface: next }, { replace: true })} />
       {surface === "overview" ? (
@@ -176,7 +192,7 @@ export function SurfacePage({ surface }: { surface: Surface }) {
           <Link to={`/options?surface=${surface}`} className="inline-flex h-8 items-center gap-2 rounded-md border border-line px-3 text-[12.5px] text-fg-2 hover:bg-surface-2 hover:text-fg">
             <span className="font-mono text-fg-3">{option.letter}</span>
             {option.name}
-            <span className="text-fg-3">· compare {def.options.length} options</span>
+            <span className="text-fg-3">{isDecided(def) ? "· decided" : `· compare ${def.options.length} options`}</span>
           </Link>
         }
       />
