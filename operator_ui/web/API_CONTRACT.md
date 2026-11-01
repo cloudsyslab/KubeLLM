@@ -57,8 +57,15 @@ attempt list (model, case) so progress has a real denominator.
 ## Readiness and publication details (needed by some options)
 
 - `safe_readiness` currently returns name, label, status, blocking, and hint
-  per check. Environment options that show per-check durations and detail
-  text need redacted `detail` and `duration_ms` fields.
+  per check. The Environment page also needs, per check:
+  - its redacted `detail`, start offset, and `duration_ms`
+  - the terminal execution: each command it ran (redacted argv, plus the
+    parent command such as `runner.py --preflight`), its redacted and
+    truncated stdout and stderr, and its exit code (absent for in-process
+    checks, which carry a note instead)
+  Preparation's repair steps need the same, keyed by repair name.
+  Alternatively, persist both as job events in the Execution event shape
+  below, and the page reads them from the same stream.
 - Readiness freshness also depends on the lane selector file and the
   operator app instance (app.py compares both). The UI should say that
   restarting the app or editing the selector invalidates a fresh result.

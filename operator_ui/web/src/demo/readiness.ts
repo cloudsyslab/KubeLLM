@@ -87,3 +87,145 @@ export function summarize(checks: ReadinessCheck[]) {
   const blocked = count("block");
   return { status: blocked ? ("BLOCKED" as const) : ("READY" as const), pass: count("pass"), warn: count("warn"), block: blocked, skip: count("skip"), ms: checks.reduce((sum, c) => sum + c.ms, 0) };
 }
+
+// ---------------------------------------------------------------- executions
+//
+// What each check ran: the processes check_readiness.py and runner.py
+// --preflight start for it, with their output streams and exit codes. The
+// commands follow the real scripts; the output is representative, elided where
+// long, and redacted. Tag every view as Demo.
+
+/** One process a check ran. */
+export interface CheckCommand {
+  cmd: string;
+  stdout?: string[];
+  stderr?: string[];
+  /** Absent for a process left running in the background. */
+  exit?: number;
+}
+
+export interface CheckExecution {
+  /** The command this check runs inside, when one command reports several checks. */
+  via?: string;
+  /** How to read these lines (in-process checks, HTTP probes, elided output). */
+  note?: string;
+  commands: CheckCommand[];
+  /** What the check itself reports after its commands (preflight's JSON entry, in-process reads). */
+  result?: { stdout?: string[]; stderr?: string[] };
+}
+
+const PY = ".venv/bin/python";
+const RUNNER = `${PY} debug_assistant_latest/runner.py --lab-config ${LANE.selector}`;
+const RAG_HOST = LANE.ragApi.replace("http://", "");
+/** The lane node's API server, as the topology demo names it. */
+const API_SERVER = "192.168.112.2:8443";
+const HTTP_NOTE = "HTTP probes are shown as curl equivalents; the script sends them with urllib.";
+const PREFLIGHT_NOTE = "runner.py --preflight runs every live gate in one process and prints one JSON report; these are this gate's lines.";
+const entry = (name: string, passed: boolean, message: string) => JSON.stringify({ name, passed, message });
+const live = (name: string, passed: boolean, message: string, commands: CheckCommand[] = []): CheckExecution => ({
+  via: `${RUNNER} --preflight`,
+  note: PREFLIGHT_NOTE,
+  commands,
+  result: { stdout: [entry(name, passed, message)] },
+});
+
+const EXECUTIONS: Record<string, (level: CheckLevel) => CheckExecution> = {
+  repo_checkout: () => ({
+    commands: [
+      { cmd: "git rev-parse --show-toplevel", stdout: ["~/KubeLLM"], exit: 0 },
+      { cmd: "git remote get-url origin", stdout: ["https://github.com/cloudsyslab/KubeLLM.git"], exit: 0 },
+      { cmd: "git branch --show-current", stdout: ["minh"], exit: 0 },
+      { cmd: "git status --porcelain=v1 --untracked-files=all", exit: 0 },
+    ],
+  }),
+  venv_python: () => ({
+    note: "The package list is elided.",
+    commands: [
+      { cmd: `${PY} -m pip list --format=json`, stdout: ['[{"name": "aiohappyeyeballs", "version": "…"}, …]'], exit: 0 },
+      { cmd: `${PY} -m pip check`, stdout: ["No broken requirements found."], exit: 0 },
+    ],
+  }),
+  providers_api: () => ({
+    note: HTTP_NOTE,
+    commands: ["gpt-5-mini", "gpt-5-nano"].map((model) => ({
+      cmd: `curl -s -o /dev/null -w "%{http_code}" -H "Authorization: Bearer [redacted]" https://api.openai.com/v1/models/${model}`,
+      stdout: ["200"],
+      exit: 0,
+    })),
+  }),
+  providers_ollama: () => ({
+    note: HTTP_NOTE,
+    commands: [{ cmd: `curl -s -o /dev/null -w "%{http_code}" -X POST http://127.0.0.1:11434/api/show -d '{"model": "glm-4.7-flash:latest"}'`, stdout: ["200"], exit: 0 }],
+  }),
+  artifacts_paths: () => ({
+    note: "Checked in process with os.access; no command runs.",
+    commands: [],
+    result: { stdout: [".local/readiness  writable_or_creatable_without_check_only_writes", ".local/services  writable_or_creatable_without_check_only_writes", ".local/runs  writable_or_creatable_without_check_only_writes"] },
+  }),
+  artifacts_disk: (level) => ({
+    note: "Free space is read in process with shutil.disk_usage.",
+    commands: [{ cmd: "docker info --format {{.DockerRootDir}}", stdout: ["/var/lib/docker"], exit: 0 }],
+    result: { stdout: [level === "warn" ? "free: 11.2 GiB" : "free: at least 20 GiB"] },
+  }),
+  kubeconfig_owner: () => ({
+    note: "File modes are checked in process; certificate data is redacted.",
+    commands: [
+      {
+        cmd: `kubectl --kubeconfig ${LANE.kubeconfig} config view --raw --minify --flatten -o json`,
+        stdout: [`{"clusters": [{"cluster": {"certificate-authority-data": "[redacted]", "server": "https://${API_SERVER}"}, "name": "${LANE.profile}"}], "users": [{"user": {"client-certificate-data": "[redacted]", "client-key-data": "[redacted]"}}], …}`],
+        exit: 0,
+      },
+      { cmd: `kubectl --kubeconfig ${LANE.kubeconfig} get nodes --request-timeout=10s -o name`, stdout: [`node/${LANE.profile}`], exit: 0 },
+    ],
+    result: { stdout: ["kubeconfig 0600 · directory 0700 · owner only"] },
+  }),
+  rag_lane: (level) => ({
+    note: HTTP_NOTE,
+    commands: [
+      level === "block"
+        ? { cmd: `curl -s ${LANE.ragApi}/server_info/`, stderr: [`curl: (7) Failed to connect to 127.0.0.1 port ${RAG_HOST.split(":")[1]} after 0 ms: Couldn't connect to server`], exit: 7 }
+        : { cmd: `curl -s ${LANE.ragApi}/server_info/`, stdout: [`{"api_version": "…", "repo_signature": "…", "server_port": ${RAG_HOST.split(":")[1]}, "server_bind_host": "127.0.0.1", "database_identity": "…"}`], exit: 0 },
+    ],
+  }),
+  pgvector_owner: () => ({
+    note: "Long JSON output is elided.",
+    commands: [{ cmd: `docker inspect ${LANE.pgvector} --format '{{json .}}'`, stdout: [`{"Name": "/${LANE.pgvector}", "State": {"Running": true, …}, "Config": {"Labels": {"io.kubellm.lane": "${LANE.id}", …}, …}, …}`], exit: 0 }],
+  }),
+  static_list: () => ({
+    note: "The case list is elided after three.",
+    commands: [{ cmd: `${RUNNER} --list`, stdout: ["Available test cases (27):", "  environment_variable", "  environment_variable_wrong_name", "  incorrect_selector", "  …"], exit: 0 }],
+  }),
+  static_truth: () => ({
+    commands: [{ cmd: `${RUNNER} --validate-ground-truth`, stdout: ["Validation PASSED"], exit: 0 }],
+  }),
+  python_imports: () => live("python_imports", true, "Imported runtime modules: main, report, ground_truth"),
+  pytest: () => live("pytest", true, "pytest is available"),
+  db_connectivity: () => live("db_connectivity", true, "Connected to the configured database"),
+  rag_api: (level) =>
+    level === "block"
+      ? live("rag_api", false, `RAG API check failed for ${LANE.ragApi}/server_info/: connection refused`)
+      : live("rag_api", true, `RAG API reachable at ${LANE.ragApi}/server_info/ (api_version=…)`),
+  lab_lane: () => live("lab_lane", true, "Profile, kubeconfig, pgvector owner, and endpoint match the selected lane"),
+  kubectl: () => live("kubectl", true, "kubectl is available", [{ cmd: "kubectl version --client --output=json", stdout: ['{"clientVersion": {"major": "1", "minor": "31", "gitVersion": "v1.31.0", …}}'], exit: 0 }]),
+  docker_engine: () => live("docker_engine", true, "Docker engine is available", [{ cmd: "docker version", stdout: ["Client: Docker Engine - Community", "Server: Docker Engine - Community"], exit: 0 }]),
+  minikube_status: (level) =>
+    level === "block"
+      ? live("minikube_status", false, `minikube profile '${LANE.profile}' is unhealthy: host: Stopped`, [
+          { cmd: `minikube status -p ${LANE.profile}`, stdout: [LANE.profile, "type: Control Plane", "host: Stopped", "kubelet: Stopped", "apiserver: Stopped", "kubeconfig: Stopped"], exit: 7 },
+        ])
+      : live("minikube_status", true, `minikube profile '${LANE.profile}' is healthy`, [
+          { cmd: `minikube status -p ${LANE.profile}`, stdout: [LANE.profile, "type: Control Plane", "host: Running", "kubelet: Running", "apiserver: Running", "kubeconfig: Configured"], exit: 0 },
+        ]),
+  cluster_access: (level) =>
+    level === "block"
+      ? live("cluster_access", false, `kubectl get nodes failed: The connection to the server ${API_SERVER} was refused - did you specify the right host or port?`, [
+          { cmd: "kubectl get nodes", stderr: [`The connection to the server ${API_SERVER} was refused - did you specify the right host or port?`], exit: 1 },
+        ])
+      : live("cluster_access", true, "kubectl get nodes succeeded", [{ cmd: "kubectl get nodes", stdout: ["NAME STATUS ROLES AGE VERSION", `${LANE.profile} Ready control-plane 34d v1.31.0`], exit: 0 }]),
+  config_validity: () => live("config_validity", true, "Validated 27 config(s)"),
+};
+
+/** The processes a check ran and what they printed, for its terminal view. */
+export function executionOf(check: ReadinessCheck): CheckExecution {
+  return EXECUTIONS[check.id]?.(check.level) ?? { commands: [], note: "No command is recorded for this check." };
+}
