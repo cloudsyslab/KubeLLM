@@ -163,13 +163,20 @@ function phaseEvents(attempt: DemoAttempt, phase: DemoPhase, apiModel: string, f
       ];
     case "truth": {
       const checks = info?.checks ?? ["Recorded checks unavailable"];
+      // An unknown outcome is neither a pass nor a failure: no check marks, neutral level.
+      if (attempt.outcome === "unknown") {
+        return [
+          ...checks.map((check) => ({ source: "truth" as const, level: "info" as Level, text: `· ${check}` })),
+          { source: "runner", level: "info", text: "Ground Truth: UNKNOWN (no recorded outcome)" },
+        ];
+      }
       return [
         ...checks.map((check, i) => ({
           source: "truth" as const,
           level: (passed || i < checks.length - 1 ? "pass" : "fail") as Level,
           text: `${passed || i < checks.length - 1 ? "✓" : "✗"} ${check}`,
         })),
-        { source: "runner", level: passed ? "pass" : "fail", text: `Ground Truth: ${attempt.outcome === "unknown" ? "UNKNOWN" : passed ? "PASS" : "FAIL"}` },
+        { source: "runner", level: passed ? "pass" : "fail", text: `Ground Truth: ${passed ? "PASS" : "FAIL"}` },
       ];
     }
     case "teardown":
