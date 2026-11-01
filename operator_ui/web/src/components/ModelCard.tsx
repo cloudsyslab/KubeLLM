@@ -105,7 +105,7 @@ export function ModelCard({ config, children, side = "bottom" }: { config: Model
     <HoverCard.Root openDelay={300} closeDelay={80}>
       <HoverCard.Trigger asChild>{children}</HoverCard.Trigger>
       <HoverCard.Portal>
-        <HoverCard.Content side={side} align="start" sideOffset={8} collisionPadding={12} className="z-50 w-[340px] rounded-lg bg-surface-2 p-4 shadow-pop">
+        <HoverCard.Content side={side} align="start" sideOffset={8} collisionPadding={12} className="z-50 w-[min(340px,calc(100vw-24px))] rounded-lg bg-surface-2 p-4 shadow-pop">
           <ModelCardBody config={config} />
           <Link to={`/models/${config.slug}`} className="mt-3 inline-flex items-center gap-1 text-[12.5px] text-fg-2 hover:text-fg">
             Open model <ArrowUpRight className="size-3.5" strokeWidth={1.75} />

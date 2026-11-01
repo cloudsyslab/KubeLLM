@@ -46,7 +46,7 @@ function Card({ trigger, children, side = "right" }: { trigger: ReactNode; child
           align="start"
           sideOffset={8}
           collisionPadding={12}
-          className="z-50 grid w-[360px] gap-3 rounded-lg bg-surface-2 p-4 shadow-pop"
+          className="z-50 grid w-[min(360px,calc(100vw-24px))] gap-3 rounded-lg bg-surface-2 p-4 shadow-pop"
         >
           {children}
         </HoverCard.Content>
