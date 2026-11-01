@@ -171,7 +171,6 @@ function SidebarBody({ onNavigate }: { onNavigate?: () => void }) {
           <NavLinks onNavigate={onNavigate} />
         </div>
       </div>
-      <DockHost slot="sidebar" />
       <Footer />
     </div>
   );
@@ -257,7 +256,6 @@ export function Shell({ children }: { children: ReactNode }) {
         </div>
         <main className="mx-auto w-full max-w-[1440px] px-4 pt-6 pb-16 sm:px-6 lg:px-8 lg:pt-8">{children}</main>
       </div>
-      <DockHost slot="floating" />
       <CommandPalette open={paletteOpen} onOpenChange={setPaletteOpen} />
     </div>
   );

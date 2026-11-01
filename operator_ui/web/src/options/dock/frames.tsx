@@ -4,7 +4,7 @@ import type { ReactNode } from "react";
 import { Mark } from "@/components/Shell";
 import { Segmented, Tag } from "@/components/ui";
 
-// Scaled-down mocks of the real shell so each active-work option is judged
+// Scaled-down mocks of the real shell so the active-work indicator is judged
 // where it lives. Only the indicator inside is interactive.
 
 export type PreviewContext = "page" | "execution" | "idle";
@@ -26,7 +26,7 @@ function Brand() {
   );
 }
 
-function SidebarMock({ active, slot }: { active: string; slot?: ReactNode }) {
+function SidebarMock({ active }: { active: string }) {
   return (
     <div className="flex h-full min-h-0 flex-col">
       <div inert className="flex h-12 shrink-0 items-center px-4">
@@ -55,7 +55,6 @@ function SidebarMock({ active, slot }: { active: string; slot?: ReactNode }) {
           ))}
         </div>
       </div>
-      {slot}
       <div inert className="flex items-center gap-2 border-t border-line px-3.5 py-2.5 text-[11px] text-fg-3">
         <Database className="size-3" strokeWidth={1.75} />
         Recorded snapshot
@@ -99,13 +98,13 @@ function PageSkeleton({ title }: { title: string }) {
   );
 }
 
-export function MockDesktop({ page, sidebar, topbar, floating, overlay }: { page: string; sidebar?: ReactNode; topbar?: ReactNode; floating?: ReactNode; overlay?: ReactNode }) {
+export function MockDesktop({ page, topbar, overlay }: { page: string; topbar?: ReactNode; overlay?: ReactNode }) {
   const crumb = page === "Execution" ? ["Operate", "Execution"] : ["Evaluate", page];
   return (
     <div className="overflow-x-auto rounded-lg border border-line-strong">
       <div className="relative grid h-[560px] min-w-[720px] grid-cols-[236px_minmax(0,1fr)] overflow-hidden bg-bg">
         <aside className="min-h-0 border-r border-line">
-          <SidebarMock active={page} slot={sidebar} />
+          <SidebarMock active={page} />
         </aside>
         <div className="flex min-w-0 flex-col">
           <div className="flex h-12 shrink-0 items-center border-b border-line px-5">
@@ -125,14 +124,13 @@ export function MockDesktop({ page, sidebar, topbar, floating, overlay }: { page
             <PageSkeleton title={page} />
           </div>
         </div>
-        {floating}
         {overlay}
       </div>
     </div>
   );
 }
 
-export function MockPhone({ page, headerRight, sheet, floating }: { page: string; headerRight?: ReactNode; sheet?: ReactNode; floating?: ReactNode }) {
+export function MockPhone({ page, headerRight }: { page: string; headerRight?: ReactNode }) {
   return (
     <div className="relative mx-auto h-[600px] w-full max-w-[320px] overflow-hidden rounded-lg border border-line-strong bg-bg">
       <div className="flex h-11 items-center gap-2.5 border-b border-line px-3">
@@ -152,15 +150,6 @@ export function MockPhone({ page, headerRight, sheet, floating }: { page: string
       <div className="[&_.grid-cols-3]:grid-cols-1">
         <PageSkeleton title={page} />
       </div>
-      {floating}
-      {sheet && (
-        <>
-          <div aria-hidden className="absolute inset-0 bg-black/50" />
-          <div className="absolute inset-y-0 left-0 w-[272px] max-w-[85%] border-r border-line bg-bg">
-            <SidebarMock active={page} slot={sheet} />
-          </div>
-        </>
-      )}
     </div>
   );
 }

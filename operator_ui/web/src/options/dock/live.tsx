@@ -1,5 +1,5 @@
 import clsx from "clsx";
-import { useEffect, useMemo, useState } from "react";
+import { useMemo } from "react";
 import { useLocation } from "react-router";
 import { PHASES, viewAt, type AttemptState, type DemoAttempt, type DemoEvent, type DemoPhase } from "@/demo/campaign";
 import { JOBS } from "@/demo/jobs";
@@ -89,20 +89,6 @@ export function useActiveWork(force?: "idle"): ActiveWork {
 export function useOnExecution(): boolean {
   const { pathname } = useLocation();
   return pathname === "/execution" || pathname.startsWith("/execution/");
-}
-
-export function useMediaQuery(query: string): boolean {
-  const get = () => (typeof window !== "undefined" && "matchMedia" in window ? window.matchMedia(query).matches : true);
-  const [matches, setMatches] = useState(get);
-  useEffect(() => {
-    if (!("matchMedia" in window)) return;
-    const media = window.matchMedia(query);
-    const sync = () => setMatches(media.matches);
-    sync();
-    media.addEventListener("change", sync);
-    return () => media.removeEventListener("change", sync);
-  }, [query]);
-  return matches;
 }
 
 /**
