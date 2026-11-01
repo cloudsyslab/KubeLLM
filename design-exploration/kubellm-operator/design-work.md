@@ -259,6 +259,85 @@
   builds the picks against `API_CONTRACT.md`. Codex then wires the backend on
   the lab.
 
+### Consolidation, first round (2026-11-01)
+
+The user picked five surfaces and asked for those edits now, leaving the
+rest for a later review. A decided surface lists only one option (id
+`chosen`, `chosen: true`, its letter naming the merged sources). The page
+always shows it, and the options room and pick sheet mark it Decided.
+Unpicked options of decided surfaces are removed; they remain in Git
+history at `56b589f`.
+
+| Surface | Pick | How the pieces combine |
+| --- | --- | --- |
+| Runs | A+B | The experiments table is the page; the timeline is a second view of the same runs and filters. |
+| Compare | A+B | Metric rows lead; the case diff matrix opens beneath them for the same runs. |
+| Execution | C+E+B | The attempt grid leads; the attempt box tells the attempt's story and also offers the trace, whose output is colorized like the grid's log. |
+| New campaign | B+A | Guided steps do the picking; the plan rail on the right summarizes everything as it changes. |
+| Lab resources | A | Dense instrument, unchanged. |
+
+Still open: Environment, Jobs, Publish, Topology, and Active work.
+
+What was built:
+
+- Runs (`RunsBrowser.tsx`): a Table | Timeline switch in the toolbar.
+  - Both views share search, source, filters, sort, the compare selection,
+    and the timeline's zoom window.
+  - The view is in the URL (`?view=timeline`).
+  - Clicking a run on the timeline selects it for comparison, like ticking
+    its table row.
+- Compare (`Compare.tsx`): the metric table, then a "Case by case" section.
+  - Its header always counts shared cases and differing outcomes.
+  - Collapsed, it lists each run's flips against the base.
+  - "Show every case" opens the full matrix with its filters and its
+    Outcome, Time, and Tokens views.
+  - The Ground Truth row's "See which cases" opens it on the differences.
+  - The open filter is in the URL (`?cases=`).
+- Execution (`LiveCampaign.tsx` with `grid.tsx`, `story.tsx`, and
+  `trace.tsx`): the live grid on top, then one attempt box.
+  - The box follows the live attempt, or one pinned from the grid, with
+    "Back to live".
+  - The story runs down the left. On the right is the trace: the phase
+    waterfall plus one output panel scoped to the phase, the attempt, or
+    the campaign, with search. This panel replaces the grid option's log
+    tail.
+  - Grid cells, phase bars, story marks, and output lines share one status
+    mapping: live in the accent, Ground Truth in green or red with the
+    word, runner errors in amber. Runner errors in the output were red
+    before.
+  - An unknown Ground Truth outcome now logs neutrally, without check
+    marks.
+- New campaign (`GuidedBuilder.tsx`): the steps run Debug models, Cases,
+  Technique, Repetitions, then Confirm.
+  - Finished steps collapse to a summary with Edit.
+  - The rail on the right holds the attempt count and breakdown (each line
+    links to its step), the estimate, the readiness gate, and one action:
+    Review, then Start.
+  - Confirm shows what every case runs, the cases by scenario, the run
+    order, the readiness groups, and the exact request. It does not repeat
+    the rail's totals.
+  - The starters (Canonical suite, Like c7e2a91f, Blank) are kept.
+  - On phones the rail becomes a bottom bar. The review dialog is gone.
+- Shared: the case and model hover cards now cap their width at the
+  viewport (they ran past a 375px screen).
+
+Checks:
+
+- `npm run build` passes.
+- Every page and the room's views: no horizontal overflow and no console
+  errors at 1440x900 and 375x812.
+- Visual review of the four merged pages at desktop: a pinned Execution
+  attempt with its Ground Truth story and colorized output; New campaign
+  from a starter through Confirm; the Runs timeline; the Compare matrix
+  open on differences.
+- Each builder also exercised its page at phone width and in the light
+  theme.
+
+Gaps:
+
+- Touch gestures and reduced motion were not exercised.
+- `pytest` was not run (not installed on this Mac; no Python changed).
+
 ## Current pass: production front end (checkpoint 1: model explorer)
 
 - State: review-ready (checkpoint 1). Start instruction: the user's explicit
