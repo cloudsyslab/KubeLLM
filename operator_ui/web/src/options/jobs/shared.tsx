@@ -3,14 +3,14 @@ import { ArrowUpRight, Check, CircleAlert, CornerDownRight, Minus, PackageCheck,
 import { useState, type ReactNode } from "react";
 import { Link } from "react-router";
 import { Outcome, Tag, Tip } from "@/components/ui";
-import type { JobKind } from "@/demo/jobs";
+import { PUBLISH_PREVIEW, type JobKind } from "@/demo/jobs";
 import { GROUPS, LANE, summarize, type CheckLevel, type ReadinessCheck } from "@/demo/readiness";
 import { useReplay } from "@/demo/replay";
 import { humanize } from "@/lib/cases";
 import { duration, runDate } from "@/lib/format";
 import { AttemptStrip, PhaseStrip } from "../dock/live";
 import { ModelLabel } from "../execution/shared";
-import { hms, jobHome, KIND_LABEL, relationsOf, shortId, stamp, statusMeta, timelineOf, useRunIndex, type Job, type Tone } from "./model";
+import { hms, jobHome, KIND_LABEL, relationsOf, shortId, stamp, statusMeta, timelineOf, useRunIndex, type Job, type TimelineEntry, type Tone } from "./model";
 
 export const KIND_ICON: Record<JobKind, LucideIcon> = {
   readiness: ShieldCheck,
@@ -43,16 +43,6 @@ export function StatusWord({ job, className }: { job: Pick<Job, "status" | "kind
     <span className={clsx("inline-flex min-w-0 items-center gap-1.5 text-[12.5px] font-medium whitespace-nowrap", TONE_TEXT[meta.tone], className)}>
       <StatusDot tone={meta.tone} />
       {meta.word}
-    </span>
-  );
-}
-
-export function KindLabel({ kind, className, iconClassName }: { kind: JobKind; className?: string; iconClassName?: string }) {
-  const Icon = KIND_ICON[kind];
-  return (
-    <span className={clsx("inline-flex min-w-0 items-center gap-1.5 text-fg-2", className)}>
-      <Icon className={clsx("size-3.5 shrink-0 text-fg-3", iconClassName)} strokeWidth={1.75} aria-hidden />
-      <span className="truncate">{KIND_LABEL[kind]}</span>
     </span>
   );
 }
@@ -363,7 +353,12 @@ export function PublishPack({ job, onSelect }: { job: Job; onSelect?: (id: strin
     ["Pack", <span className="ident break-all">{job.publish.pack}</span>],
     ["Path", <span className="ident break-all">data/exploratory/{job.publish.pack}/</span>],
     ["Files", <span className="num">{job.publish.files}</span>],
-    ["Commit", <span>Local commit on <span className="ident">{job.publish.branch}</span>; not pushed</span>],
+    [
+      "Commit",
+      <span>
+        Committed on <span className="ident">{job.publish.branch}</span>, pushed to <span className="ident">{PUBLISH_PREVIEW.target.upstream}</span>
+      </span>,
+    ],
     [
       "Campaign",
       <button type="button" disabled={!onSelect} onClick={() => onSelect?.(job.publish!.campaignJobId)} className="ident cursor-pointer rounded-[4px] text-fg underline decoration-line-strong decoration-dotted underline-offset-[3px] disabled:cursor-default">
@@ -388,32 +383,71 @@ export function PublishPack({ job, onSelect }: { job: Job; onSelect?: (id: strin
 
 // -------------------------------------------------------------- timeline
 
+const entryDot = (entry: TimelineEntry) =>
+  entry.now ? "border-accent bg-accent motion-safe:animate-pulse" : entry.tone === "warn" ? "border-warn bg-warn" : entry.tone === "muted" ? "border-line-strong bg-bg" : "border-fg-3 bg-surface-3";
+
+/** The job's steps on its own clock: queue wait (hatched), run time, and a mark per step. */
+function StepTrack({ job, entries }: { job: Job; entries: TimelineEntry[] }) {
+  const created = Date.parse(job.createdAt);
+  const end = job.endMs ?? job.startMs;
+  const running = job.live && job.status === "running";
+  const plannedEnd = running && job.campaignData ? job.startMs + job.campaignData.total * 1000 : undefined;
+  const d0 = Math.min(created, job.startMs);
+  const d1 = Math.max(end, plannedEnd ?? 0, d0 + 1000);
+  const x = (ms: number) => ((ms - d0) / (d1 - d0)) * 100;
+  const waited = Math.max(0, (job.startMs - created) / 1000);
+  const tone = statusMeta(job).tone;
+  return (
+    <div className="grid gap-1.5">
+      <div className="relative h-3" aria-hidden>
+        <span className="absolute inset-x-0 top-1/2 h-px bg-line" />
+        {waited > 0 && <span className="hatch absolute top-0.5 h-2 rounded-l-[2px]" style={{ left: `${x(created)}%`, width: `${x(job.startMs) - x(created)}%` }} />}
+        <span
+          className={clsx("absolute top-0.5 h-2 min-w-[2px] rounded-[2px]", tone === "accent" ? "bg-accent/70" : tone === "warn" ? "bg-warn/70" : "bg-fg-3/60")}
+          style={{ left: `${x(job.startMs)}%`, width: `${x(end) - x(job.startMs)}%` }}
+        />
+        {plannedEnd !== undefined && plannedEnd > end && <span className="absolute top-0.5 h-2 rounded-r-[2px] border border-l-0 border-dashed border-accent-line" style={{ left: `${x(end)}%`, width: `${x(plannedEnd) - x(end)}%` }} />}
+        {entries.map((entry, i) => (
+          <span key={i} className={clsx("absolute top-1/2 size-2 -translate-x-1/2 -translate-y-1/2 rounded-full border", entryDot(entry))} style={{ left: `${x(entry.atMs)}%` }} />
+        ))}
+      </div>
+      <p className="num text-[11.5px] text-fg-3">
+        Waited {duration(waited)} in the queue · ran {duration(job.durationS)}
+        {plannedEnd !== undefined && plannedEnd > end && ` · about ${duration((plannedEnd - end) / 1000)} left at recorded pace`}
+      </p>
+    </div>
+  );
+}
+
 export function JobTimeline({ job }: { job: Job }) {
   const entries = timelineOf(job);
   return (
     <section>
-      <SectionLabel aside={<span className="text-[11.5px] text-fg-3">UTC</span>}>Timeline</SectionLabel>
-      <ol className="relative grid gap-0.5 before:absolute before:top-2 before:bottom-2 before:left-[3.5px] before:w-px before:bg-line">
-        {entries.map((entry, i) => (
-          <li key={i} className="relative grid grid-cols-[8px_minmax(0,1fr)] gap-x-3 py-1">
-            <span
-              aria-hidden
-              className={clsx(
-                "relative mt-[6px] size-2 rounded-full border",
-                entry.now ? "border-accent bg-accent motion-safe:animate-pulse" : entry.tone === "warn" ? "border-warn bg-warn" : entry.tone === "muted" ? "border-line-strong bg-bg" : "border-fg-3 bg-surface-3",
-              )}
-            />
-            <div className="min-w-0">
-              <div className="flex flex-wrap items-baseline gap-x-2">
-                <span className={clsx("text-[12.5px]", entry.now ? "font-medium text-fg" : TONE_TEXT[entry.tone])}>{entry.text}</span>
-                {entry.outcome && <Outcome outcome={entry.outcome} compact />}
-                <span className="num ml-auto text-[11.5px] text-fg-3">{hms(entry.atMs)}</span>
-              </div>
-              {entry.detail && <p className="mt-0.5 text-[12px] leading-relaxed break-words text-fg-3">{entry.detail}</p>}
-            </div>
-          </li>
-        ))}
-      </ol>
+      <SectionLabel aside={<span className="text-[11.5px] text-fg-3">From start · UTC</span>}>Timeline</SectionLabel>
+      <div className="grid gap-3">
+        <StepTrack job={job} entries={entries} />
+        <ol className="relative grid gap-0.5 before:absolute before:top-2 before:bottom-2 before:left-[3.5px] before:w-px before:bg-line">
+          {entries.map((entry, i) => {
+            const offset = (entry.atMs - job.startMs) / 1000;
+            return (
+              <li key={i} className="relative grid grid-cols-[8px_minmax(0,1fr)] gap-x-3 py-1">
+                <span aria-hidden className={clsx("relative mt-[6px] size-2 rounded-full border", entryDot(entry))} />
+                <div className="min-w-0">
+                  <div className="flex flex-wrap items-baseline gap-x-2">
+                    <span className={clsx("text-[12.5px]", entry.now ? "font-medium text-fg" : TONE_TEXT[entry.tone])}>{entry.text}</span>
+                    {entry.outcome && <Outcome outcome={entry.outcome} compact />}
+                    <span className="num ml-auto inline-flex gap-2 text-[11.5px] whitespace-nowrap">
+                      <span className="text-fg-2">{offset < 0 ? "queued" : `+${duration(offset)}`}</span>
+                      <span className="text-fg-3">{hms(entry.atMs)}</span>
+                    </span>
+                  </div>
+                  {entry.detail && <p className="mt-0.5 text-[12px] leading-relaxed break-words text-fg-3">{entry.detail}</p>}
+                </div>
+              </li>
+            );
+          })}
+        </ol>
+      </div>
     </section>
   );
 }
@@ -426,7 +460,7 @@ export function JobFacts({ job }: { job: Job }) {
     ["Kind", KIND_LABEL[job.kind]],
     ["Lane", <span className="ident">{LANE.profile}</span>],
     ["Created", stamp(Date.parse(job.createdAt))],
-    ["Started", job.startedAt ? stamp(job.startMs) : "—"],
+    ["Started", job.startedAt ? `${stamp(job.startMs)} · waited ${duration((job.startMs - Date.parse(job.createdAt)) / 1000)}` : "—"],
     ["Finished", job.finishedAt ? stamp(Date.parse(job.finishedAt)) : job.status === "running" ? "Running" : "—"],
     ["Duration", <span className="num">{duration(job.durationS)}</span>],
   ];
@@ -456,7 +490,7 @@ export function JobFacts({ job }: { job: Job }) {
 export function JobBody({ job, jobs, onSelect, className, lead = true, live = true }: { job: Job; jobs: Job[]; onSelect?: (id: string) => void; className?: string; lead?: boolean; live?: boolean }) {
   return (
     <div className={clsx("grid gap-6", className)}>
-      <div className="grid gap-3">
+      <div className="col-span-full grid content-start gap-3">
         {lead && <p className="text-[13px] leading-relaxed text-fg-2">{job.summary}</p>}
         {lead && job.total > 0 && <JobProgress job={job} bar="flex-1" className="w-full" />}
         {(job.status === "stopped" || job.status === "interrupted") && job.currentLabel && (
