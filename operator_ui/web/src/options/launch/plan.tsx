@@ -1,17 +1,16 @@
 import { useQuery } from "@tanstack/react-query";
 import clsx from "clsx";
 import { median } from "d3-array";
-import { ArrowUpRight, ChevronDown, Minus, Plus, Search, TriangleAlert, X } from "lucide-react";
-import { Dialog } from "radix-ui";
+import { ArrowUpRight, ChevronDown, Minus, Plus, Search, TriangleAlert } from "lucide-react";
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { Link, useNavigate } from "react-router";
+import { Link } from "react-router";
 import { api } from "@/api/client";
 import type { RunWithCases, Technique } from "@/api/types";
 import { FamilyCard, VariantCard } from "@/components/CaseCard";
 import { HINT } from "@/components/CaseMatrix";
 import { displayModel } from "@/components/charts";
 import { LabLogo, ModelCard } from "@/components/ModelCard";
-import { Button, Tag, Tip } from "@/components/ui";
+import { Button, Tip } from "@/components/ui";
 import data from "@/data/cases.json";
 import { labOf, modelInfo } from "@/data/models";
 import { caseFamily, groupCases, humanize } from "@/lib/cases";
@@ -339,9 +338,9 @@ export function CaseName({ id, className, side = "right" }: { id: string; classN
   );
 }
 
-export function FamilyName({ family, ids, className }: { family: string; ids: string[]; className?: string }) {
+export function FamilyName({ family, ids, className, side = "right" }: { family: string; ids: string[]; className?: string; side?: "right" | "bottom" | "top" | "left" }) {
   return (
-    <FamilyCard family={family} ids={ids} side="right">
+    <FamilyCard family={family} ids={ids} side={side}>
       <span tabIndex={0} className={clsx(HINT, "min-w-0 truncate", className)}>
         {humanize(family)}
       </span>
@@ -512,10 +511,6 @@ export function FixedModels({ plan, onChange, className }: { plan: Plan; onChang
   );
 }
 
-export function TechniqueName({ id }: { id: Technique }) {
-  return <span>{techniqueLabel(id)}</span>;
-}
-
 export function NotInstalled({ className, iconOnly }: { className?: string; iconOnly?: boolean }) {
   return (
     <Tip content="models.ts records this model as no longer installed in the lab's Ollama. Preflight checks that required local models are present.">
@@ -524,17 +519,6 @@ export function NotInstalled({ className, iconOnly }: { className?: string; icon
         <span className={clsx(iconOnly && "sr-only")}>Not installed</span>
       </span>
     </Tip>
-  );
-}
-
-/** "62% · 135" style recorded Ground Truth, always with its denominator. */
-export function HistoryRate({ cell, className }: { cell: CellHistory; className?: string }) {
-  if (!cell.attempts) return <span className={clsx("text-fg-3", className)}>No history</span>;
-  if (!cell.known) return <span className={clsx("text-fg-3", className)}>{cell.attempts} unknown</span>;
-  return (
-    <span className={clsx("num", className)}>
-      {cell.passed}/{cell.known} passed
-    </span>
   );
 }
 
@@ -600,9 +584,10 @@ export function ReadinessGate({ className, compact }: { className?: string; comp
   );
 }
 
-// ---------------------------------------------------------------- review dialog
+// ---------------------------------------------------------------- confirmation pieces
 
-function AttemptList({ plan }: { plan: Plan }) {
+/** Planned attempts in run order, paged so large campaigns stay light. */
+export function AttemptList({ plan }: { plan: Plan }) {
   const total = plannedCount(plan);
   const [shown, setShown] = useState(60);
   const rows = Array.from({ length: Math.min(shown, total) }, (_, i) => attemptAt(plan, i));
@@ -627,7 +612,7 @@ function AttemptList({ plan }: { plan: Plan }) {
   );
 }
 
-function Disclosure({ title, children, defaultOpen }: { title: ReactNode; children: ReactNode; defaultOpen?: boolean }) {
+export function Disclosure({ title, children, defaultOpen }: { title: ReactNode; children: ReactNode; defaultOpen?: boolean }) {
   const [open, setOpen] = useState(Boolean(defaultOpen));
   return (
     <div className="border-t border-line pt-3">
@@ -640,152 +625,25 @@ function Disclosure({ title, children, defaultOpen }: { title: ReactNode; childr
   );
 }
 
-export function PlanFacts({ plan, history }: { plan: Plan; history: History | undefined }) {
-  const est = estimate(plan, history);
+/** The exact request body and the first runner invocation worker.py would make. */
+export function RequestPreview({ plan }: { plan: Plan }) {
   return (
-    <dl className="grid gap-2 text-[12.5px]">
-      <div className="grid grid-cols-[112px_minmax(0,1fr)] gap-3">
-        <dt className="text-fg-3">Debug models</dt>
-        <dd className="flex min-w-0 flex-wrap gap-x-3 gap-y-1">
-          {effectiveModels(plan).map((m) => (
-            <ModelChip key={m ?? "default"} id={m} className="text-fg" />
-          ))}
-        </dd>
-      </div>
-      <div className="grid grid-cols-[112px_minmax(0,1fr)] gap-3">
-        <dt className="text-fg-3">Techniques</dt>
-        <dd className="text-fg">{plan.techniques.map(techniqueLabel).join(", ") || "—"}</dd>
-      </div>
-      <div className="grid grid-cols-[112px_minmax(0,1fr)] gap-3">
-        <dt className="text-fg-3">Cases</dt>
-        <dd className="text-fg">
-          {plan.cases.length === CATALOG.length ? `All ${CATALOG.length}` : plan.cases.length} <span className="text-fg-3">of {CATALOG.length} in the catalog</span>
-        </dd>
-      </div>
-      <div className="grid grid-cols-[112px_minmax(0,1fr)] gap-3">
-        <dt className="text-fg-3">Repetitions</dt>
-        <dd className="num text-fg">{plan.repetitions}</dd>
-      </div>
-      <div className="grid grid-cols-[112px_minmax(0,1fr)] gap-3">
-        <dt className="text-fg-3">Knowledge · verifier</dt>
-        <dd className="ident text-fg-2">
-          {plan.apiModel.trim() || "case default"} · {plan.verificationModel.trim() || "case default"}
-        </dd>
-      </div>
-      <div className="grid grid-cols-[112px_minmax(0,1fr)] gap-3">
-        <dt className="text-fg-3">Estimate</dt>
-        <dd className="num text-fg">
-          {est.seconds === null ? "—" : `≈ ${duration(est.seconds)}`} <span className="text-fg-3">·</span> {est.cost === null ? "cost unavailable" : `≈ ${usd(est.cost)}`}{" "}
-          <span className="text-fg-3">from recorded medians</span>
-        </dd>
-      </div>
-    </dl>
+    <>
+      <pre className="overflow-x-auto rounded-md bg-surface-2 px-3 py-2.5 font-mono text-[11.5px] leading-[1.6] text-fg-2">{`POST /api/campaign\n${JSON.stringify(requestBody(plan), (k, v) => (k === "cases" && Array.isArray(v) && v.length > 6 ? [...v.slice(0, 6), `… ${v.length - 6} more`] : v), 2)}`}</pre>
+      <pre className="mt-2 overflow-x-auto rounded-md bg-surface-2 px-3 py-2.5 font-mono text-[11.5px] leading-[1.6] text-fg-2">{runnerCommand(plan).join(" \\\n")}</pre>
+      <p className="mt-1.5 text-[11.5px] text-fg-3">Flags as worker.py passes them; paths shortened.</p>
+    </>
   );
 }
 
-/** Lists exactly what will run; confirming is demo-only and opens Execution. */
-export function ReviewDialog({ plan, open, onOpenChange }: { plan: Plan; open: boolean; onOpenChange: (open: boolean) => void }) {
-  const history = useHistory();
-  const { fresh, canLaunch } = useFreshness();
-  const navigate = useNavigate();
-  const [starting, setStarting] = useState(false);
-  const errors = validate(plan);
-  const total = plannedCount(plan);
-  const ready = canLaunch && !errors.length;
-
-  useEffect(() => {
-    if (!open) setStarting(false);
-  }, [open]);
-
-  const start = () => {
-    setStarting(true);
-    window.setTimeout(() => navigate("/execution"), 700);
-  };
-
+/** What starting commits the operator to, from worker.py and the job lock. */
+export function LaunchNotes({ className }: { className?: string }) {
   return (
-    <Dialog.Root open={open} onOpenChange={onOpenChange}>
-      <Dialog.Portal>
-        <Dialog.Overlay className="fixed inset-0 z-50 bg-black/55" />
-        <Dialog.Content className="fixed inset-x-3 top-[4vh] z-50 mx-auto flex max-h-[92vh] max-w-[640px] flex-col rounded-lg bg-surface shadow-pop outline-none sm:inset-x-6">
-          <div className="flex items-start justify-between gap-4 border-b border-line px-5 py-4">
-            <div className="min-w-0">
-              <div className="flex items-center gap-2">
-                <Dialog.Title className="text-[16px] font-medium tracking-[-0.01em]">Review campaign</Dialog.Title>
-                <Tag tone="accent">Demo</Tag>
-              </div>
-              <Dialog.Description className="mt-1 text-[13px] text-fg-2">
-                {count(total)} {total === 1 ? "attempt runs" : "attempts run"} one at a time on <span className="ident">{LANE.profile}</span> through the canonical runner.
-              </Dialog.Description>
-            </div>
-            <Dialog.Close asChild>
-              <button type="button" aria-label="Close review" className="grid size-8 shrink-0 cursor-pointer place-items-center rounded-md text-fg-3 hover:bg-surface-2 hover:text-fg">
-                <X className="size-4" strokeWidth={1.75} />
-              </button>
-            </Dialog.Close>
-          </div>
-
-          <div className="grid gap-4 overflow-y-auto px-5 py-4">
-            <div className="flex flex-wrap items-baseline gap-x-2 gap-y-1 font-mono text-[12.5px] text-fg-2">
-              {formula(plan).map((part, i) => (
-                <span key={part} className="inline-flex items-baseline gap-2">
-                  {i > 0 && <span className="text-fg-3">×</span>}
-                  {part}
-                </span>
-              ))}
-              <span className="text-fg-3">=</span>
-              <span className="num text-[14px] font-medium text-fg">{count(total)}</span>
-            </div>
-
-            {errors.length > 0 && (
-              <ul className="grid gap-1 rounded-md border border-warn/35 bg-warn-soft px-3 py-2 text-[12.5px] text-warn" role="alert">
-                {errors.map((e) => (
-                  <li key={e}>{e}</li>
-                ))}
-              </ul>
-            )}
-
-            <PlanFacts plan={plan} history={history} />
-
-            <div className="rounded-md border border-line px-3 py-3">
-              <GateSummary fresh={fresh} />
-              {!canLaunch && fresh.state !== "checking" && (
-                <div className="mt-2.5 flex flex-wrap items-center gap-2">
-                  <PreflightButton fresh={fresh} />
-                  <span className="text-[12px] text-fg-3">The server refuses a launch without fresh readiness.</span>
-                </div>
-              )}
-            </div>
-
-            <div className="grid gap-2">
-              <div className="label">Run order</div>
-              <AttemptList plan={plan} />
-            </div>
-
-            <Disclosure title="Request and first runner invocation">
-              <pre className="overflow-x-auto rounded-md bg-surface-2 px-3 py-2.5 font-mono text-[11.5px] leading-[1.6] text-fg-2">{`POST /api/campaign\n${JSON.stringify(requestBody(plan), (k, v) => (k === "cases" && Array.isArray(v) && v.length > 6 ? [...v.slice(0, 6), `… ${v.length - 6} more`] : v), 2)}`}</pre>
-              <pre className="mt-2 overflow-x-auto rounded-md bg-surface-2 px-3 py-2.5 font-mono text-[11.5px] leading-[1.6] text-fg-2">{runnerCommand(plan).join(" \\\n")}</pre>
-              <p className="mt-1.5 text-[11.5px] text-fg-3">Flags as worker.py passes them; paths shortened.</p>
-            </Disclosure>
-
-            <ul className="grid gap-1 text-[12px] leading-relaxed text-fg-3">
-              <li>Each attempt runs its case's setup and teardown. Stop takes effect between attempts; completed results are kept.</li>
-              <li>The lab runs one operator job at a time; a launch is refused while another job is active.</li>
-              <li>Results stay in .local/ until you publish them.</li>
-            </ul>
-          </div>
-
-          <div className="flex flex-wrap items-center justify-end gap-2 border-t border-line px-5 py-3">
-            {!ready && <span className="mr-auto text-[12px] text-warn">{errors.length ? "Fix the plan first." : "Needs a fresh ready preflight."}</span>}
-            <Dialog.Close asChild>
-              <Button variant="ghost">Back to plan</Button>
-            </Dialog.Close>
-            <Button variant="primary" disabled={!ready || starting} onClick={start}>
-              {starting ? "Starting…" : `Start ${count(total)} ${total === 1 ? "attempt" : "attempts"}`}
-            </Button>
-          </div>
-        </Dialog.Content>
-      </Dialog.Portal>
-    </Dialog.Root>
+    <ul className={clsx("grid gap-1 text-[12px] leading-relaxed text-fg-3", className)}>
+      <li>Each attempt runs its case's setup and teardown. Stop takes effect between attempts; completed results are kept.</li>
+      <li>The lab runs one operator job at a time; a launch is refused while another job is active.</li>
+      <li>Results stay in .local/ until you publish them.</li>
+    </ul>
   );
 }
 
