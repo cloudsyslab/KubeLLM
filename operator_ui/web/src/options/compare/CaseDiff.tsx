@@ -3,18 +3,21 @@ import { useMemo, useState, type CSSProperties } from "react";
 import { Link } from "react-router";
 import { FamilyCard, VariantCard } from "@/components/CaseCard";
 import { HINT } from "@/components/CaseMatrix";
-import { ErrorState } from "@/components/states";
 import { Segmented, Tip } from "@/components/ui";
 import { groupCases, humanize } from "@/lib/cases";
 import { compact, count, duration, runDate } from "@/lib/format";
 import type { RunView } from "../runs/shared";
-import { caseDiff, rowsOf, rowTokens, stateOf, type CaseState } from "./model";
-import { AlignmentPanel, CompareLoading, CompareNotice, FlipCounts, RunHead, RunMarker, RunPicker, useCompare, type CompareState } from "./shared";
+import { rowsOf, rowTokens, stateOf, type CaseState } from "./model";
+import { RunHead, RunMarker, type CompareState } from "./shared";
 
-type Filter = "all" | "differ" | "regressed" | "improved";
+// The case diff matrix: every case's Ground Truth outcome (or time, or tokens)
+// in each selected run, grouped by scenario, with flips against the base
+// marked. The Compare page opens it from the metric rows.
+
+export type CaseFilter = "all" | "differ" | "regressed" | "improved";
 type Measure = "outcome" | "time" | "tokens";
 
-interface CaseLine {
+export interface CaseLine {
   id: string;
   states: CaseState[];
   differ: boolean;
@@ -94,13 +97,13 @@ function ChangeNote({ line }: { line: CaseLine }) {
     return (
       <span className="grid gap-1 text-[12px]">
         {line.regressedIn.length > 0 && (
-          <span className="num inline-flex items-center gap-1.5 font-medium text-bad">
-            ↓ Regressed <Markers indexes={line.regressedIn} />
+          <span className="num inline-flex flex-wrap items-center gap-x-1.5 gap-y-0.5 font-medium text-bad">
+            <span className="whitespace-nowrap">↓ Regressed</span> <Markers indexes={line.regressedIn} />
           </span>
         )}
         {line.improvedIn.length > 0 && (
-          <span className="num inline-flex items-center gap-1.5 font-medium text-good">
-            ↑ Improved <Markers indexes={line.improvedIn} />
+          <span className="num inline-flex flex-wrap items-center gap-x-1.5 gap-y-0.5 font-medium text-good">
+            <span className="whitespace-nowrap">↑ Improved</span> <Markers indexes={line.improvedIn} />
           </span>
         )}
       </span>
@@ -112,47 +115,10 @@ function ChangeNote({ line }: { line: CaseLine }) {
   return <span className="text-[12px] text-fg-3">Same</span>;
 }
 
-function Summary({ state, lines }: { state: CompareState; lines: CaseLine[] }) {
-  const shared = lines.filter((l) => l.shared);
-  const differ = shared.filter((l) => l.differ).length;
-  const [base, ...others] = state.runs;
-  return (
-    <div className="grid gap-3 rounded-lg border border-line bg-surface px-4 py-3 md:grid-cols-[auto_minmax(0,1fr)] md:items-center md:gap-x-8">
-      <dl className="flex flex-wrap gap-x-8 gap-y-2">
-        <div>
-          <dt className="label !text-[10px]">Shared cases</dt>
-          <dd className="num mt-0.5 text-[17px] font-medium">{shared.length}</dd>
-        </div>
-        <div>
-          <dt className="label !text-[10px]">Outcomes differ</dt>
-          <dd className="num mt-0.5 text-[17px] font-medium">{differ}</dd>
-        </div>
-      </dl>
-      <ul className="grid gap-1.5 text-[12.5px] sm:grid-cols-2 xl:grid-cols-3">
-        {others.map((view, k) => {
-          const diff = caseDiff(base.run, view.run, state.align.shared);
-          return (
-            <li key={view.ref} className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-0.5">
-              <RunMarker index={k + 1} />
-              <span className="text-fg-3">vs</span>
-              <RunMarker index={0} />
-              <FlipCounts improved={diff.improved.length} regressed={diff.regressed.length} uncomparable={diff.uncomparable.length} />
-            </li>
-          );
-        })}
-      </ul>
-    </div>
-  );
-}
-
-export default function CaseDiffMatrix() {
-  const state = useCompare();
-  const [filter, setFilter] = useState<Filter>("all");
-  const [measure, setMeasure] = useState<Measure>("outcome");
-  const [unshared, setUnshared] = useState(false);
+/** Every case in the union of the selected runs, with its outcome per run and its flips against the base. */
+export function useCaseLines(state: CompareState): CaseLine[] {
   const { runs, align } = state;
-
-  const lines = useMemo<CaseLine[]>(() => {
+  return useMemo<CaseLine[]>(() => {
     if (runs.length < 2) return [];
     const sharedSet = new Set(align.shared);
     return align.union.map((id) => {
@@ -171,10 +137,21 @@ export default function CaseDiffMatrix() {
       return { id, states, differ: new Set(known).size > 1, improvedIn, regressedIn, shared: sharedSet.has(id) };
     });
   }, [runs, align]);
+}
 
-  if (state.isLoading) return <CompareLoading />;
-  if (state.error) return <ErrorState error={state.error} />;
-  if (runs.length < 2) return <ErrorState error={new Error("At least two recorded runs are needed to compare.")} />;
+export function caseCounts(lines: CaseLine[]) {
+  return {
+    differ: lines.filter((l) => l.differ).length,
+    regressed: lines.filter((l) => l.regressedIn.length).length,
+    improved: lines.filter((l) => l.improvedIn.length).length,
+  };
+}
+
+/** The matrix: case filters, the cell measure, the table, and its legend. The caller supplies the frame. */
+export function CaseMatrix({ state, lines, filter, onFilter }: { state: CompareState; lines: CaseLine[]; filter: CaseFilter; onFilter: (filter: CaseFilter) => void }) {
+  const [measure, setMeasure] = useState<Measure>("outcome");
+  const [unshared, setUnshared] = useState(false);
+  const { runs, align } = state;
 
   const inScope = lines.filter((l) => l.shared || unshared);
   const visible = inScope.filter((l) =>
@@ -182,32 +159,16 @@ export default function CaseDiffMatrix() {
   );
   const byId = new Map(visible.map((l) => [l.id, l]));
   const families = groupCases(visible.map((l) => l.id));
-  const counts = {
-    differ: inScope.filter((l) => l.differ).length,
-    regressed: inScope.filter((l) => l.regressedIn.length).length,
-    improved: inScope.filter((l) => l.improvedIn.length).length,
-  };
+  const counts = caseCounts(inScope);
 
   return (
-    <div className="grid gap-4">
-      <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
-        <h2 className="text-[15px] font-medium tracking-[-0.01em]">Case by case</h2>
-        <span className="text-[12.5px] text-fg-3">Every case's Ground Truth outcome in each run, grouped by scenario.</span>
-        <div className="ml-auto">
-          <RunPicker state={state} />
-        </div>
-      </div>
-      <CompareNotice state={state} />
-      <AlignmentPanel state={state} />
-      <Summary state={state} lines={lines} />
-
-      <section className="min-w-0 rounded-lg border border-line bg-surface" aria-label="Outcomes by case">
-        <div className="flex flex-wrap items-center gap-2 border-b border-line px-3 py-2.5 sm:px-4">
-          <div className="relative max-w-full overflow-x-auto">
+    <>
+      <div className="flex flex-wrap items-center gap-2 border-b border-line px-3 py-2.5 sm:px-4">
+        <div className="relative max-w-full overflow-x-auto">
           <Segmented
             label="Show cases"
             value={filter}
-            onChange={setFilter}
+            onChange={onFilter}
             options={[
               { value: "all", label: "All" },
               { value: "differ", label: <>Differences <span className="num text-fg-3">{counts.differ}</span></>, hint: "Known outcomes disagree between runs" },
@@ -215,168 +176,167 @@ export default function CaseDiffMatrix() {
               { value: "improved", label: <>Improvements <span className="num text-fg-3">{counts.improved}</span></>, hint: "Failed in the base, passed in another run" },
             ]}
           />
-          </div>
-          <Segmented
-            label="Cell value"
-            value={measure}
-            onChange={setMeasure}
-            options={[
-              { value: "outcome", label: "Outcome" },
-              { value: "time", label: "Time" },
-              { value: "tokens", label: "Tokens" },
-            ]}
-          />
-          {!align.alignedCases && (
-            <label className="inline-flex h-8 cursor-pointer items-center gap-2 rounded-md px-2 text-[12.5px] text-fg-2 hover:bg-surface-2">
-              <input type="checkbox" checked={unshared} onChange={(e) => setUnshared(e.target.checked)} className="size-3.5 accent-accent" />
-              Include {align.union.length - align.shared.length} unshared {align.union.length - align.shared.length === 1 ? "case" : "cases"}
-            </label>
-          )}
-          <span className="num ml-auto text-[12.5px] text-fg-3" aria-live="polite">
-            {count(visible.length)} of {count(inScope.length)} cases
-          </span>
         </div>
+        <Segmented
+          label="Cell value"
+          value={measure}
+          onChange={setMeasure}
+          options={[
+            { value: "outcome", label: "Outcome" },
+            { value: "time", label: "Time" },
+            { value: "tokens", label: "Tokens" },
+          ]}
+        />
+        {!align.alignedCases && (
+          <label className="inline-flex h-8 cursor-pointer items-center gap-2 rounded-md px-2 text-[12.5px] text-fg-2 hover:bg-surface-2">
+            <input type="checkbox" checked={unshared} onChange={(e) => setUnshared(e.target.checked)} className="size-3.5 accent-accent" />
+            Include {align.union.length - align.shared.length} unshared {align.union.length - align.shared.length === 1 ? "case" : "cases"}
+          </label>
+        )}
+        <span className="num ml-auto text-[12.5px] text-fg-3" aria-live="polite">
+          {count(visible.length)} of {count(inScope.length)} cases
+        </span>
+      </div>
 
-        <div className="relative overflow-x-auto">
-          <table
-            className="w-full min-w-[calc(150px_+_var(--runs)_*_var(--cell)_+_130px)] table-fixed border-separate border-spacing-0 text-[12.5px] sm:min-w-[calc(220px_+_var(--runs)_*_var(--cell)_+_150px)]"
-            style={{ "--runs": runs.length, "--cell": measure === "outcome" ? "104px" : "116px" } as CSSProperties}
-          >
-            <colgroup>
-              <col className="w-[150px] sm:w-[220px]" />
-              {runs.map((view) => (
-                <col key={view.ref} />
+      <div className="relative overflow-x-auto">
+        <table
+          className="w-full min-w-[calc(150px_+_var(--runs)_*_var(--cell)_+_130px)] table-fixed border-separate border-spacing-0 text-[12.5px] sm:min-w-[calc(220px_+_var(--runs)_*_var(--cell)_+_150px)]"
+          style={{ "--runs": runs.length, "--cell": measure === "outcome" ? "104px" : "116px" } as CSSProperties}
+        >
+          <colgroup>
+            <col className="w-[150px] sm:w-[220px]" />
+            {runs.map((view) => (
+              <col key={view.ref} />
+            ))}
+            <col className="w-[130px] sm:w-[150px]" />
+          </colgroup>
+          <thead>
+            <tr>
+              <th scope="col" className="label sticky left-0 z-10 border-b border-line bg-surface px-3 pb-2.5 text-left align-bottom !text-[10.5px] font-medium sm:px-4">
+                Case
+              </th>
+              {runs.map((view, index) => (
+                <th key={view.ref} scope="col" className="border-b border-line px-1.5 pt-3 pb-2.5 text-left align-top font-normal">
+                  <RunHead view={view} index={index} state={state} compact />
+                </th>
               ))}
-              <col className="w-[130px] sm:w-[150px]" />
-            </colgroup>
-            <thead>
-              <tr>
-                <th scope="col" className="label sticky left-0 z-10 border-b border-line bg-surface px-3 pb-2.5 text-left align-bottom !text-[10.5px] font-medium sm:px-4">
-                  Case
-                </th>
-                {runs.map((view, index) => (
-                  <th key={view.ref} scope="col" className="border-b border-line px-1.5 pt-3 pb-2.5 text-left align-top font-normal">
-                    <RunHead view={view} index={index} state={state} compact />
+              <th scope="col" className="label border-b border-line px-3 pb-2.5 text-left align-bottom !text-[10.5px] font-medium">
+                Against base
+              </th>
+            </tr>
+          </thead>
+          {families.map((family) => {
+            const ids = family.cases.map((c) => c.id);
+            return (
+              <tbody key={family.family}>
+                <tr>
+                  <th scope="rowgroup" className="sticky left-0 z-10 border-b border-line bg-surface px-3 pt-3 pb-1.5 text-left font-normal sm:px-4">
+                    <FamilyCard family={family.family} ids={ids}>
+                      <span tabIndex={0} className={clsx(HINT, "text-[12.5px] font-medium text-fg")}>
+                        {humanize(family.family)}
+                      </span>
+                    </FamilyCard>
                   </th>
-                ))}
-                <th scope="col" className="label border-b border-line px-3 pb-2.5 text-left align-bottom !text-[10.5px] font-medium">
-                  Against base
-                </th>
-              </tr>
-            </thead>
-            {families.map((family) => {
-              const ids = family.cases.map((c) => c.id);
-              return (
-                <tbody key={family.family}>
-                  <tr>
-                    <th scope="rowgroup" className="sticky left-0 z-10 border-b border-line bg-surface px-3 pt-3 pb-1.5 text-left font-normal sm:px-4">
-                      <FamilyCard family={family.family} ids={ids}>
-                        <span tabIndex={0} className={clsx(HINT, "text-[12.5px] font-medium text-fg")}>
-                          {humanize(family.family)}
-                        </span>
-                      </FamilyCard>
-                    </th>
-                    {runs.map((view) => {
-                      const known = ids.filter((id) => ["pass", "fail"].includes(stateOf(view.run, id)));
-                      const passed = ids.filter((id) => stateOf(view.run, id) === "pass").length;
-                      return (
-                        <td key={view.ref} className="num border-b border-line px-1.5 pt-3 pb-1.5 text-[11.5px] text-fg-3" title={`${passed} of ${known.length} known passed`}>
-                          <span className="block max-w-[148px] text-center">
-                            {known.length ? (
-                              <>
-                                <span className="text-fg-2">{passed}</span>/{known.length}
-                              </>
-                            ) : (
-                              "—"
-                            )}
-                          </span>
-                        </td>
-                      );
-                    })}
-                    <td className="border-b border-line" />
-                  </tr>
-                  {family.cases.map((item) => {
-                    const line = byId.get(item.id)!;
-                    const highlight = line.regressedIn.length > 0;
+                  {runs.map((view) => {
+                    const known = ids.filter((id) => ["pass", "fail"].includes(stateOf(view.run, id)));
+                    const passed = ids.filter((id) => stateOf(view.run, id) === "pass").length;
                     return (
-                      <tr key={item.id} className="group/row">
-                        <th scope="row" className={clsx("sticky left-0 z-10 bg-surface py-[3px] pr-2 pl-3 text-left font-normal sm:pl-4", highlight && "shadow-[inset_2px_0_0_var(--bad)]")}>
-                          <span className="flex min-w-0 items-center gap-2">
-                            <VariantCard id={item.id}>
-                              <span tabIndex={0} className={clsx(HINT, "ident truncate text-[12px] text-fg-2 hover:text-fg")}>
-                                {item.variant}
-                              </span>
-                            </VariantCard>
-                            {!line.shared && (
-                              <Tip content="Not planned in every selected run, so it is outside the shared comparison.">
-                                <span tabIndex={0} className="label shrink-0 !text-[9px] !text-warn">
-                                  Unshared
-                                </span>
-                              </Tip>
-                            )}
-                          </span>
-                        </th>
-                        {runs.map((view, index) => (
-                          <td key={view.ref} className="px-1.5 py-[3px]">
-                            <Cell view={view} index={index} line={line} measure={measure} />
-                          </td>
-                        ))}
-                        <td className="px-3 py-[3px]">
-                          <ChangeNote line={line} />
-                        </td>
-                      </tr>
+                      <td key={view.ref} className="num border-b border-line px-1.5 pt-3 pb-1.5 text-[11.5px] text-fg-3" title={`${passed} of ${known.length} known passed`}>
+                        <span className="block max-w-[148px] text-center">
+                          {known.length ? (
+                            <>
+                              <span className="text-fg-2">{passed}</span>/{known.length}
+                            </>
+                          ) : (
+                            "—"
+                          )}
+                        </span>
+                      </td>
                     );
                   })}
-                </tbody>
-              );
-            })}
-            <tfoot>
-              <tr>
-                <th scope="row" className="label sticky left-0 z-10 border-t border-line-strong bg-surface px-3 py-2.5 text-left !text-[10.5px] font-medium sm:px-4">
-                  Passed, known
-                </th>
-                {runs.map((view) => {
-                  const ids = inScope.map((l) => l.id);
-                  const known = ids.filter((id) => ["pass", "fail"].includes(stateOf(view.run, id))).length;
-                  const passed = ids.filter((id) => stateOf(view.run, id) === "pass").length;
+                  <td className="border-b border-line" />
+                </tr>
+                {family.cases.map((item) => {
+                  const line = byId.get(item.id)!;
+                  const highlight = line.regressedIn.length > 0;
                   return (
-                    <td key={view.ref} className="num border-t border-line-strong px-1.5 py-2.5">
-                      <span className="block max-w-[148px] text-center">
-                        <span className="font-medium text-fg">{passed}</span>
-                        <span className="text-fg-3">/{known}</span>
-                      </span>
-                    </td>
+                    <tr key={item.id} className="group/row">
+                      <th scope="row" className={clsx("sticky left-0 z-10 bg-surface py-[3px] pr-2 pl-3 text-left font-normal sm:pl-4", highlight && "shadow-[inset_2px_0_0_var(--bad)]")}>
+                        <span className="flex min-w-0 items-center gap-2">
+                          <VariantCard id={item.id}>
+                            <span tabIndex={0} className={clsx(HINT, "ident truncate text-[12px] text-fg-2 hover:text-fg")}>
+                              {item.variant}
+                            </span>
+                          </VariantCard>
+                          {!line.shared && (
+                            <Tip content="Not planned in every selected run, so it is outside the shared comparison.">
+                              <span tabIndex={0} className="label shrink-0 !text-[9px] !text-warn">
+                                Unshared
+                              </span>
+                            </Tip>
+                          )}
+                        </span>
+                      </th>
+                      {runs.map((view, index) => (
+                        <td key={view.ref} className="px-1.5 py-[3px]">
+                          <Cell view={view} index={index} line={line} measure={measure} />
+                        </td>
+                      ))}
+                      <td className="px-3 py-[3px]">
+                        <ChangeNote line={line} />
+                      </td>
+                    </tr>
                   );
                 })}
-                <td className="border-t border-line-strong" />
-              </tr>
-            </tfoot>
-          </table>
-          {visible.length === 0 && (
-            <p className="px-4 py-10 text-center text-[13px] text-fg-3">
-              {filter === "regressed" ? "No case regressed against the base." : filter === "improved" ? "No case improved against the base." : "Every run has the same known outcome on these cases."}
-            </p>
-          )}
-        </div>
-        <div className="flex flex-wrap items-center gap-x-4 gap-y-2 border-t border-line px-4 py-2.5 text-[12px] text-fg-3">
-          <span className="inline-flex items-center gap-1.5">
-            <span className="h-3 w-5 rounded-[3px] bg-good-soft/45" /> Pass
-          </span>
-          <span className="inline-flex items-center gap-1.5">
-            <span className="h-3 w-5 rounded-[3px] bg-bad-soft" /> Fail
-          </span>
-          <span className="inline-flex items-center gap-1.5">
-            <span className="hatch h-3 w-5 rounded-[3px] border border-line" /> Unknown
-          </span>
-          <span className="inline-flex items-center gap-1.5">
-            <span className="h-3 w-5 rounded-[3px] border border-dashed border-line-strong" /> Not recorded or planned
-          </span>
-          <span className="num">
-            <span className="text-good">↑</span> / <span className="text-bad">↓</span> outcome flipped against the base
-          </span>
-          <span className="sm:ml-auto">Select a cell to open that attempt.</span>
-        </div>
-      </section>
-    </div>
+              </tbody>
+            );
+          })}
+          <tfoot>
+            <tr>
+              <th scope="row" className="label sticky left-0 z-10 border-t border-line-strong bg-surface px-3 py-2.5 text-left !text-[10.5px] font-medium sm:px-4">
+                Passed, known
+              </th>
+              {runs.map((view) => {
+                const ids = inScope.map((l) => l.id);
+                const known = ids.filter((id) => ["pass", "fail"].includes(stateOf(view.run, id))).length;
+                const passed = ids.filter((id) => stateOf(view.run, id) === "pass").length;
+                return (
+                  <td key={view.ref} className="num border-t border-line-strong px-1.5 py-2.5">
+                    <span className="block max-w-[148px] text-center">
+                      <span className="font-medium text-fg">{passed}</span>
+                      <span className="text-fg-3">/{known}</span>
+                    </span>
+                  </td>
+                );
+              })}
+              <td className="border-t border-line-strong" />
+            </tr>
+          </tfoot>
+        </table>
+        {visible.length === 0 && (
+          <p className="px-4 py-10 text-center text-[13px] text-fg-3">
+            {filter === "regressed" ? "No case regressed against the base." : filter === "improved" ? "No case improved against the base." : "Every run has the same known outcome on these cases."}
+          </p>
+        )}
+      </div>
+      <div className="flex flex-wrap items-center gap-x-4 gap-y-2 border-t border-line px-4 py-2.5 text-[12px] text-fg-3">
+        <span className="inline-flex items-center gap-1.5">
+          <span className="h-3 w-5 rounded-[3px] bg-good-soft/45" /> Pass
+        </span>
+        <span className="inline-flex items-center gap-1.5">
+          <span className="h-3 w-5 rounded-[3px] bg-bad-soft" /> Fail
+        </span>
+        <span className="inline-flex items-center gap-1.5">
+          <span className="hatch h-3 w-5 rounded-[3px] border border-line" /> Unknown
+        </span>
+        <span className="inline-flex items-center gap-1.5">
+          <span className="h-3 w-5 rounded-[3px] border border-dashed border-line-strong" /> Not recorded or planned
+        </span>
+        <span className="num">
+          <span className="text-good">↑</span> / <span className="text-bad">↓</span> outcome flipped against the base
+        </span>
+        <span className="sm:ml-auto">Select a cell to open that attempt.</span>
+      </div>
+    </>
   );
 }
