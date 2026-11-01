@@ -1,31 +1,18 @@
+// The Runs timeline view: the runs the browser has filtered, drawn over time
+// in one swimlane per debug model. The zoom window lives in RunsBrowser so it
+// survives switching to the table and back.
 import clsx from "clsx";
 import { scaleUtc } from "d3-scale";
 import { ArrowUpRight, ChevronLeft, ChevronRight, Maximize2, ZoomIn, ZoomOut } from "lucide-react";
 import { HoverCard } from "radix-ui";
 import { useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent, type ReactNode } from "react";
 import { Link } from "react-router";
-import type { RunSource } from "@/api/types";
-import { ErrorState, LoadingState } from "@/components/states";
-import { Segmented } from "@/components/ui";
 import { techniqueLabel } from "@/lib/explore";
 import { count, duration, pct, runDate, usd } from "@/lib/format";
-import {
-  CompareTray,
-  gtTip,
-  IncompleteTag,
-  RateBar,
-  RunModel,
-  SelectBox,
-  SOURCE_LABEL,
-  techniqueShort,
-  useRunSelection,
-  useRunViews,
-  useWidth,
-  type RunSelection,
-  type RunView,
-} from "./shared";
+import { MAX_COMPARE } from "../compare/model";
+import { gtTip, IncompleteTag, RateBar, RunModel, SelectBox, SOURCE_LABEL, techniqueShort, useWidth, type RunSelection, type RunView } from "./shared";
 
-type Range = [number, number];
+export type Range = [number, number];
 
 const HOUR = 3_600_000;
 const MIN_SPAN = HOUR;
@@ -156,7 +143,7 @@ function RunMark({
         <HoverCard.Content side="top" align="center" sideOffset={8} collisionPadding={12} className="z-50 w-[300px] rounded-lg bg-surface-2 p-4 shadow-pop">
           <RunCardBody view={view} />
           <div className="mt-3 flex items-center gap-3 border-t border-line pt-3 text-[12.5px]">
-            <span className="text-fg-3">{on ? "Selected · click to remove" : selection.full ? "Compare holds 8 runs" : "Click to select"}</span>
+            <span className="text-fg-3">{on ? "Selected · click to remove" : selection.full ? `Compare holds ${MAX_COMPARE} runs` : "Click to select"}</span>
             <Link to={`/runs/${view.ref}`} className="ml-auto inline-flex items-center gap-1 text-fg-2 hover:text-fg">
               Open run <ArrowUpRight className="size-3.5" strokeWidth={1.75} />
             </Link>
@@ -292,15 +279,27 @@ function IconButton({ label, onClick, disabled, children }: { label: string; onC
   );
 }
 
-export default function Timeline() {
-  const { views, byRef, isLoading, error } = useRunViews();
-  const selection = useRunSelection();
-  const [source, setSource] = useState<"all" | RunSource>("all");
+export function RunsTimeline({
+  views,
+  selection,
+  win: requested,
+  onWindow,
+  onClearFilters,
+}: {
+  /** The runs that pass the browser's search and filters. */
+  views: RunView[];
+  selection: RunSelection;
+  /** The zoomed window, or null for all time. */
+  win: Range | null;
+  onWindow: (next: Range | null) => void;
+  onClearFilters: () => void;
+}) {
   const [hovered, setHovered] = useState<string | null>(null);
   const [listLimit, setListLimit] = useState(12);
   const [plotRef, plotWidth] = useWidth();
 
-  const timed = useMemo(() => views.filter((v) => v.at !== null && (source === "all" || v.run.source === source)), [views, source]);
+  const timed = useMemo(() => views.filter((v) => v.at !== null), [views]);
+  const untimed = views.length - timed.length;
   const full = useMemo<Range>(() => {
     if (!timed.length) return [0, 1];
     const lo = Math.min(...timed.map((v) => v.at!));
@@ -308,9 +307,11 @@ export default function Timeline() {
     const pad = Math.max((hi - lo) * 0.015, HOUR);
     return [lo - pad, hi + pad];
   }, [timed]);
-  const [win, setWinState] = useState<Range | null>(null);
-  const range: Range = win ? [clamp(win[0], full[0], full[1]), clamp(win[1], full[0], full[1])] : full;
-  const setWin = (next: Range) => setWinState(next[0] <= full[0] && next[1] >= full[1] ? null : next);
+  // Filters change the extent; a window that no longer overlaps it falls back to all time.
+  const clamped: Range | null = requested ? [clamp(requested[0], full[0], full[1]), clamp(requested[1], full[0], full[1])] : null;
+  const win = clamped && clamped[1] - clamped[0] >= MIN_SPAN ? clamped : null;
+  const range: Range = win ?? full;
+  const setWin = (next: Range) => onWindow(next[0] <= full[0] && next[1] >= full[1] ? null : next);
 
   const lanes = useMemo<Lane[]>(() => {
     const groups = new Map<string, RunView[]>();
@@ -339,8 +340,16 @@ export default function Timeline() {
       .sort((a, b) => a.range[0] - b.range[0]);
   }, [timed]);
 
-  if (isLoading) return <LoadingState label="Reading recorded runs" />;
-  if (error) return <ErrorState error={error} />;
+  if (!timed.length) {
+    return (
+      <div className="px-4 py-12 text-center text-[13px] text-fg-3">
+        {views.length ? "None of these runs has a start time to place on the timeline." : "No recorded run matches these filters."}{" "}
+        <button type="button" onClick={onClearFilters} className="cursor-pointer text-fg-2 underline decoration-line-strong underline-offset-2 hover:text-fg">
+          Clear filters
+        </button>
+      </div>
+    );
+  }
 
   const span = range[1] - range[0];
   const x = (t: number) => ((t - range[0]) / span) * 100;
@@ -362,166 +371,156 @@ export default function Timeline() {
   const pxPerMs = plotWidth / span;
 
   return (
-    <div className="grid gap-4">
-      <section className="min-w-0 rounded-lg border border-line bg-surface" aria-label="Runs over time">
-        <div className="flex flex-wrap items-center gap-2 border-b border-line px-3 py-3 sm:px-4">
-          <Segmented
-            label="Source"
-            value={source}
-            onChange={(next) => {
-              setSource(next);
-              setWinState(null);
-            }}
-            options={[
-              { value: "all", label: "All" },
-              ...(["canonical", "exploratory", "local"] as RunSource[]).filter((s) => views.some((v) => v.run.source === s)).map((s) => ({ value: s, label: SOURCE_LABEL[s] })),
-            ]}
-          />
-          <div className="flex flex-wrap items-center gap-1" role="group" aria-label="Jump to a month">
-            {months.map((month) => {
-              const active = win !== null && Math.abs(range[0] - month.range[0]) < 1000 && Math.abs(range[1] - month.range[1]) < 1000;
-              return (
-                <button
-                  key={month.label + month.range[0]}
-                  type="button"
-                  aria-pressed={active}
-                  onClick={() => setWin(month.range)}
-                  className={clsx(
-                    "inline-flex h-8 cursor-pointer items-center gap-1.5 rounded-md px-2 text-[12.5px] transition-colors",
-                    active ? "bg-surface-3 text-fg" : "text-fg-3 hover:bg-surface-2 hover:text-fg",
-                  )}
-                >
-                  {month.label}
-                  <span className="num text-[11px] text-fg-3">{month.count}</span>
-                </button>
-              );
-            })}
-          </div>
-          <div className="ml-auto flex items-center gap-1">
-            <IconButton label="Pan earlier" onClick={() => pan(-1)} disabled={range[0] <= full[0]}>
-              <ChevronLeft className="size-4" strokeWidth={1.75} />
-            </IconButton>
-            <IconButton label="Pan later" onClick={() => pan(1)} disabled={range[1] >= full[1]}>
-              <ChevronRight className="size-4" strokeWidth={1.75} />
-            </IconButton>
-            <IconButton label="Zoom in" onClick={() => zoom(0.5)} disabled={span <= MIN_SPAN * 1.01}>
-              <ZoomIn className="size-4" strokeWidth={1.75} />
-            </IconButton>
-            <IconButton label="Zoom out" onClick={() => zoom(2)} disabled={!win}>
-              <ZoomOut className="size-4" strokeWidth={1.75} />
-            </IconButton>
-            <IconButton label="Show all time" onClick={() => setWinState(null)} disabled={!win}>
-              <Maximize2 className="size-3.5" strokeWidth={1.75} />
-            </IconButton>
-          </div>
+    <>
+      <div className="flex flex-wrap items-center gap-2 border-b border-line px-3 py-2 sm:px-4">
+        <span className="label mr-1 !text-[10px]">Jump to</span>
+        <div className="flex flex-wrap items-center gap-1" role="group" aria-label="Jump to a month">
+          {months.map((month) => {
+            const active = win !== null && Math.abs(range[0] - month.range[0]) < 1000 && Math.abs(range[1] - month.range[1]) < 1000;
+            return (
+              <button
+                key={month.label + month.range[0]}
+                type="button"
+                aria-pressed={active}
+                onClick={() => setWin(month.range)}
+                className={clsx(
+                  "inline-flex h-8 cursor-pointer items-center gap-1.5 rounded-md px-2 text-[12.5px] transition-colors",
+                  active ? "bg-surface-3 text-fg" : "text-fg-3 hover:bg-surface-2 hover:text-fg",
+                )}
+              >
+                {month.label}
+                <span className="num text-[11px] text-fg-3">{month.count}</span>
+              </button>
+            );
+          })}
         </div>
+        <div className="ml-auto flex items-center gap-1">
+          <IconButton label="Pan earlier" onClick={() => pan(-1)} disabled={range[0] <= full[0]}>
+            <ChevronLeft className="size-4" strokeWidth={1.75} />
+          </IconButton>
+          <IconButton label="Pan later" onClick={() => pan(1)} disabled={range[1] >= full[1]}>
+            <ChevronRight className="size-4" strokeWidth={1.75} />
+          </IconButton>
+          <IconButton label="Zoom in" onClick={() => zoom(0.5)} disabled={span <= MIN_SPAN * 1.01}>
+            <ZoomIn className="size-4" strokeWidth={1.75} />
+          </IconButton>
+          <IconButton label="Zoom out" onClick={() => zoom(2)} disabled={!win}>
+            <ZoomOut className="size-4" strokeWidth={1.75} />
+          </IconButton>
+          <IconButton label="Show all time" onClick={() => onWindow(null)} disabled={!win}>
+            <Maximize2 className="size-3.5" strokeWidth={1.75} />
+          </IconButton>
+        </div>
+      </div>
 
-        <div className="relative overflow-x-auto">
-          <div className="min-w-[720px]">
-            <div className="grid grid-cols-[128px_minmax(0,1fr)] sm:grid-cols-[172px_minmax(0,1fr)] items-center gap-y-1.5 border-b border-line py-3 pr-4">
-              <div className="sticky left-0 z-10 bg-surface pl-4">
-                <div className="label !text-[10px]">Overview</div>
-              </div>
-              <Brush full={full} win={range} setWin={setWin} views={timed} selection={selection} />
-              <div className="sticky left-0 z-10 bg-surface pl-4">
-                <div className="label !text-[10px]">In view</div>
-              </div>
-              <div className="flex flex-wrap items-baseline justify-between gap-x-3 text-[12.5px]">
-                <span className="text-fg">{rangeLabel(range)}</span>
-                <span className="num text-fg-3">
-                  {count(inView.length)} of {count(timed.length)} runs
+      <div className="relative overflow-x-auto">
+        <div className="min-w-[720px]">
+          <div className="grid grid-cols-[128px_minmax(0,1fr)] sm:grid-cols-[172px_minmax(0,1fr)] items-center gap-y-1.5 border-b border-line py-3 pr-4">
+            <div className="sticky left-0 z-10 bg-surface pl-4">
+              <div className="label !text-[10px]">Overview</div>
+            </div>
+            <Brush full={full} win={range} setWin={setWin} views={timed} selection={selection} />
+            <div className="sticky left-0 z-10 bg-surface pl-4">
+              <div className="label !text-[10px]">In view</div>
+            </div>
+            <div className="flex flex-wrap items-baseline justify-between gap-x-3 text-[12.5px]">
+              <span className="text-fg">{rangeLabel(range)}</span>
+              <span className="num text-fg-3">
+                {count(inView.length)} of {count(timed.length)} runs
+              </span>
+            </div>
+          </div>
+
+          <div className="grid grid-cols-[128px_minmax(0,1fr)] sm:grid-cols-[172px_minmax(0,1fr)] pr-4">
+            <div className="sticky left-0 z-10 bg-surface" />
+            <div ref={plotRef} className="relative h-7">
+              {ticks.map((t) => (
+                <span key={t} className="num absolute bottom-1.5 -translate-x-1/2 text-[11px] whitespace-nowrap text-fg-3" style={{ left: `${x(t)}%` }}>
+                  {tickLabel(t, span)}
                 </span>
-              </div>
+              ))}
             </div>
+          </div>
 
-            <div className="grid grid-cols-[128px_minmax(0,1fr)] sm:grid-cols-[172px_minmax(0,1fr)] pr-4">
-              <div className="sticky left-0 z-10 bg-surface" />
-              <div ref={plotRef} className="relative h-7">
-                {ticks.map((t) => (
-                  <span key={t} className="num absolute bottom-1.5 -translate-x-1/2 text-[11px] whitespace-nowrap text-fg-3" style={{ left: `${x(t)}%` }}>
-                    {tickLabel(t, span)}
-                  </span>
-                ))}
-              </div>
-            </div>
-
-            <div className="pb-2">
-              {lanes.map((lane) => {
-                const visible = lane.views.filter((v) => v.end! >= range[0] && v.at! <= range[1]);
-                // Lanes with nothing in the window collapse so the active ones stay close together.
-                const empty = visible.length === 0;
-                return (
-                  <div key={lane.model} className="group/lane grid grid-cols-[128px_minmax(0,1fr)] sm:grid-cols-[172px_minmax(0,1fr)] border-t border-line pr-4">
-                    <div className={clsx("sticky left-0 z-10 flex min-w-0 border-r border-line bg-surface pr-3 pl-4", empty ? "items-center gap-2 py-1" : "flex-col justify-center gap-0.5 py-2")}>
-                      <RunModel view={lane.label} className={clsx("text-[12.5px]", empty && "opacity-60")} />
-                      <span className={clsx("num text-[11.5px] text-fg-3", empty ? "ml-auto shrink-0" : "pl-[21px]")}>
-                        {empty ? `0/${lane.views.length}` : `${visible.length}/${lane.views.length} in view`}
-                      </span>
-                    </div>
-                    {empty ? (
-                      <div className="relative h-8">
-                        {ticks.map((t) => (
-                          <span key={t} aria-hidden className="absolute inset-y-0 w-px bg-[var(--grid)]" style={{ left: `${x(t)}%` }} />
-                        ))}
-                      </div>
-                    ) : (
-                    <div className="relative overflow-hidden" style={{ height: LANE_H }}>
+          <div className="pb-2">
+            {lanes.map((lane) => {
+              const visible = lane.views.filter((v) => v.end! >= range[0] && v.at! <= range[1]);
+              // Lanes with nothing in the window collapse so the active ones stay close together.
+              const empty = visible.length === 0;
+              return (
+                <div key={lane.model} className="group/lane grid grid-cols-[128px_minmax(0,1fr)] sm:grid-cols-[172px_minmax(0,1fr)] border-t border-line pr-4">
+                  <div className={clsx("sticky left-0 z-10 flex min-w-0 border-r border-line bg-surface pr-3 pl-4", empty ? "items-center gap-2 py-1" : "flex-col justify-center gap-0.5 py-2")}>
+                    <RunModel view={lane.label} className={clsx("text-[12.5px]", empty && "opacity-60")} />
+                    <span className={clsx("num text-[11.5px] text-fg-3", empty ? "ml-auto shrink-0" : "pl-[21px]")}>
+                      {empty ? `0/${lane.views.length}` : `${visible.length}/${lane.views.length} in view`}
+                    </span>
+                  </div>
+                  {empty ? (
+                    <div className="relative h-8">
                       {ticks.map((t) => (
                         <span key={t} aria-hidden className="absolute inset-y-0 w-px bg-[var(--grid)]" style={{ left: `${x(t)}%` }} />
                       ))}
-                      {[Y_TOP, (Y_TOP + Y_ZERO) / 2, Y_ZERO].map((y, i) => (
-                        <span key={y} aria-hidden className={clsx("absolute inset-x-0 h-px", i === 1 ? "bg-[var(--grid)]" : "bg-line")} style={{ top: y }} />
-                      ))}
-                      <span aria-hidden className="label pointer-events-none absolute right-1 !text-[9px] opacity-0 transition-opacity group-hover/lane:opacity-100" style={{ top: Y_TOP - 10 }}>
-                        100%
-                      </span>
-                      <span aria-hidden className="label pointer-events-none absolute right-1 !text-[9px] opacity-0 transition-opacity group-hover/lane:opacity-100" style={{ top: Y_ZERO - 10 }}>
-                        0%
-                      </span>
-                      {visible.map((view) => {
-                        const left = clamp(x(view.at!), -2, 102);
-                        const right = clamp(x(view.end!), -2, 102);
-                        const widthPx = (view.end! - view.at!) * pxPerMs;
-                        return (
-                          <RunMark
-                            key={view.ref}
-                            view={view}
-                            left={left}
-                            width={Math.max(0, right - left)}
-                            selection={selection}
-                            hovered={hovered === view.ref}
-                            onHover={setHovered}
-                            showLabel={Math.max(widthPx, 8) >= 34}
-                          />
-                        );
-                      })}
                     </div>
-                    )}
+                  ) : (
+                  <div className="relative overflow-hidden" style={{ height: LANE_H }}>
+                    {ticks.map((t) => (
+                      <span key={t} aria-hidden className="absolute inset-y-0 w-px bg-[var(--grid)]" style={{ left: `${x(t)}%` }} />
+                    ))}
+                    {[Y_TOP, (Y_TOP + Y_ZERO) / 2, Y_ZERO].map((y, i) => (
+                      <span key={y} aria-hidden className={clsx("absolute inset-x-0 h-px", i === 1 ? "bg-[var(--grid)]" : "bg-line")} style={{ top: y }} />
+                    ))}
+                    <span aria-hidden className="label pointer-events-none absolute right-1 !text-[9px] opacity-0 transition-opacity group-hover/lane:opacity-100" style={{ top: Y_TOP - 10 }}>
+                      100%
+                    </span>
+                    <span aria-hidden className="label pointer-events-none absolute right-1 !text-[9px] opacity-0 transition-opacity group-hover/lane:opacity-100" style={{ top: Y_ZERO - 10 }}>
+                      0%
+                    </span>
+                    {visible.map((view) => {
+                      const left = clamp(x(view.at!), -2, 102);
+                      const right = clamp(x(view.end!), -2, 102);
+                      const widthPx = (view.end! - view.at!) * pxPerMs;
+                      return (
+                        <RunMark
+                          key={view.ref}
+                          view={view}
+                          left={left}
+                          width={Math.max(0, right - left)}
+                          selection={selection}
+                          hovered={hovered === view.ref}
+                          onHover={setHovered}
+                          showLabel={Math.max(widthPx, 8) >= 34}
+                        />
+                      );
+                    })}
                   </div>
-                );
-              })}
-            </div>
+                  )}
+                </div>
+              );
+            })}
           </div>
         </div>
+      </div>
 
-        <div className="flex flex-wrap items-center gap-x-5 gap-y-2 border-t border-line px-4 py-2.5 text-[12px] text-fg-3">
-          <span className="inline-flex items-center gap-1.5">
-            <span className="h-2 w-5 rounded-full bg-fg-2" /> Run: length is duration, height is Ground Truth success
-          </span>
-          <span className="inline-flex items-center gap-1.5">
-            <span className="hatch h-2 w-5 rounded-full border border-line-strong" /> No known outcome
-          </span>
-          <span className="inline-flex items-center gap-1.5">
-            <span className="h-2 w-5 rounded-full bg-fg-2 outline outline-1 outline-offset-1 outline-warn/80" /> Incomplete
-          </span>
-          <span className="inline-flex items-center gap-1.5">
-            <span className="h-2 w-5 rounded-full bg-accent" /> Selected
-          </span>
-          <span className="sm:ml-auto">Times in UTC. Click a run to select it; drag the overview to zoom.</span>
-        </div>
-      </section>
+      <div className="flex flex-wrap items-center gap-x-5 gap-y-2 border-t border-line px-4 py-2.5 text-[12px] text-fg-3">
+        <span className="inline-flex items-center gap-1.5">
+          <span className="h-2 w-5 rounded-full bg-fg-2" /> Run: length is duration, height is Ground Truth success
+        </span>
+        <span className="inline-flex items-center gap-1.5">
+          <span className="hatch h-2 w-5 rounded-full border border-line-strong" /> No known outcome
+        </span>
+        <span className="inline-flex items-center gap-1.5">
+          <span className="h-2 w-5 rounded-full bg-fg-2 outline outline-1 outline-offset-1 outline-warn/80" /> Incomplete
+        </span>
+        <span className="inline-flex items-center gap-1.5">
+          <span className="h-2 w-5 rounded-full bg-accent" /> Selected
+        </span>
+        <span className="sm:ml-auto">
+          Times in UTC. Click a run to select it for comparison; drag the overview to zoom.
+          {untimed > 0 && ` ${untimed} matching ${untimed === 1 ? "run has" : "runs have"} no start time and ${untimed === 1 ? "appears" : "appear"} only in the table.`}
+        </span>
+      </div>
 
-      <section className="min-w-0 rounded-lg border border-line bg-surface" aria-label="Runs in view">
+      <section className="border-t border-line" aria-label="Runs in view">
         <header className="flex flex-wrap items-baseline justify-between gap-2 border-b border-line px-4 py-3">
           <h2 className="text-[13.5px] font-medium">Runs in view</h2>
           <span className="text-[12.5px] text-fg-3">Newest first · tick to compare</span>
@@ -574,8 +573,6 @@ export default function Timeline() {
         )}
         {inView.length === 0 && <p className="px-4 py-8 text-center text-[13px] text-fg-3">No runs in this window. Widen it in the overview.</p>}
       </section>
-
-      <CompareTray selection={selection} byRef={byRef} />
-    </div>
+    </>
   );
 }
