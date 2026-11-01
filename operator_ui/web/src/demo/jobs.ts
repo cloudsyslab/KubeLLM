@@ -70,7 +70,7 @@ export const JOBS: DemoJob[] = [
     total: 0,
     currentIndex: 0,
     title: "Publish operator-campaign-2026-09-22-e08b7d2c",
-    summary: "Sanitized exploratory pack committed locally under data/exploratory/",
+    summary: "Sanitized exploratory pack committed under data/exploratory/ and pushed to origin/minh",
     publish: { campaignJobId: "e08b7d2c51f9", pack: "operator-campaign-2026-09-22-e08b7d2c", files: 946, branch: "minh" },
   },
   {
@@ -178,21 +178,25 @@ export const KIND_LABEL: Record<JobKind, string> = {
 };
 
 /**
- * What a publication preview lists for the latest completed campaign. Mirrors
- * operator_ui/publishing.py: a private preview is reviewed first; publishing
- * copies the reviewed files into data/exploratory/<pack>/, updates the two
- * data catalogs, and makes a local commit containing only those paths.
+ * What a publication preview lists for the latest completed campaign that has
+ * not been published (the qwen3.8:27b campaign; its counts match the recorded
+ * runs in the snapshot). Mirrors operator_ui/publishing.py: a private preview
+ * is reviewed first; publishing copies the reviewed files into
+ * data/exploratory/<pack>/, updates the two data catalogs, commits only those
+ * paths on the current branch, and then pushes that commit to the branch's
+ * configured upstream.
  */
 export const PUBLISH_PREVIEW = {
-  campaignJobId: "e08b7d2c51f9",
-  pack: "operator-campaign-2026-09-22-e08b7d2c",
-  destination: "data/exploratory/operator-campaign-2026-09-22-e08b7d2c",
+  campaignJobId: "0b9d3f7e5a26",
+  pack: "operator-campaign-2026-08-26-0b9d3f7e",
+  destination: "data/exploratory/operator-campaign-2026-08-26-0b9d3f7e",
   layout: "<technique>/attempt-<NNNN>-<case>/",
-  target: { branch: "minh", head: "4522220" },
-  attempts: { recorded: 135, planned: 135, unstarted: 0, excluded: 0 },
-  groundTruth: { known: 135, passed: 124 },
-  verifier: { comparable: 135, agrees: 133 },
-  models: { API: "gpt-5-mini", DebugAgent: "gpt-6-luna", Verification: "gpt-5-nano" },
+  target: { branch: "minh", head: "4522220", upstream: "origin/minh" },
+  /** One planned case result is missing from the recorded runs; it is counted as lacking exportable structure. */
+  attempts: { recorded: 134, planned: 135, unstarted: 0, excluded: 1 },
+  groundTruth: { known: 115, passed: 94 },
+  verifier: { known: 115, comparable: 115, agrees: 112 },
+  models: { API: "gpt-5-mini", DebugAgent: "qwen3.8:27b", Verification: "gpt-5-nano" },
   techniques: ["allStepsAtOnce"],
   /** Written once per attempt directory. */
   perAttemptFiles: ["run_config.archived.json", "provenance.archived.json", "aggregate.json"],
@@ -200,7 +204,7 @@ export const PUBLISH_PREVIEW = {
   perCaseFiles: ["summary.json", "ground_truth.json", "verification_report.meta.json", "config_effective.json"],
   packFiles: ["README.md"],
   catalogEdits: ["data/README.md", "data/exploratory/README.md"],
-  totalFiles: 946,
+  totalFiles: 939,
   excluded: "Raw logs, progress traces, prompts, generated commands, free-form results, endpoints, credentials, and private lane details",
   marker: "run_config.archived.json keeps the pack out of canonical analysis",
 };

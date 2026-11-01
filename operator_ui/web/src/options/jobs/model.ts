@@ -244,7 +244,8 @@ export function timelineOf(job: Job): TimelineEntry[] {
     if (started) out.push({ atMs: started, text: "Started from the reviewed preview", detail: `Pack ${job.publish.pack}`, tone: "neutral" });
     out.push({ atMs: at(job, 0.45), text: `Copied ${job.publish.files} files`, detail: `${PUBLISH_PREVIEW.destination}/`, tone: "neutral" });
     out.push({ atMs: at(job, 0.8), text: "Updated the data catalogs", detail: PUBLISH_PREVIEW.catalogEdits.join(", "), tone: "neutral" });
-    out.push({ atMs: end, text: `Local commit on ${job.publish.branch}`, detail: "Only the pack and catalog paths are staged; nothing is pushed.", tone: "neutral" });
+    out.push({ atMs: at(job, 0.9), text: `Committed on ${job.publish.branch}`, detail: "Only the pack and catalog paths are staged.", tone: "neutral" });
+    out.push({ atMs: end, text: `Pushed to ${PUBLISH_PREVIEW.target.upstream}`, detail: "Publishing pushes the export commit to the branch's configured upstream.", tone: "neutral" });
     return out;
   }
 

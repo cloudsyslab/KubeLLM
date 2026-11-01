@@ -21,6 +21,13 @@ export const DEMO_CASES = [
 /** Attempt that fails during setup when the failure branch is on. */
 export const FAILURE_ATTEMPT = 12;
 
+/** Demo cases whose fixture ships a Service (app_service.yaml), by its real name. */
+export const SERVICE_NAMES: Record<string, string> = {
+  incorrect_selector: "app-service",
+  port_mismatch_named_target: "named-target-service",
+  wrong_interface_bind_address: "wrong-interface-bind-address-service",
+};
+
 export type PhaseKey = "setup" | "knowledge" | "debug" | "verify" | "truth" | "teardown";
 export const PHASES: { key: PhaseKey; label: string }[] = [
   { key: "setup", label: "Setup" },
@@ -124,7 +131,7 @@ function phaseEvents(attempt: DemoAttempt, phase: DemoPhase, apiModel: string, f
         { source: "runner", level: "info", text: `attempt ${attempt.index + 1} · ${attempt.model} · ${attempt.caseId}` },
         { source: "kubectl", level: "command", text: `kubectl --context minh-lane apply -f ${attempt.caseId}.yaml` },
         { source: "kubectl", level: "output", text: `pod/${app} created` },
-        { source: "kubectl", level: "output", text: `service/${app}-svc created` },
+        ...(SERVICE_NAMES[attempt.caseId] ? [{ source: "kubectl" as const, level: "output" as const, text: `service/${SERVICE_NAMES[attempt.caseId]} created` }] : []),
         { source: "runner", level: "info", text: `fixture ready · symptom: "${info?.symptom ?? "recorded symptom unavailable"}"` },
       ];
     case "knowledge":
