@@ -3,7 +3,7 @@ import type { OptionDef } from "../registry";
 
 export const OPTIONS: OptionDef[] = [
   {
-    id: "a",
+    id: "chosen",
     letter: "A",
     name: "Dense instrument",
     idea: "btop-style: per-thread load, per-GPU tiles, sparklines, and a live process table.",
@@ -11,26 +11,7 @@ export const OPTIONS: OptionDef[] = [
     tradeoff: "More to scan; history is short.",
     reference: "btop and htop",
     recommended: true,
+    chosen: true,
     component: lazy(() => import("./DenseInstrument")),
-  },
-  {
-    id: "b",
-    letter: "B",
-    name: "Calm charts",
-    idea: "A few large time-series panels with current values, processes tucked below.",
-    optimizes: "Trends over the last few minutes at a glance.",
-    tradeoff: "Per-thread and per-process detail is reduced.",
-    reference: "Vercel and Datadog observability",
-    component: lazy(() => import("./CalmCharts")),
-  },
-  {
-    id: "c",
-    letter: "C",
-    name: "Correlated timeline",
-    idea: "Resource lanes on the campaign's own clock, with attempts as the top lane and a cursor that reads every lane at once.",
-    optimizes: "Relating resource changes to what the run was doing, without claiming the run caused them.",
-    tradeoff: "No per-thread or per-process detail; it explains over time rather than showing the instant.",
-    reference: "Grafana annotations, Datadog correlated views",
-    component: lazy(() => import("./CorrelatedTimeline")),
   },
 ];

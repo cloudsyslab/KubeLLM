@@ -37,26 +37,6 @@ export function Sparkline({ values, max = 1, height = 28, className, stroke = "v
   );
 }
 
-export function AreaChart({ series, max, height = 140, gridLines = 3 }: { series: { values: number[]; color: string; label: string }[]; max: number; height?: number; gridLines?: number }) {
-  const length = series[0]?.values.length ?? 0;
-  const x = (i: number) => (i / Math.max(1, length - 1)) * 100;
-  const y = (v: number) => height - (Math.min(v, max) / max) * (height - 4) - 2;
-  return (
-    <svg viewBox={`0 0 100 ${height}`} preserveAspectRatio="none" className="block w-full" style={{ height }} role="img" aria-label={series.map((s) => s.label).join(", ")}>
-      {Array.from({ length: gridLines + 1 }, (_, i) => {
-        const gy = 2 + ((height - 4) / gridLines) * i;
-        return <line key={i} x1={0} x2={100} y1={gy} y2={gy} stroke="var(--grid)" strokeWidth={1} vectorEffect="non-scaling-stroke" />;
-      })}
-      {series.map((s) => (
-        <g key={s.label}>
-          <path d={area<number>().x((_, i) => x(i)).y0(height).y1(y)(s.values) ?? ""} fill={s.color} opacity={0.12} />
-          <path d={line<number>().x((_, i) => x(i)).y(y)(s.values) ?? ""} fill="none" stroke={s.color} strokeWidth={1.5} vectorEffect="non-scaling-stroke" />
-        </g>
-      ))}
-    </svg>
-  );
-}
-
 export function Meter({ value, max, tone = "neutral", className }: { value: number; max: number; tone?: "neutral" | "accent" | "warn"; className?: string }) {
   return (
     <div className={clsx("h-1.5 overflow-hidden rounded-full bg-surface-3", className)}>
