@@ -28,14 +28,14 @@ After the series, compare the approved combined patch with the changes actually 
 
 Do not amend, squash, reorder, rebase, reset, force-push, or rewrite existing history merely to improve presentation. Those operations require explicit task authorization.
 
-## Push and optional PR
+## Push and draft PR
 
 Use a normal push to the approved remote and branch. For a new branch, establish tracking as appropriate. If no push destination exists, finish any independently authorized local work and report the precise missing destination; do not invent a remote or silently change the approved target.
 
 If a push is rejected, inspect the reason. Preserve local commits and report the concrete next decision when resolving it would require pulling, rebasing, merging, replacing remote history, changing destination, or affecting new content outside the approved scope. Retry a transient failure only after inspecting state and with a bounded attempt; stop when the same failure persists or resolution needs user action. Do not turn LGTM into authority for force-pushing.
 
-If PR creation or updating was requested, verify the actual base/head and submitted aggregate diff against the approved PR text. Use the repository's PR tooling or a structured API. For multiline CLI bodies and commit messages, write exact text to temporary files and pass file arguments; preserve newlines and avoid shell interpolation of prose.
+For the default feature-branch workflow, verify the actual base/head and submitted aggregate diff against the approved PR text. Use the repository's PR tooling or a structured API. For multiline CLI bodies and commit messages, write exact text to temporary files and pass file arguments; preserve newlines and avoid shell interpolation of prose. Skip PR creation only when the user explicitly chose commit-only or text-only output.
 
-Respect an explicitly requested PR mode. Otherwise use a draft for a new PR. Attach every created PR to the current chat using the app's artifact tool when available; also attach an existing PR when asked to update it. Keep publication tied to the requested scope.
+Respect an explicitly requested PR mode. Otherwise use a draft for a new PR. Attach every created PR to the current chat using the app's artifact tool when available; also attach an existing PR when updated. Keep publication tied to the approved scope.
 
 Report the resulting commit hashes with their subjects, the pushed remote/branch, any created or updated PR link, validation with material limits, and excluded or pending work. Distinguish local commit success from push success and PR publication success. Never claim an operation succeeded merely because it was attempted.

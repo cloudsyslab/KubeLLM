@@ -114,7 +114,7 @@ function expandSkill(command: string): string {
 }
 ```
 
-- For a visual UI, layout, state comparison, or concept too dense for Mermaid, write one focused HTML file — a diagram, an infographic, or a short slide deck, whichever fits the point. Match the product's colors, type, spacing, and components; use real labels and data; support desktop and mobile. Open it with the runtime's available file or browser handler. If no handler is available, provide the artifact path instead of assuming a platform-specific command.
+- For a visual UI, layout, state comparison, or concept too dense for Mermaid, write one focused HTML file — a diagram, an infographic, or a short slide deck, whichever fits the point. Match the product's colors, type, spacing, and components; use real labels and data; support desktop and mobile. Use the sidebar browser when rendered inspection helps. If opening it would require another browser runtime, provide the artifact path and let the user choose before switching.
 
 ### guidance
 

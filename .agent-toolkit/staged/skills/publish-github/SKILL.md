@@ -1,6 +1,6 @@
 ---
 name: publish-github
-description: Prepare a side project for GitHub by polishing its product presentation, visual identity, documentation, and repository hygiene, then stage it privately. Use when the user wants to make a project clean and ready to publish; keep it private until they explicitly approve public visibility.
+description: Prepare a side project for GitHub by polishing its product presentation, visual identity, documentation, and repository hygiene. Use when the user wants to make a project clean and ready to publish; create new destinations privately and preserve existing repository visibility unless explicitly asked to change it.
 ---
 
 # Publish to GitHub
@@ -9,8 +9,8 @@ Turn a scrappy project into a coherent, usable, well-presented GitHub repository
 
 ## Scope and authority
 
-- The user's explicit `$publish-github` invocation authorizes local product and presentation polish, project-appropriate commits, and pushing the approved publication work to a confirmed private GitHub destination. Discover the owner from the configured GitHub account and the repository name from its remote or project metadata. Ask only when identity, ownership, or an important product choice cannot be established.
-- Keep the GitHub repository private throughout preparation. If an existing destination is public, make it private before pushing publication changes when the authenticated account permits it. Explain any visibility consequence the user must know. Do not create a public mirror, enable public Pages, publish release assets/packages, or expose generated artifacts elsewhere.
+- The user's explicit `$publish-github` invocation authorizes local product and presentation polish, project-appropriate commits, and pushing the approved publication work to a confirmed GitHub destination. Discover the owner from the configured GitHub account and the repository name from its remote or project metadata. Ask only when identity, ownership, or an important product choice cannot be established.
+- Create a new destination as private. For an existing destination, preserve its owner, remote, and current visibility unless the user explicitly asks for a change; a request to prepare or publish a project does not authorize privatizing an established public repository or moving it. Explain any visibility consequence the user must know. Do not create a public mirror, enable public Pages, publish release assets/packages, or expose generated artifacts elsewhere.
 - Public visibility is a separate user decision. At the end, show the repo URL, final presentation, validation, files/commits staged, and remaining issues. Ask the user to explicitly approve making that exact repository public. Do not infer approval from “looks good,” approval to stage privately, or approval of code changes. After approval, make only that repository public and verify the resulting visibility.
 - Preserve existing history and unrelated user work. Do not force-push, rewrite history, delete branches/releases/tags, or alter unrelated repositories. If the destination or working-tree state makes a safe publication push unclear, prepare what is safe and report the blocker.
 - Keep the work focused on making the existing project understandable, credible, usable, and maintainable. Make bounded fixes and first-run improvements. Bring new features, major redesigns, architectural changes, ownership changes, and other decisions that would change the product's promise back to the user before implementing them.

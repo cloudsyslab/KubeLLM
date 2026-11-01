@@ -4,11 +4,14 @@ KubeLLM is a research benchmark for measuring how well models diagnose and repai
 
 ## Working style and skills
 
+- This checkout is the canonical home for all user-maintained Codex skills on this server. Add and edit their full directories under `.agents/skills/`; link them into `~/.agents/skills/` with `python3 .agents/skills/workspace-onboarding/scripts/reconcile_shared_skills.py --sync`, then verify with `--check`. Run the check after each skill addition or refresh. Keep Codex-bundled and plugin-installed skills in their managed locations.
 - Move quickly on clear, bounded requests. Resolve factual questions from the repository and ask about decisions only when they cannot be discovered and would materially change the result.
 - Prefer the smallest evidence-backed change. Read nearby code and repository guidance before editing, preserve unrelated work, and verify in proportion to risk.
 - Use `$workspace-onboarding` to initialize or explicitly refresh this repository's toolkit from upstream `main`, reconcile changes with its live instructions and skills, and append its workspace snapshot after validation.
 - Use `$grilling` for requested alignment interviews and `$discovery` for current or source-dependent research. Discovery delegates source search and reading to `gpt-6-luna` at `xhigh` effort; the main agent frames the question and synthesizes the evidence. After each grilling pass, execute the current agreed plan only through the user's fresh, explicit `$build-from-plan` invocation; earlier permission and agreement do not open that gate.
 - Use `$build-from-plan` for an understood implementation plan, `$kubellm-benchmarks` to run or analyze benchmark work, and `$show-me` for visual explanations.
+- Use `$learn` only when explicitly invoked; follow the user's manual-Git preference when recording learning notes.
+- Use `$cloudflare-cli` for requested Cloudflare work. Confirm the intended account and resource before mutation; credential availability does not authorize a deployment or resource change.
 - Use `$writing-session` for PRDs, specifications, RFCs, and design documents; `$refresh-docs` only when documentation updates are requested; and `$commit-pr` after a feature-branch work pass to propose exact commits, a push, and a draft PR. Wait for approval of that concrete proposal before execution; explicit commit-only or text-only requests narrow its scope.
 - Use `$reconcile-branches` to inventory feature branches and PRs, prepare and test an approved integration, and merge approved PRs in dependency order. Preparation approval and merge approval are separate.
 - Use `$publish-github` only for an explicit publication request. KubeLLM's organization repository is already established: changing its visibility or remotes, or creating a mirror, requires a separate explicit instruction. Public visibility always requires explicit approval.
@@ -42,3 +45,4 @@ KubeLLM is a research benchmark for measuring how well models diagnose and repai
 - For code changes, run `python3 -m pytest tests/ -q`. For case or runner changes, also run `python3 debug_assistant_latest/runner.py --list` and `--validate-ground-truth`.
 - Use `python3 debug_assistant_latest/runner.py --preflight` before a requested cluster-backed benchmark. Follow `$kubellm-benchmarks` for lane selection, readiness, execution, evidence, and teardown.
 - Preserve the current branch, remote, history, and unrelated changes. Do not commit, branch, or push KubeLLM work unless explicitly requested. Publishing its validated agent configuration to the toolkit's `workspace/github.com/cloudsyslab/kubellm` branch is the narrow snapshot exception. That snapshot records history; the KubeLLM checkout remains authoritative.
+- Before cloning a repository, reuse its canonical checkout when available; use a linked worktree when another branch must be checked out concurrently.
