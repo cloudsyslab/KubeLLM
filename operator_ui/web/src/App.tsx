@@ -36,7 +36,7 @@ export function App() {
                 <Route path="models/:slug" element={<ModelDetailPage />} />
                 <Route path="runs/:ref" element={<RunDetailPage />} />
                 {SURFACES.filter((s) => s.path).map((s) => (
-                  <Route key={s.id} path={s.path!.slice(1)} element={<SurfacePage surface={s.id} />} />
+                  <Route key={s.id} path={s.path!.slice(1)} element={<SurfacePage key={s.id} surface={s.id} />} />
                 ))}
                 <Route path="options" element={<OptionsRoomPage />} />
                 <Route path="*" element={<PendingPage eyebrow="KubeLLM" title="Not found" description="This page does not exist." items={["Use the navigation to return to Models."]} />} />

@@ -123,11 +123,11 @@ function SurfaceNav({ value, onChange }: { value: Surface | "overview"; onChange
     </button>
   );
   return (
-    <nav aria-label="Surfaces" className="-mx-1 flex items-center gap-1 overflow-x-auto px-1 pb-1">
+    <nav aria-label="Surfaces" className="flex flex-wrap items-center gap-x-1 gap-y-2 border-b border-line pb-3">
       {item("overview", "Overview")}
       {groups.map((group) => (
-        <div key={group} className="flex items-center gap-1">
-          <span className="label ml-3 mr-1 shrink-0 !text-[10px]">{group}</span>
+        <div key={group} className="flex flex-wrap items-center gap-1 border-l border-line pl-2.5 ml-1.5">
+          <span className="label mr-1 shrink-0 !text-[10px]">{group}</span>
           {SURFACES.filter((s) => s.group === group).map((s) => item(s.id, s.label, s.options.length))}
         </div>
       ))}

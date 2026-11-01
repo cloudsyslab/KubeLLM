@@ -1,4 +1,4 @@
-import { BLOCKED_CHECKS, READY_CHECKS, type ReadinessCheck } from "./readiness";
+import { BLOCKED_CHECKS, EARLIER_READY_CHECKS, READY_CHECKS, type ReadinessCheck } from "./readiness";
 
 // Demo operator job history for the Jobs, Environment, New campaign, Publish,
 // and active-work options. Kinds and statuses mirror operator_ui/jobs.py and
@@ -64,9 +64,9 @@ export const JOBS: DemoJob[] = [
     id: "91f3c6a8e2d4",
     kind: "publish",
     status: "completed",
-    createdAt: "2026-09-23T02:11:30Z",
-    startedAt: "2026-09-23T02:11:31Z",
-    finishedAt: "2026-09-23T02:12:58Z",
+    createdAt: "2026-09-23T02:14:30Z",
+    startedAt: "2026-09-23T02:14:31Z",
+    finishedAt: "2026-09-23T02:15:58Z",
     total: 0,
     currentIndex: 0,
     title: "Publish operator-campaign-2026-09-22-e08b7d2c",
@@ -93,11 +93,11 @@ export const JOBS: DemoJob[] = [
     createdAt: "2026-09-22T18:20:02Z",
     startedAt: "2026-09-22T18:20:03Z",
     finishedAt: "2026-09-22T18:20:36Z",
-    total: READY_CHECKS.length,
-    currentIndex: READY_CHECKS.length,
+    total: EARLIER_READY_CHECKS.length,
+    currentIndex: EARLIER_READY_CHECKS.length,
     title: "Preflight",
     summary: "Ready",
-    readiness: { mode: "check-only", checks: READY_CHECKS },
+    readiness: { mode: "check-only", checks: EARLIER_READY_CHECKS },
   },
   {
     id: "a3c90f6b2e17",
@@ -106,11 +106,11 @@ export const JOBS: DemoJob[] = [
     createdAt: "2026-09-22T18:12:44Z",
     startedAt: "2026-09-22T18:12:45Z",
     finishedAt: "2026-09-22T18:16:31Z",
-    total: READY_CHECKS.length,
-    currentIndex: READY_CHECKS.length,
+    total: EARLIER_READY_CHECKS.length,
+    currentIndex: EARLIER_READY_CHECKS.length,
     title: "Prepare environment",
     summary: "Started minh-lane, restarted the lane RAG API, rechecked: ready",
-    readiness: { mode: "repair-safe", checks: READY_CHECKS },
+    readiness: { mode: "repair-safe", checks: EARLIER_READY_CHECKS },
   },
   {
     id: "f61b4e9d08a5",

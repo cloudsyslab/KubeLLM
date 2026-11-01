@@ -193,7 +193,7 @@ const CRUMBS: Record<string, [string, string]> = {
 
 function SearchButton({ onClick, compact }: { onClick: () => void; compact?: boolean }) {
   return compact ? (
-    <button type="button" onClick={onClick} aria-label="Search" className="ml-auto grid size-8 cursor-pointer place-items-center rounded-md text-fg-2 hover:bg-surface-2">
+    <button type="button" onClick={onClick} aria-label="Search" className="grid size-8 cursor-pointer place-items-center rounded-md text-fg-2 hover:bg-surface-2">
       <Search className="size-[17px]" strokeWidth={1.75} />
     </button>
   ) : (
@@ -226,6 +226,7 @@ export function Shell({ children }: { children: ReactNode }) {
             </button>
           </Dialog.Trigger>
           <Brand />
+          <div id="mobile-dock" className="ml-auto flex min-w-0 items-center" />
           <SearchButton compact onClick={() => setPaletteOpen(true)} />
         </header>
         <Dialog.Portal>

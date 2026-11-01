@@ -39,12 +39,15 @@ export function writeChoice(surface: Surface, id: string | null) {
 // recorded in design-work.md. Picks made elsewhere (the pick sheet, the room)
 // update every mounted reader.
 export function useOptionChoice(surface: Surface): [OptionDef, (id: string) => void] {
-  const [option, setOption] = useState<OptionDef>(() => pickOf(surface));
+  // A version counter rather than the option itself, so the pick is always
+  // read for the current surface, even when a page component is reused for a
+  // different surface by the router.
+  const [, setVersion] = useState(0);
   useEffect(() => {
-    const sync = () => setOption(pickOf(surface));
+    const sync = () => setVersion((v) => v + 1);
     window.addEventListener(EVENT, sync);
     return () => window.removeEventListener(EVENT, sync);
-  }, [surface]);
+  }, []);
   const choose = useCallback((next: string) => writeChoice(surface, next), [surface]);
-  return [option, choose];
+  return [pickOf(surface), choose];
 }

@@ -66,8 +66,13 @@ export const READY_CHECKS: ReadinessCheck[] = [
   { id: "config_validity", group: "live", label: "config_validity", level: "pass", detail: "Case configurations are valid.", ms: 720 },
 ];
 
+/** September results, before the Docker data root filled up. */
+export const EARLIER_READY_CHECKS: ReadinessCheck[] = READY_CHECKS.map((check) =>
+  check.id === "artifacts_disk" ? { ...check, level: "pass", detail: "Docker data root has at least 20 GiB free." } : check,
+);
+
 /** An earlier blocked result: the lane's profile was down. */
-export const BLOCKED_CHECKS: ReadinessCheck[] = READY_CHECKS.map((check) =>
+export const BLOCKED_CHECKS: ReadinessCheck[] = EARLIER_READY_CHECKS.map((check) =>
   check.id === "minikube_status"
     ? { ...check, level: "block", detail: "minikube profile 'minh-lane' is unhealthy: host is Stopped." }
     : check.id === "cluster_access"
