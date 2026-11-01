@@ -37,7 +37,7 @@ export const OPTIONS: OptionDef[] = [
     name: "Floating mini panel",
     idea: "A bottom-right panel with the attempt grid, current phase, and the latest output line. It collapses to a remembered pill and is always a pill on phones.",
     optimizes: "Watching a campaign while working on another page.",
-    tradeoff: "Covers a corner of every page; the most visual noise of the three.",
+    tradeoff: "Covers a corner of every page, including sticky bottom bars like the Runs compare tray; the most visual noise of the three.",
     reference: "Google Drive's upload panel, Loom's recorder",
     component: lazy(() => import("./FloatingPanel")),
   },

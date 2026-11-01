@@ -52,6 +52,13 @@ event IDs so `Last-Event-ID` replays missed events after a refresh or
 reconnect. Redact credentials before persisting. Job state adds the planned
 attempt list (model, case) so progress has a real denominator.
 
+## Compare
+
+The Compare options compute shared cases and the alignment checks in the
+browser from `/api/explorer`, using the backend's rule (shared cases are the
+overlap of planned cases) and its caution text. `POST /api/compare` is
+therefore optional for the new UI; keep it if other clients use it.
+
 ## Existing endpoints the next checkpoint will use
 
 | View | Endpoint | Notes |

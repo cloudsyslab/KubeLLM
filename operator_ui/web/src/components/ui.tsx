@@ -63,7 +63,7 @@ export function Tag({ children, tone = "neutral", className }: { children: React
   return (
     <span
       className={clsx(
-        "inline-flex h-5 items-center gap-1 rounded-[4px] border px-1.5 font-mono text-[10.5px] font-medium tracking-[0.06em] uppercase",
+        "inline-flex h-5 shrink-0 items-center gap-1 rounded-[4px] border px-1.5 whitespace-nowrap font-mono text-[10.5px] font-medium tracking-[0.06em] uppercase",
         tone === "neutral" && "border-line-strong text-fg-3",
         tone === "accent" && "border-accent-line bg-accent-soft text-accent",
         tone === "warn" && "border-warn/40 bg-warn-soft text-warn",
