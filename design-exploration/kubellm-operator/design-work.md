@@ -77,6 +77,57 @@
   GitHub reachable; lane `minh-lane` (minikube, k8s 1.31, own kubeconfig);
   9 Ollama models; operator harness on 127.0.0.1:8787.
 
+### Checkpoint 1 review (2026-11-01)
+
+- Accepted: overall aesthetic and density. Long model IDs may truncate.
+- Fixed in the refinement: the run-range band inside bars confused readers
+  (removed; the range moved into the hover tooltip); panel headers must never
+  wrap into each other (title plus a consistent "Higher/Lower is better" line);
+  long names must truncate cleanly rather than fall out of headers.
+- Hover depth is a priority: model cards (lab, tier, weights, size, license)
+  and scenario/variant cards that explain what a case breaks and how variants
+  differ. Case explanations come verbatim from each case's config_step.json
+  (symptom, Ground Truth checks) and readme.txt (broken setup, fix).
+- Model identity uses each lab's real logo and brand color, as Artificial
+  Analysis does, instead of arbitrary per-model colors. Model facts must be
+  sourced; unconfirmed fields stay blank.
+- For the live surfaces the user wants to choose from rendered, playable
+  options rather than descriptions: build an options room through
+  `$website-design-build`, then pick.
+
+## Next pass: checkpoint 2 options room
+
+- State: ready. Waits for the user's explicit
+  `/build-from-plan /website-design-build`.
+- Pass: direction room for the three live surfaces, built inside the
+  production shell (`operator_ui/web`, route `/options`, linked from each
+  surface) so options are judged in their real context and data.
+- Options, all driven by one scripted demo campaign over real case names and
+  models (play, pause, scrub, a failure branch, a visible "Demo" tag):
+  - Execution: A console first (Modal logs and activity histogram), B trace
+    first (Braintrust phase tree and detail drawer), C attempt grid first
+    (campaign grid filling live, current attempt phases, log tail). Claude
+    recommends C.
+  - Lab resources: A dense btop-style (per-core bars, per-GPU tiles with
+    VRAM, process table, sparklines), B calm observability charts (time
+    series panels). Claude recommends A.
+  - Topology: A structured map (profiles, then node, namespaces, pods; the
+    selected lane accented; expected broken fixtures explained), B node graph
+    (React Flow). Claude recommends A.
+  - Liveness: replaying demo versus a frozen mid-run state, as a toggle.
+- Data shape follows the lab survey: 2x A40 46 GB, 128 threads, 755 GiB RAM,
+  ~98% root disk, `minh-lane` plus four other minikube profiles, the lane's
+  two long-failing leftover pods, PCP-style host metrics, no per-pod CPU, GPU
+  load not attributed to runs. Every simulated value is tagged Demo.
+- Excluded: backend endpoints and SSE; Runs, Compare, New campaign, and
+  Environment pages (no taste fork; they are built with the chosen options in
+  the following implementation pass).
+- Validation: TypeScript/Vite build; browser QA of every option at desktop
+  and phone widths in both themes, including the replay controls and reduced
+  motion.
+- Stop point: the user picks one option per surface (or a mix); the next
+  implementation pass builds the chosen ones plus the remaining pages.
+
 ## Current pass: production front end (checkpoint 1: model explorer)
 
 - State: review-ready (checkpoint 1). Start instruction: the user's explicit
@@ -135,9 +186,25 @@
   backend Python changed besides the standalone snapshot script, which ran.
 - Fidelity gaps: no 1:1 recreation of any vendor UI was intended or verified;
   authenticated Modal and Braintrust app screens were not inspected.
-- Next decision: review checkpoint 1 in `$website-design`, then a fresh
-  `$build-from-plan $website-design-build` for checkpoint 2 (runs, compare,
-  execution, launch, environment, lab resources, topology).
+- Refinement after the user's review (same pass): removed the run-range band
+  from bars (range now in the tooltip); panel headers are a fixed title plus
+  "Higher/Lower is better" line; lab logos replace identity dots; model hover
+  cards (leaderboard, matrix headers) and an "About this model" panel with
+  sourced lab/tier/weights/size/license/release facts; scenario and variant
+  hover cards in the matrix, model detail, and run detail from
+  `src/data/cases.json`; matrix headers switch to two-line rotated labels
+  above seven models and drop qualifiers every column shares. Model facts were
+  researched by a read-only subagent from vendor model pages and publisher
+  model cards (2026-11-01) plus `ollama show` on the lab; residual
+  uncertainties: GPT-6/5.6 Luna dates rest on OpenAI's developer site and
+  forum, Qwen's Alibaba attribution on official-page search listings, and
+  Qwen has no single official brand color (the colored logo is used as
+  published). OpenAI, Meta, and NVIDIA logo guidelines restrict use; logos
+  identify developers only. Checks: build passes; browser QA in both themes
+  of the card contents, the exploratory dense headers (every label fits), and
+  no console errors across five routes.
+- Next decision: the checkpoint 2 options room above, started by a fresh
+  `$build-from-plan $website-design-build`.
 
 ## Previous pass: explorer and execution directions (superseded)
 
