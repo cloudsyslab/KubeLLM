@@ -5,6 +5,7 @@ import {
   Cpu,
   Database,
   Layers,
+  ListChecks,
   LayoutGrid,
   Menu,
   Moon,
@@ -20,6 +21,7 @@ import { Dialog } from "radix-ui";
 import { useState, type ReactNode } from "react";
 import { NavLink, useLocation } from "react-router";
 import { api } from "@/api/client";
+import { DockHost } from "@/options/dock/host";
 import { useTheme } from "@/lib/theme";
 import { Tip } from "./ui";
 
@@ -43,6 +45,7 @@ const NAV: { group: string; items: NavItem[] }[] = [
     group: "Operate",
     items: [
       { to: "/execution", label: "Execution", icon: SquareTerminal },
+      { to: "/jobs", label: "Jobs", icon: ListChecks },
       { to: "/launch", label: "New campaign", icon: Rocket },
       { to: "/environment", label: "Environment", icon: ShieldCheck },
     ],
@@ -166,6 +169,7 @@ function SidebarBody({ onNavigate }: { onNavigate?: () => void }) {
           <NavLinks onNavigate={onNavigate} />
         </div>
       </div>
+      <DockHost slot="sidebar" />
       <Footer />
     </div>
   );
@@ -178,6 +182,8 @@ const CRUMBS: Record<string, [string, string]> = {
   "/execution": ["Operate", "Execution"],
   "/launch": ["Operate", "New campaign"],
   "/environment": ["Operate", "Environment"],
+  "/jobs": ["Operate", "Jobs"],
+  "/publish": ["Operate", "Publish results"],
   "/lab": ["Lab", "Resources"],
   "/lab/topology": ["Lab", "Topology"],
   "/options": ["Design review", "Options room"],
@@ -224,9 +230,13 @@ export function Shell({ children }: { children: ReactNode }) {
             <span className="text-fg-3/60">/</span>
             <span className="text-fg">{crumbs[1]}</span>
           </nav>
+          <div className="ml-auto">
+            <DockHost slot="topbar" />
+          </div>
         </div>
         <main className="mx-auto w-full max-w-[1440px] px-4 pt-6 pb-16 sm:px-6 lg:px-8 lg:pt-8">{children}</main>
       </div>
+      <DockHost slot="floating" />
     </div>
   );
 }

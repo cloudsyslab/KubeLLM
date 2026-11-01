@@ -149,8 +149,9 @@
   is served and is shown as coincident, not attributed; GPU 1 load belongs
   to another account. Pod states use neutral and amber, never the Ground
   Truth green and red; fixture and leftover pods are explained in place.
-  The disk panels surface a real constraint from data_analysis/README.md:
-  12 GB free is below the 20 GB standard campaigns require at start.
+  The disk panels surface a real constraint from the benchmark skill's
+  check_readiness.py: preparation needs 20 GiB free on the Docker data root
+  to start the lane's profile, and the lab had about 12 GB free.
 - Checks: `npm run build` passes (each option is its own chunk; React Flow
   only loads for the node graph). Browser QA at 1440x900 for all seven
   options in dark and Execution C in light; phone width 375 for Execution;

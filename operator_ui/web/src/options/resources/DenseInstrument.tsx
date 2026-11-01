@@ -76,7 +76,7 @@ export default function DenseInstrument() {
               </span>
             </div>
             <Meter value={98} max={100} tone="warn" />
-            <SourceNote>Below the 20 GB free that standard campaigns require at start; only the pilot storage profile (12 GB) would pass readiness.</SourceNote>
+            <SourceNote>Below the 20 GiB that preparation needs on the Docker data root to start the lane's profile. A running lane is unaffected until it has to be restarted.</SourceNote>
           </Tile>
         </div>
       </div>

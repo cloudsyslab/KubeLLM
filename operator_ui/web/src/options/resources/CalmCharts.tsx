@@ -53,9 +53,9 @@ export default function CalmCharts() {
         <ChartPanel title="Memory used" value={`${now.memUsedGiB.toFixed(1)} GiB`} sub={`of ${HOST.memTotalGiB} GiB · ${Math.round(now.memCacheGiB)} GiB cache`}>
           <AreaChart series={[{ label: "Memory", values: history.map((s) => s.memUsedGiB), color: "var(--fg-2)" }]} max={16} />
         </ChartPanel>
-        <ChartPanel title="Root disk" value={<span className="text-warn">98%</span>} sub={`${HOST.diskFreeGB} GB free · below the 20 GB campaign minimum`}>
+        <ChartPanel title="Root disk" value={<span className="text-warn">98%</span>} sub={`${HOST.diskFreeGB} GB free · below the 20 GiB profile-start minimum`}>
           <div className="flex h-[140px] flex-col justify-end gap-2">
-            <p className="text-[12.5px] text-fg-3">Unchanged over this window. Pilot storage runs need 12 GB; standard campaigns need 20 GB free at start.</p>
+            <p className="text-[12.5px] text-fg-3">Unchanged over this window. Preparation needs 20 GiB free on the Docker data root to start the lane's profile.</p>
             <Meter value={HOST.diskUsedGB} max={HOST.diskTotalGB} tone="warn" className="h-2" />
             <div className="num flex justify-between text-[11.5px] text-fg-3">
               <span>{HOST.diskUsedGB} GB used</span>
