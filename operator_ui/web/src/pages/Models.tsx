@@ -138,22 +138,25 @@ export function ModelsPage() {
             <MetricBars
               className="md:col-span-2 xl:col-span-1"
               title="Ground Truth success"
-              icon={<Target className="size-3" strokeWidth={2} />}
+              icon={<Target className="size-4" strokeWidth={1.75} />}
               direction="higher"
               configs={configs}
               value={(c) => c.rate}
               format={(v) => pct(v)}
               domainMax={1}
-              ticks={(c) => c.runRates.filter((r) => r.rate !== null).map((r) => r.rate as number)}
-              detail={(c) => `${count(c.passed)} of ${count(c.known)} known attempts${c.unknown ? ` · ${c.unknown} unknown` : ""}`}
+              detail={(c) => {
+                const rates = c.runRates.filter((r) => r.rate !== null).map((r) => r.rate as number);
+                const range = rates.length > 1 ? ` · runs ranged ${pct(Math.min(...rates), 0)}–${pct(Math.max(...rates), 0)}` : "";
+                return `${count(c.passed)} of ${count(c.known)} known attempts${c.unknown ? ` · ${c.unknown} unknown` : ""}${range}`;
+              }}
               hovered={hovered}
               onHover={setHovered}
               onSelect={open}
-              footnote="The inset band spans the worst to best run. Unknown outcomes are left out of the rate."
+              footnote="Share of attempts with a known outcome that passed. Unknown outcomes are left out of the rate."
             />
             <MetricBars
               title="Time per attempt"
-              icon={<Timer className="size-3" strokeWidth={2} />}
+              icon={<Timer className="size-4" strokeWidth={1.75} />}
               direction="lower"
               configs={configs}
               value={(c) => c.medianAttemptS}
@@ -166,7 +169,7 @@ export function ModelsPage() {
             />
             <MetricBars
               title="Cost per attempt"
-              icon={<Coins className="size-3" strokeWidth={2} />}
+              icon={<Coins className="size-4" strokeWidth={1.75} />}
               direction="lower"
               configs={configs}
               value={(c) => c.costPerAttempt}

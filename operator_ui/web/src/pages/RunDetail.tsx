@@ -5,8 +5,12 @@ import { useEffect, useMemo } from "react";
 import { Link, useLocation, useParams } from "react-router";
 import { api } from "@/api/client";
 import type { CaseRow } from "@/api/types";
+import { VariantCard } from "@/components/CaseCard";
+import { HINT } from "@/components/CaseMatrix";
 import { ErrorState, LoadingState } from "@/components/states";
-import { Dot, Kpi, Outcome, Panel, Tag, Tip } from "@/components/ui";
+import { LabLogo } from "@/components/ModelCard";
+import { Kpi, Outcome, Panel, Tag, Tip } from "@/components/ui";
+import { labOf } from "@/data/models";
 import { caseFamily, humanize } from "@/lib/cases";
 import { buildConfigs, caseOutcome, techniqueLabel } from "@/lib/explore";
 import { compact, count, duration, pct, runDate, usd } from "@/lib/format";
@@ -66,7 +70,7 @@ export function RunDetailPage() {
           <Tag>{run.source}</Tag>
         </div>
         <p className="mt-2 flex flex-wrap items-center gap-x-2 text-[14px] text-fg-2">
-          {config && <Dot color={config.color} />}
+          {config && <LabLogo lab={labOf(config.debug)} size={14} />}
           <span className="ident text-fg">{run.models.DebugAgent.join(", ") || "unrecorded"}</span>
           <span className="text-fg-3">·</span>
           <span>{techniqueLabel(run.technique)}</span>
@@ -105,7 +109,11 @@ export function RunDetailPage() {
                     <tr key={row.case} id={`attempt-${row.case}`} className={clsx("border-b border-line last:border-b-0", target === row.case ? "bg-accent-soft" : "hover:bg-surface-2/60")}>
                       <td className="py-2 pr-3 pl-4">
                         <div className="text-[12.5px] text-fg-2">{humanize(family)}</div>
-                        <div className="ident text-[12px] text-fg">{variant}</div>
+                        <VariantCard id={row.case}>
+                          <span tabIndex={0} className={clsx(HINT, "ident text-[12px] text-fg")}>
+                            {variant}
+                          </span>
+                        </VariantCard>
                       </td>
                       <td className="px-3">
                         <Outcome outcome={caseOutcome(row)} />

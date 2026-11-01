@@ -5,7 +5,11 @@ import { useEffect, useMemo } from "react";
 import { Link, useParams, useSearchParams } from "react-router";
 import { api } from "@/api/client";
 import type { RunWithCases } from "@/api/types";
-import { Dot, Kpi, Outcome, Panel, Tag, Tip } from "@/components/ui";
+import { FamilyCard, VariantCard } from "@/components/CaseCard";
+import { HINT } from "@/components/CaseMatrix";
+import { LabLogo, ModelCardBody } from "@/components/ModelCard";
+import { Kpi, Outcome, Panel, Tag, Tip } from "@/components/ui";
+import { labOf } from "@/data/models";
 import { ErrorState, LoadingState } from "@/components/states";
 import { groupCases, humanize } from "@/lib/cases";
 import { caseOutcome, findConfig, techniqueLabel, type ModelConfig } from "@/lib/explore";
@@ -137,10 +141,20 @@ function CaseRuns({ config, focusCase }: { config: ModelConfig; focusCase: strin
                 <tr key={item.id} id={`case-${item.id}`} className={clsx("transition-colors", focusCase === item.id ? "bg-accent-soft" : "hover:bg-surface-2/60")}>
                   <td className="py-1.5 pr-3 pl-4">
                     <div className="flex items-baseline gap-2">
-                      <span className={clsx("w-48 shrink-0 truncate text-[12.5px]", index === 0 ? "text-fg-2" : "text-transparent")} aria-hidden={index !== 0} title={humanize(family.family)}>
-                        {humanize(family.family)}
+                      <span className="w-48 shrink-0 truncate">
+                        {index === 0 && (
+                          <FamilyCard family={family.family} ids={family.cases.map((c) => c.id)}>
+                            <span tabIndex={0} className={clsx(HINT, "text-[12.5px] text-fg-2 hover:text-fg")}>
+                              {humanize(family.family)}
+                            </span>
+                          </FamilyCard>
+                        )}
                       </span>
-                      <span className="ident truncate text-[12px] text-fg">{item.variant}</span>
+                      <VariantCard id={item.id}>
+                        <span tabIndex={0} className={clsx(HINT, "ident truncate text-[12px] text-fg")}>
+                          {item.variant}
+                        </span>
+                      </VariantCard>
                     </div>
                   </td>
                   {runs.map((run) => (
@@ -264,7 +278,7 @@ export function ModelDetailPage() {
           Models
         </Link>
         <div className="mt-4 flex flex-wrap items-center gap-x-3 gap-y-2">
-          <Dot color={config.color} className="size-2.5" />
+          <LabLogo lab={labOf(config.debug)} size={22} />
           <h1 className="ident text-[26px] leading-tight font-medium tracking-[-0.02em]">{config.debug}</h1>
           <Tag>{techniqueLabel(config.technique)}</Tag>
           <Tag tone={config.source === "canonical" ? "neutral" : "warn"}>{config.source}</Tag>
@@ -310,7 +324,10 @@ export function ModelDetailPage() {
         >
           <CaseRuns config={config} focusCase={focusCase} />
         </Panel>
-        <div className="xl:sticky xl:top-20 xl:self-start">
+        <div className="grid gap-6 xl:sticky xl:top-20 xl:self-start">
+          <Panel title="About this model">
+            <ModelCardBody config={config} />
+          </Panel>
           <Panel title="Where an attempt spends" caption="By agent role">
             <RoleBreakdown config={config} />
           </Panel>

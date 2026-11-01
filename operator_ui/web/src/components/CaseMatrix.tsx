@@ -2,10 +2,16 @@ import clsx from "clsx";
 import { useState } from "react";
 import { useNavigate } from "react-router";
 import { groupCases, humanize } from "@/lib/cases";
-import { techniqueLabel, type CaseTally, type ModelConfig } from "@/lib/explore";
+import type { CaseTally, ModelConfig } from "@/lib/explore";
 import { duration, pct } from "@/lib/format";
-import { displayModel, mixedTechniques } from "./charts";
-import { Dot, Tip } from "./ui";
+import { FamilyCard, VariantCard } from "./CaseCard";
+import { displayModel, mixedSources, mixedTechniques, TECHNIQUE_SHORT } from "./charts";
+
+// Dotted underline: this label opens an explanation on hover or focus.
+export const HINT = "cursor-help underline decoration-dotted decoration-from-font underline-offset-[3px] [text-decoration-color:var(--line-strong)] focus-visible:outline-offset-2";
+import { labOf } from "@/data/models";
+import { LabLogo, ModelCard } from "./ModelCard";
+import { Tip } from "./ui";
 
 const fill = (share: number) => `color-mix(in oklab, var(--good) ${Math.round(16 + share * 64)}%, var(--track))`;
 
@@ -44,6 +50,11 @@ export function CaseMatrix({ configs, cases }: { configs: ModelConfig[]; cases: 
   const families = groupCases(cases);
   const navigate = useNavigate();
   const showTechnique = mixedTechniques(configs);
+  // Past seven models, horizontal headers can no longer show full names.
+  const dense = configs.length > 7;
+  const showSource = mixedSources(configs);
+  const qualifier = (config: ModelConfig) =>
+    [showTechnique ? (TECHNIQUE_SHORT[config.technique ?? ""] ?? "unrecorded") : null, showSource && config.source !== "canonical" ? config.source : null].filter(Boolean).join(" · ");
   const [focus, setFocus] = useState<{ row: string | null; col: string | null }>({ row: null, col: null });
   const caseShare = (id: string) => {
     const known = configs.reduce((sum, c) => sum + (c.perCase.get(id)?.known ?? 0), 0);
@@ -63,25 +74,40 @@ export function CaseMatrix({ configs, cases }: { configs: ModelConfig[]; cases: 
             </th>
             {configs.map((config) => (
               <th key={config.key} scope="col" className="px-1 text-left font-normal">
+                <ModelCard config={config}>
                 <button
                   type="button"
                   onClick={() => navigate(`/models/${config.slug}`)}
                   onMouseEnter={() => setFocus({ row: null, col: config.key })}
-                  className={clsx("flex h-[72px] w-full cursor-pointer flex-col justify-between rounded px-1.5 py-1.5 text-left transition-colors hover:bg-surface-2", focus.col === config.key && "bg-surface-2")}
+                  className={clsx(
+                    "flex w-full cursor-pointer flex-col rounded px-1.5 py-1.5 text-left transition-colors hover:bg-surface-2",
+                    dense ? "h-[136px] items-center justify-end gap-1.5" : "h-[72px] justify-between",
+                    focus.col === config.key && "bg-surface-2",
+                  )}
                 >
-                  <span className="flex items-start gap-1.5">
-                    <Dot color={config.color} className="mt-[5px]" />
-                    <span className="ident text-[11.5px] leading-tight [overflow-wrap:anywhere] text-fg">
-                      {displayModel(config.debug)}
-                      {(showTechnique || config.source !== "canonical") && (
-                        <span className="block text-[10px] text-fg-3">
-                          {[showTechnique ? techniqueLabel(config.technique).toLowerCase() : null, config.source !== "canonical" ? config.source : null].filter(Boolean).join(" · ")}
-                        </span>
-                      )}
+                  {dense ? (
+                    <>
+                      <span className="ident max-h-[104px] overflow-hidden text-[11.5px] leading-[1.35] whitespace-nowrap text-fg" style={{ writingMode: "vertical-rl", transform: "rotate(180deg)" }}>
+                        {displayModel(config.debug)}
+                        {qualifier(config) && (
+                          <>
+                            <br />
+                            <span className="text-[10.5px] text-fg-3">{qualifier(config)}</span>
+                          </>
+                        )}
+                      </span>
+                      <LabLogo lab={labOf(config.debug)} size={14} />
+                    </>
+                  ) : (
+                    <span className="flex min-w-0 flex-col gap-1">
+                      <LabLogo lab={labOf(config.debug)} size={14} />
+                      <span className="ident block w-full truncate text-[11.5px] leading-tight text-fg">{displayModel(config.debug)}</span>
+                      {qualifier(config) && <span className="block w-full truncate text-[10.5px] leading-tight text-fg-3">{qualifier(config)}</span>}
                     </span>
-                  </span>
-                  <span className="num pl-3.5 text-[11px] text-fg-3">{pct(config.rate, 0)}</span>
+                  )}
+                  <span className="num text-[11px] text-fg-3">{pct(config.rate, 0)}</span>
                 </button>
+                </ModelCard>
               </th>
             ))}
             <th scope="col" className="label w-[112px] pr-4 text-right !text-[10.5px] font-medium">All models</th>
@@ -95,13 +121,21 @@ export function CaseMatrix({ configs, cases }: { configs: ModelConfig[]; cases: 
               return (
                 <tr key={item.id} className={clsx("transition-colors", rowLit && "bg-surface-2/60")}>
                   <td className="hidden py-[3px] pl-4 align-middle md:table-cell">
-                    {index === 0 && <span className="text-[12.5px] text-fg-2">{humanize(family.family)}</span>}
+                    {index === 0 && (
+                      <FamilyCard family={family.family} ids={family.cases.map((c) => c.id)}>
+                        <span tabIndex={0} className={clsx(HINT, "text-[12.5px] text-fg-2 hover:text-fg")}>
+                          {humanize(family.family)}
+                        </span>
+                      </FamilyCard>
+                    )}
                   </td>
                   <td className="sticky left-0 z-10 bg-surface py-[3px] pl-4 align-middle md:static md:bg-transparent md:pl-0">
                     {index === 0 && <span className="block truncate text-[11.5px] text-fg-3 md:hidden">{humanize(family.family)}</span>}
-                    <span className={clsx("ident block truncate text-[12px]", rowLit ? "text-fg" : "text-fg-2")} title={item.id}>
-                      {item.variant}
-                    </span>
+                    <VariantCard id={item.id}>
+                      <span tabIndex={0} className={clsx(HINT, "ident inline-block max-w-full truncate text-[12px] hover:text-fg", rowLit ? "text-fg" : "text-fg-2")}>
+                        {item.variant}
+                      </span>
+                    </VariantCard>
                   </td>
                   {configs.map((config) => {
                     const tally = config.perCase.get(item.id);

@@ -5,6 +5,7 @@ import { Link } from "react-router";
 import { techniqueLabel, type ModelConfig } from "@/lib/explore";
 import { compact, count, duration, pct, usd } from "@/lib/format";
 import { ModelName, RunStrip } from "./charts";
+import { ModelCard } from "./ModelCard";
 import { Tag, Tip } from "./ui";
 
 type SortKey = "rate" | "known" | "verify" | "time" | "cost" | "tokens";
@@ -75,9 +76,10 @@ export function Leaderboard({ configs, hovered, onHover }: { configs: ModelConfi
             >
               <td className="num hidden pl-4 text-[12px] text-fg-3 sm:table-cell">{index + 1}</td>
               <td className="sticky left-0 z-10 bg-surface px-3 py-2.5 sm:static sm:bg-transparent">
+                <ModelCard config={config} side="right">
                 <Link to={`/models/${config.slug}`} className="block min-w-0 focus-visible:outline-offset-4">
                   <ModelName config={config} className="text-[13px] font-medium" />
-                  <div className="mt-0.5 flex items-center gap-1.5 pl-4 text-[12px] text-fg-3">
+                  <div className="mt-0.5 flex items-center gap-1.5 pl-[21px] text-[12px] text-fg-3">
                     {mixedTechniques && (
                       <>
                         <span>{techniqueLabel(config.technique)}</span>
@@ -90,6 +92,7 @@ export function Leaderboard({ configs, hovered, onHover }: { configs: ModelConfi
                     {config.source !== "canonical" && <Tag className="ml-1">{config.source}</Tag>}
                   </div>
                 </Link>
+                </ModelCard>
               </td>
               <td className="px-3 py-2.5 text-right">
                 <div className="inline-flex items-center gap-3">

@@ -38,6 +38,20 @@ python3 operator_ui/web/scripts/snapshot_results.py
 It covers canonical and exploratory exports only, never local operator runs,
 and refuses to write anything containing a filesystem path.
 
+## Reference data for hover cards
+
+- `src/data/cases.json`: per-case explanations copied verbatim from each
+  case's `config_step.json` (the symptom the agents receive and the Ground
+  Truth checks) and `readme.txt` (broken setup and fix). Operator-facing only;
+  agent prompts never read it. Refresh with
+  `python3 operator_ui/web/scripts/snapshot_cases.py` (or `npm run snapshot`
+  for both snapshots).
+- `src/data/models.ts`: lab, tier, weights, size, license, release, and a
+  one-line summary per model, each with its source. Unconfirmed facts stay
+  blank. Add an entry when a new model enters the benchmark.
+- Lab logos come from `@lobehub/icons-static-svg` (MIT). The marks remain the
+  labs' trademarks and are used only to identify each model's developer.
+
 ## Structure
 
 ```text

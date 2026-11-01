@@ -1,0 +1,568 @@
+{
+ "cases": {
+  "environment_variable": {
+   "checks": [
+    "Pod is Ready",
+    "Container has APP_MODE environment variable defined",
+    "Container has not restarted"
+   ],
+   "ground_truth": "Verify APP_MODE environment variable is set and pod runs",
+   "setup": [],
+   "solution": [],
+   "solved": [],
+   "symptom": "The pod on my Kubernetes cluster logs show EnvironmentError: Missing required environment variable 'APP_MODE'.",
+   "title": ""
+  },
+  "environment_variable_wrong_name": {
+   "checks": [
+    "Pod is Ready",
+    "APP_MODE env var exists",
+    "Container has not restarted"
+   ],
+   "ground_truth": "Verify APP_MODE is defined and the pod is healthy",
+   "setup": [],
+   "solution": [
+    "Fix the env var name to APP_MODE and recreate/apply the pod."
+   ],
+   "solved": [],
+   "symptom": "The pod logs show KeyError: 'APP_MODE' even though an application environment variable is present in the manifest.",
+   "title": ""
+  },
+  "incorrect_selector": {
+   "checks": [
+    "Pod is Ready",
+    "Service endpoints have addresses (selector matches pod)",
+    "Service selector matches pod label"
+   ],
+   "ground_truth": "Verify service selector matches pod label and endpoints are populated",
+   "setup": [
+    "Server application set to handle http requests on port 8765",
+    "Dockerfile configured to install necessary packages for server application and expose the container port 8765",
+    "Kubernetes pod configuration file to deploy the container image to the kubernetes cluster",
+    "Kubernetes service configuration file to create a service to support the deployed pod"
+   ],
+   "solution": [
+    "Modify the app_service.yaml file so that the spec->selector->app field matches the pod label for the incorrect_selector.yaml pod manifest",
+    "Delete the incorrect_selector.yaml and app_service.yaml resources using the commands `kubectl delete -f path_to_directory/incorrect_selector.yaml` and `kubectl delete -f path_to_directory/app_service.yaml`",
+    "Reapply the resources for incorrect_selector.yaml and app_service.yaml using the commands `kubectl apply -f path_to_directory/incorrect_selector.yaml` and `kubectl apply -f path_to_directory/app_service.yaml`"
+   ],
+   "solved": [
+    "Endpoints will be listed for the app-service service when the `kubectl describe service app-service` command is run"
+   ],
+   "symptom": "When I describe the service associated with the pod on my kubernetes cluster, it shows no endpoints listed.",
+   "title": "Incorrect Selector"
+  },
+  "incorrect_selector_missing_label": {
+   "checks": [
+    "Pod is Ready",
+    "Pod has app label selected by service",
+    "Service endpoints are populated"
+   ],
+   "ground_truth": "Verify the pod labels satisfy the service selector",
+   "setup": [],
+   "solution": [
+    "Add the missing app label to the pod metadata so the service selector matches."
+   ],
+   "solved": [],
+   "symptom": "The pod is Running, but describing the Service shows no endpoints for the application.",
+   "title": ""
+  },
+  "liveness_probe": {
+   "checks": [
+    "Pod is Running",
+    "Pod is Ready",
+    "Container still has restartCount=0 after the initial liveness delay"
+   ],
+   "ground_truth": "Verify liveness probe stays healthy through the initial failure window",
+   "setup": [],
+   "solution": [],
+   "solved": [],
+   "symptom": "The kube-liveness pod becomes unhealthy and restarts after startup because its liveness check fails. Fix the probe so the pod stays Running and Ready without restarts.",
+   "title": ""
+  },
+  "liveness_probe_wrong_path": {
+   "checks": [
+    "Pod is Ready",
+    "Liveness probe path is /healthz",
+    "Health endpoint responds"
+   ],
+   "ground_truth": "Verify liveness probe uses the working health endpoint",
+   "setup": [],
+   "solution": [
+    "Change the liveness probe path from /livez to /healthz and recreate/apply the pod."
+   ],
+   "solved": [],
+   "symptom": "The pod repeatedly restarts even though the application serves requests on its documented health endpoint.",
+   "title": ""
+  },
+  "missing_dependency": {
+   "checks": [
+    "Pod is Ready (no crash)",
+    "Container has not restarted",
+    "Logs do not contain ImportError or ModuleNotFoundError"
+   ],
+   "ground_truth": "Verify container starts without import errors",
+   "setup": [],
+   "solution": [],
+   "solved": [],
+   "symptom": "The pod on my Kubernetes cluster is not becoming Ready and repeatedly crashes. Logs show a Python startup error caused by a missing dependency.",
+   "title": ""
+  },
+  "missing_dependency_requirements": {
+   "checks": [
+    "Pod is Ready",
+    "Python dependency from requirements.txt is importable in the running container",
+    "Application responds"
+   ],
+   "ground_truth": "Verify requirements are installed and the app starts",
+   "setup": [],
+   "solution": [
+    "Install requirements.txt in the Dockerfile, rebuild the image, and recreate the pod."
+   ],
+   "solved": [],
+   "symptom": "The pod crashes on startup with ModuleNotFoundError for a Python package that is already listed in requirements.txt.",
+   "title": ""
+  },
+  "port_mismatch": {
+   "checks": [
+    "Pod is Ready",
+    "Service targetPort matches container port (8765)",
+    "Server responds to HTTP request on port 8765"
+   ],
+   "ground_truth": "Verify service targetPort matches container port and server is reachable",
+   "setup": [
+    "Server application set to handle http requests on port 8765",
+    "Dockerfile configured to install necessary packages for server application and expose the container port 8765",
+    "Kubernetes pod configuration file to deploy the container image to the kubernetes cluster",
+    "Kubernetes service configuration file to create a service to support the deployed pod"
+   ],
+   "solution": [
+    "Modify either the described targetPort or containerPort field to match the port that the app is listening on. Which one to modify depends on which one (or possibly both) is the wrong port",
+    "Delete the port_mismatch.yaml and app_service.yaml deployments using the commands `kubectl delete -f path_to_directory/port_mismatch.yaml` and `kubectl delete -f path_to_directory/app_service.yaml`",
+    "Reapply the deployments for port_mismatch.yaml and app_service.yaml using the commands `kubectl apply -f path_to_directory/port_mismatch.yaml` and `kubectl apply -f path_to_directory/app_service.yaml`"
+   ],
+   "solved": [
+    "Endpoints will be listed for the app-service.yaml deployment when the `kubectl describe service app-service` command is run"
+   ],
+   "symptom": "When I try to access my kubernetes application, I got this error :HTTP request sent, awaiting response... 502 Bad Gateway.",
+   "title": "App Port Service Port Mismatch"
+  },
+  "port_mismatch_named_target": {
+   "checks": [
+    "Pod is Ready",
+    "Service targetPort matches named container port",
+    "Service routes to the app"
+   ],
+   "ground_truth": "Verify service targetPort matches the container port name",
+   "setup": [],
+   "solution": [
+    "Set service targetPort to http-app, or otherwise match the named container port."
+   ],
+   "solved": [],
+   "symptom": "The pod is Ready and the Service has a selector, but requests through the Service fail because traffic is not reaching the named application port.",
+   "title": ""
+  },
+  "port_mismatch_wrong_interface": {
+   "checks": [
+    "Pod is Ready",
+    "Service targetPort is 8765",
+    "Service has endpoint addresses",
+    "Server responds via the pod IP, proving it is not bound only to localhost"
+   ],
+   "ground_truth": "Verify port alignment and server is reachable via pod IP",
+   "setup": [
+    "Server application listens on port 8765 and binds to localhost (127.0.0.1) instead of 0.0.0.0",
+    "Service forwards traffic to port 8000 (wrong target port)",
+    "Dockerfile correctly exposes port 8765",
+    "TWO simultaneous issues that need to be fixed"
+   ],
+   "solution": [
+    "Identify that the application binds to localhost by checking server.py code",
+    "Modify server.py to bind to 0.0.0.0 instead of localhost",
+    "Identify service targetPort mismatch by comparing app_service.yaml with actual container port",
+    "Modify app_service.yaml to set targetPort to 8765",
+    "Rebuild the container image: `docker build -t kube-port-mismatch-wrong-interface-app . --no-cache`",
+    "Delete existing deployments: `kubectl delete -f port_mismatch_wrong_interface.yaml` and `kubectl delete -f app_service.yaml`",
+    "Reapply both: `kubectl apply -f port_mismatch_wrong_interface.yaml` and `kubectl apply -f app_service.yaml`"
+   ],
+   "solved": [
+    "Pod is running and accessible at pod IP on port 8765",
+    "Service correctly routes traffic to the pod",
+    "`minikube service app-service --url` returns a working URL",
+    "`curl <service-url>` returns the default HTML page"
+   ],
+   "symptom": "The pod appears to be running, but accessing the service returns connection errors (e.g., timeout/connection refused). The service shows no working route to the app.",
+   "title": "Port Mismatch + Wrong Interface Binding (Combined)"
+  },
+  "readiness_failure": {
+   "checks": [
+    "Pod is Ready (readiness probe succeeds)",
+    "Container status shows ready=true"
+   ],
+   "ground_truth": "Verify readiness probe passes and pod is Ready",
+   "setup": [
+    "Kubernetes deployment configuration file to create a pod with a failing readiness probe"
+   ],
+   "solution": [
+    "Modify the readiness_failure.yaml file to set the spec->readinessProbe->httpGet->path field to be /healthz",
+    "Delete the readiness_failure deployment from the cluster using the `kubectl delete -f path_to_directory/readiness_failure.yaml` command",
+    "Reapply the readiness_failure deployment tp the cluster using the command `kubectl apply -f path_to_directory/readiness_failure.yaml`"
+   ],
+   "solved": [
+    "The Ready condition displayed when describing the pod will be listed with a True status"
+   ],
+   "symptom": "When I describe the pod on my cluster, it shows the Ready condition for the pod as False.",
+   "title": "Readiness Probe Failure"
+  },
+  "readiness_failure_slow_start": {
+   "checks": [
+    "Pod is Ready",
+    "Readiness timeout allows slow health response",
+    "Readiness endpoint responds"
+   ],
+   "ground_truth": "Verify readiness probe timing allows the endpoint to respond",
+   "setup": [],
+   "solution": [
+    "Increase readinessProbe.timeoutSeconds and recreate/apply the pod."
+   ],
+   "solved": [],
+   "symptom": "The pod stays at 0/1 Ready. The readiness endpoint eventually responds, but the probe times out before it can complete.",
+   "title": ""
+  },
+  "readiness_missing_dependency": {
+   "checks": [
+    "Pod is Ready (readiness probe passes)",
+    "Container status shows ready=true",
+    "Container restart count remains 0"
+   ],
+   "ground_truth": "Verify app starts without import errors and passes readiness",
+   "setup": [
+    "Application requires the 'requests' Python package but Dockerfile doesn't install it",
+    "Application crashes on startup with ImportError",
+    "Readiness probe is configured but fails because the application never starts successfully",
+    "TWO related issues: missing dependency causes app crash, which causes readiness failure"
+   ],
+   "solution": [
+    "Check pod logs to identify the ImportError for 'requests' module",
+    "Examine Dockerfile and identify missing pip install command",
+    "Modify Dockerfile to add: `RUN pip install requests`",
+    "Rebuild container image: `docker build -t kube-readiness-missing-dep-app . --no-cache`",
+    "Delete existing pod: `kubectl delete -f readiness_missing_dependency.yaml`",
+    "Reapply: `kubectl apply -f readiness_missing_dependency.yaml`",
+    "Wait for pod to start and become ready (1/1)"
+   ],
+   "solved": [
+    "Pod status shows 1/1 READY and Running",
+    "Readiness probe succeeds",
+    "Application successfully starts and responds to HTTP requests",
+    "`kubectl logs <pod-name>` shows \"Server running\" message without errors"
+   ],
+   "symptom": "The pod stays at 0/1 Ready and repeatedly restarts. Logs show a startup exception (ImportError/ModuleNotFoundError).",
+   "title": "Readiness Probe Failure + Missing Dependency (Combined)"
+  },
+  "readiness_missing_dependency_transitive": {
+   "checks": [
+    "Pod is Ready",
+    "Python dependency is importable in the running container",
+    "Readiness endpoint responds"
+   ],
+   "ground_truth": "Verify transitive dependency is installed and readiness passes",
+   "setup": [],
+   "solution": [
+    "Install the missing requests dependency in the Dockerfile, rebuild, and recreate the pod."
+   ],
+   "solved": [],
+   "symptom": "The pod stays at 0/1 Ready and restarts. Logs show a ModuleNotFoundError raised from a helper module imported by the server.",
+   "title": ""
+  },
+  "resource_limits_cpu_starvation": {
+   "checks": [
+    "Pod is Ready",
+    "CPU limit is raised from 5m",
+    "Health endpoint responds"
+   ],
+   "ground_truth": "Verify CPU limit is increased enough for readiness checks",
+   "setup": [],
+   "solution": [
+    "Raise the CPU limit/request to a reasonable value and recreate/apply the pod."
+   ],
+   "solved": [],
+   "symptom": "The pod remains unready. Events show readiness probe timeouts while the container is constrained by a very low CPU limit.",
+   "title": ""
+  },
+  "resource_limits_oom": {
+   "checks": [
+    "Pod is Running",
+    "Last termination reason is not OOMKilled",
+    "Application responds from inside the pod"
+   ],
+   "ground_truth": "Verify OOM is remediated and the application is serving",
+   "setup": [
+    "Application is a simple Python HTTP server",
+    "Pod has memory limit set to 50Mi (very restrictive)",
+    "Application tries to allocate more memory than the limit allows",
+    "Pod gets OOMKilled (Out of Memory) by Kubernetes"
+   ],
+   "solution": [
+    "Check pod status and observe CrashLoopBackOff",
+    "Run `kubectl describe pod <pod-name>` to see OOMKilled in the events",
+    "Identify that memory limit is too restrictive (50Mi)",
+    "Modify resource_limits_oom.yaml to increase memory limit to 128Mi or 256Mi",
+    "Delete existing pod: `kubectl delete -f resource_limits_oom.yaml`",
+    "Reapply: `kubectl apply -f resource_limits_oom.yaml`",
+    "Verify pod starts and stays running"
+   ],
+   "solved": [
+    "Pod status shows Running with 1/1 ready",
+    "No OOMKilled events in pod description",
+    "Pod does not restart",
+    "Application is accessible and responds to HTTP requests"
+   ],
+   "symptom": "The pod repeatedly restarts (CrashLoopBackOff). Pod events show termination with reason OOMKilled.",
+   "title": "Resource Limits - Out of Memory (OOMKilled)"
+  },
+  "selector_env_variable": {
+   "checks": [
+    "Pod is Ready",
+    "Service has endpoints (selector matches pod)",
+    "Container has APP_MESSAGE environment variable"
+   ],
+   "ground_truth": "Verify selector matches and APP_MESSAGE env var exists",
+   "setup": [
+    "Application requires an environment variable APP_MESSAGE that is not defined in the deployment",
+    "Service selector label doesn't match the pod's label",
+    "TWO independent issues: service can't find pod, AND pod crashes due to missing env var"
+   ],
+   "solution": [
+    "Check pod logs to identify missing environment variable (APP_MESSAGE)",
+    "Check service and pod labels to identify selector mismatch",
+    "Modify selector_env_variable.yaml to add environment variable: env:",
+    "name: APP_MESSAGE value: \"Hello from selector_env_variable test!\"",
+    "Modify app_service.yaml to fix selector to match pod label: selector: app: selector-env-app",
+    "Delete existing resources: `kubectl delete -f selector_env_variable.yaml` and `kubectl delete -f app_service.yaml`",
+    "Reapply both: `kubectl apply -f selector_env_variable.yaml` and `kubectl apply -f app_service.yaml`",
+    "Verify pod is running and service has endpoints"
+   ],
+   "solved": [
+    "Pod is Running with 1/1 ready",
+    "Pod logs show no KeyError",
+    "Service has endpoints listed",
+    "Application is accessible through the service",
+    "`kubectl describe service app-service` shows pod IP as endpoint"
+   ],
+   "symptom": "The pod crashes on startup with a KeyError, and the service shows no endpoints.",
+   "title": "Incorrect Service Selector + Missing Environment Variable (Combined)"
+  },
+  "selector_env_variable_label_and_secret": {
+   "checks": [
+    "Pod is Ready",
+    "Secret contains the message key",
+    "Service selector matches pod label",
+    "Service endpoints are populated",
+    "Service returns the secret-backed message"
+   ],
+   "ground_truth": "Verify Secret env wiring and service selector are both fixed",
+   "setup": [],
+   "solution": [
+    "Fix the Secret key and the Service selector; both resources must be reapplied."
+   ],
+   "solved": [],
+   "symptom": "The pod crashes with a Secret key error, and the Service has no working endpoints after the container issue is addressed.",
+   "title": ""
+  },
+  "wrong_interface": {
+   "checks": [
+    "Pod is Ready",
+    "Service has endpoint addresses (not empty)",
+    "Server responds via the pod IP, not just localhost"
+   ],
+   "ground_truth": "Verify server is reachable via pod IP and service has endpoints",
+   "setup": [
+    "Server application set to handle http requests on port 8765 and on the localhost interface",
+    "Dockerfile configured to install necessary packages for server application and expose the container port 8765",
+    "Kubernetes pod configuration file to deploy the container image to the kubernetes cluster"
+   ],
+   "solution": [
+    "In the application server file, replace the localhost interface configuration to allow the application to listen on all interfaces. This can be done by replacing 'localhost' with '0.0.0.0'",
+    "Rebuild the container image for the application and force rebuild to ensure that the image is rebuilt from the directory, and does not use cached layers as this may not apply the changes correctly to the image",
+    "Delete the current application deployment from the cluster using the command `kubectl delete -f path_to_directory/wrong_interface.yaml`",
+    "Reapply the application deployment to the cluster using the command `kubectl apply -f path_to_directory/wrong_interface.yaml`"
+   ],
+   "solved": [
+    "Any http GET requests made to the pod IP on the listening port will return a default html page"
+   ],
+   "symptom": "The pod on my Kubernetes cluster cannot be accessed by making a curl request. Any requests made to the application running in this pod result in a timeout.",
+   "title": "App Server Set To Listen On Wrong Interface"
+  },
+  "wrong_interface_bind_address": {
+   "checks": [
+    "Pod is Ready",
+    "Service has endpoint addresses",
+    "Server responds via the pod IP, not just localhost"
+   ],
+   "ground_truth": "Verify server bind address is corrected and the app is reachable through the pod IP",
+   "setup": [
+    "Server application handles HTTP requests on port 8765.",
+    "The application binds to 127.0.0.1, so it is not reachable through the pod IP or Service.",
+    "Kubernetes pod and service manifests deploy the container image and route traffic to port 8765."
+   ],
+   "solution": [
+    "In server.py, replace 127.0.0.1 with 0.0.0.0.",
+    "Rebuild the container image.",
+    "Reapply the pod manifest so the corrected image is used."
+   ],
+   "solved": [
+    "HTTP GET requests made to the pod IP on port 8765 return a 200 response."
+   ],
+   "symptom": "The pod is running, but HTTP requests to the application through the pod IP or Service time out.",
+   "title": "App Server Bound To Loopback Address"
+  },
+  "wrong_interface_container_args": {
+   "checks": [
+    "Pod is Ready",
+    "Container binds the HTTP server to all interfaces",
+    "Service has endpoint addresses",
+    "Server responds via the pod IP, not just localhost"
+   ],
+   "ground_truth": "Verify container host argument is corrected and the app is reachable through the pod IP",
+   "setup": [
+    "Server application handles HTTP requests on port 8765.",
+    "The application reads the host interface from the --host command-line argument.",
+    "The pod manifest passes --host 127.0.0.1, so the app is not reachable through the pod IP or Service."
+   ],
+   "solution": [
+    "In wrong_interface_container_args.yaml, replace the --host value 127.0.0.1 with 0.0.0.0.",
+    "Reapply the pod manifest so the corrected argument is used."
+   ],
+   "solved": [
+    "HTTP GET requests made to the pod IP on port 8765 return a 200 response."
+   ],
+   "symptom": "The pod is running and has a Service, but HTTP requests to the application through the pod IP or Service fail.",
+   "title": "App Server Host Configured Through Wrong Container Argument"
+  },
+  "wrong_interface_env_host": {
+   "checks": [
+    "Pod is Ready",
+    "APP_HOST is set to all interfaces",
+    "Service has endpoint addresses",
+    "Server responds via the pod IP, not just localhost"
+   ],
+   "ground_truth": "Verify APP_HOST is corrected and the app is reachable through the pod IP",
+   "setup": [
+    "Server application handles HTTP requests on port 8765.",
+    "The application reads APP_HOST from the pod environment.",
+    "The pod manifest sets APP_HOST to 127.0.0.1, so the app is not reachable through the pod IP or Service."
+   ],
+   "solution": [
+    "In wrong_interface_env_host.yaml, replace APP_HOST value 127.0.0.1 with 0.0.0.0.",
+    "Reapply the pod manifest so the corrected environment value is used."
+   ],
+   "solved": [
+    "HTTP GET requests made to the pod IP on port 8765 return a 200 response."
+   ],
+   "symptom": "The pod is running and has a Service, but HTTP requests to the application through the pod IP or Service fail.",
+   "title": "App Server Host Configured Through Wrong Environment Value"
+  },
+  "wrong_port": {
+   "checks": [
+    "Deployment rollout completed successfully",
+    "Live Deployment pod template containerPort matches server.py listen port (8765)",
+    "Selected Deployment pod responds to HTTP request on port 8765"
+   ],
+   "ground_truth": "Verify Deployment pod template containerPort matches server listen port and server is reachable",
+   "setup": [
+    "Server application handles HTTP requests on port 8765.",
+    "Dockerfile exposes port 8000.",
+    "Kubernetes Deployment manifest declares containerPort 8000.",
+    "This workload has no Kubernetes Service; the case verifies direct workload behavior from inside the selected pod."
+   ],
+   "solution": [
+    "Inspect server.py to find the actual listening port.",
+    "Update the Deployment manifest and Dockerfile to use port 8765.",
+    "Rebuild the image.",
+    "Reapply wrong_port.yaml."
+   ],
+   "solved": [
+    "The Deployment is available, the live pod template containerPort is 8765, and an in-pod HTTP request to localhost:8765 returns 200."
+   ],
+   "symptom": "This workload is deployed without a Kubernetes Service. I am debugging direct workload access at port 8765, and HTTP requests to the application running in the selected pod time out.",
+   "title": "Incorrect Port Declared For Deployment Workload"
+  },
+  "wrong_port_5000": {
+   "checks": [
+    "Pod is Ready (not just Running)",
+    "Container port matches server.py listen port (5000)",
+    "Server responds to HTTP request on port 5000"
+   ],
+   "ground_truth": "Verify containerPort matches server listen port and server is reachable",
+   "setup": [
+    "Server application handles HTTP requests on port 5000.",
+    "Dockerfile exposes port 80.",
+    "Kubernetes pod manifest declares containerPort 80.",
+    "This workload has no Kubernetes Service; the case verifies direct pod behavior from inside the pod."
+   ],
+   "solution": [
+    "Inspect server.py to find the actual listening port.",
+    "Update the pod manifest and Dockerfile to use port 5000.",
+    "Rebuild the image.",
+    "Delete and reapply wrong_port_5000.yaml."
+   ],
+   "solved": [
+    "The pod is Ready, containerPort is 5000, and an in-pod HTTP request to localhost:5000 returns 200."
+   ],
+   "symptom": "This pod is deployed without a Kubernetes Service. I am debugging direct pod access at port 5000, and HTTP requests to the application running in this pod time out.",
+   "title": "Incorrect Port Exposed In Container"
+  },
+  "wrong_port_7001": {
+   "checks": [
+    "Pod is Ready (not just Running)",
+    "Container port matches server.py listen port (7001)",
+    "Server responds to HTTP request on port 7001"
+   ],
+   "ground_truth": "Verify containerPort matches server listen port and server is reachable",
+   "setup": [
+    "Server application handles HTTP requests on port 7001.",
+    "Dockerfile exposes port 7000.",
+    "Kubernetes pod manifest declares containerPort 7000.",
+    "This workload has no Kubernetes Service; the case verifies direct pod behavior from inside the pod."
+   ],
+   "solution": [
+    "Inspect server.py to find the actual listening port.",
+    "Update the pod manifest and Dockerfile to use port 7001.",
+    "Rebuild the image.",
+    "Delete and reapply wrong_port_7001.yaml."
+   ],
+   "solved": [
+    "The pod is Ready, containerPort is 7001, and an in-pod HTTP request to localhost:7001 returns 200."
+   ],
+   "symptom": "This pod is deployed without a Kubernetes Service. I am debugging direct pod access at port 7001, and HTTP requests to the application running in this pod time out.",
+   "title": "Incorrect Port Exposed In Container"
+  },
+  "wrong_port_9090": {
+   "checks": [
+    "Pod is Ready (not just Running)",
+    "Container port matches server.py listen port (9090)",
+    "Server responds to HTTP request on port 9090"
+   ],
+   "ground_truth": "Verify containerPort matches server listen port and server is reachable",
+   "setup": [
+    "Server application handles HTTP requests on port 9090.",
+    "Dockerfile exposes port 8080.",
+    "Kubernetes pod manifest declares containerPort 8080.",
+    "This workload has no Kubernetes Service; the case verifies direct pod behavior from inside the pod."
+   ],
+   "solution": [
+    "Inspect server.py to find the actual listening port.",
+    "Update the pod manifest and Dockerfile to use port 9090.",
+    "Rebuild the image.",
+    "Delete and reapply wrong_port_9090.yaml."
+   ],
+   "solved": [
+    "The pod is Ready, containerPort is 9090, and an in-pod HTTP request to localhost:9090 returns 200."
+   ],
+   "symptom": "This pod is deployed without a Kubernetes Service. I am debugging direct pod access at port 9090, and HTTP requests to the application running in this pod time out.",
+   "title": "Incorrect Port Exposed In Container"
+  }
+ },
+ "source": "debug_assistant_latest/troubleshooting/*/{config_step.json,readme.txt}"
+}
