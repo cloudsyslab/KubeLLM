@@ -1,6 +1,7 @@
 import clsx from "clsx";
 import {
   AppWindow,
+  ArrowLeft,
   ArrowRight,
   Bot,
   Box,
@@ -26,14 +27,18 @@ import { useMemo, type ReactNode } from "react";
 import { Tag, Tip } from "@/components/ui";
 import { clock } from "@/demo/ReplayBar";
 import { useReplay } from "@/demo/replay";
+import { stamp, useReadiness } from "@/options/environment/readiness";
 import {
   changesFor,
   downstream,
+  downstreamAll,
   EDGE_KIND,
   EFFECT,
   graphAt,
   HEALTH,
   upstream,
+  upstreamAll,
+  withPreflight,
   type Effect,
   type Health,
   type Link,
@@ -42,11 +47,20 @@ import {
   type WhatIf,
 } from "@/demo/topologyGraph";
 
-/** The lab graph at the shared replay moment, recomputed once per replay second. */
+/**
+ * The lab graph at the shared replay moment, recomputed once per replay
+ * second. A blocked latest preflight (the Environment demo state) overrides
+ * the lane's pieces it found down, so every surface tells the same story.
+ */
 export function useGraph() {
   const { campaign, t } = useReplay();
+  const { latest } = useReadiness();
   const second = Math.floor(t);
-  const graph = useMemo(() => (campaign ? graphAt(campaign, second) : undefined), [campaign, second]);
+  const blocked = latest?.status === "BLOCKED" ? latest : undefined;
+  const graph = useMemo(
+    () => (campaign ? withPreflight(graphAt(campaign, second), blocked && { checks: blocked.checks, at: stamp(blocked.finishedAt) }) : undefined),
+    [campaign, second, blocked],
+  );
   return { graph, campaign, t: second };
 }
 
@@ -131,7 +145,7 @@ export function HealthBadge({ health, short, className }: { health: Health; shor
   );
 }
 
-export function nodeIcon(node: Pick<TopoNode, "id" | "kind" | "tags">): LucideIcon {
+function nodeIcon(node: Pick<TopoNode, "id" | "kind" | "tags">): LucideIcon {
   if (node.tags.includes("fixture")) return node.kind === "service" ? Route : node.kind === "endpoints" ? Waypoints : FlaskConical;
   const byId: Record<string, LucideIcon> = { rag: Layers, ollama: Bot, operator: AppWindow, worker: Terminal, openai: Cloud, pgvector: Database };
   if (byId[node.id]) return byId[node.id];
@@ -202,7 +216,7 @@ export function FilterBar({
   const count = (id: FilterId) => graph.nodes.filter((n) => matchesFilter(n, id, "")).length;
   return (
     <div className={clsx("flex flex-wrap items-center gap-2", className)}>
-      <label className="flex h-8 min-w-0 flex-1 items-center gap-2 rounded-md border border-line bg-surface px-2.5 text-[12.5px] text-fg-3 focus-within:outline-2 focus-within:outline-accent sm:max-w-64">
+      <label className="flex h-8 min-w-44 flex-1 items-center gap-2 rounded-md border border-line bg-surface px-2.5 text-[12.5px] text-fg-3 focus-within:outline-2 focus-within:outline-accent sm:max-w-64">
         <Search className="size-3.5 shrink-0" strokeWidth={1.75} />
         <input value={query} onChange={(e) => onQuery(e.target.value)} placeholder="Search components" aria-label="Search components" className="w-full min-w-0 bg-transparent text-fg outline-none placeholder:text-fg-3" />
         {query && (
@@ -238,14 +252,14 @@ export function FilterBar({
 }
 
 /** "Knowledge · KubeLLM worker → RAG API → pgvector" for the current phase. */
-export function TrafficLine({ graph, className, compact }: { graph: TopologyGraph; className?: string; compact?: boolean }) {
+export function TrafficLine({ graph, className }: { graph: TopologyGraph; className?: string }) {
   const paths = graph.traffic.paths.filter((p) => !(p[0] === "operator" && p.length === 2));
   return (
     <div className={clsx("flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1 text-[12.5px]", className)}>
       <span className="inline-flex items-center gap-1.5 text-fg-2">
         {graph.campaignStatus === "running" && graph.phase ? <LiveDot /> : <span className="size-1.5 rounded-full border border-fg-3" aria-hidden />}
         <span className="font-medium text-fg">{graph.traffic.label}</span>
-        {graph.attempt && graph.phase && !compact && <span className="num text-fg-3">· attempt {graph.attempt.index + 1}</span>}
+        {graph.attempt && graph.phase && <span className="num text-fg-3">· attempt {graph.attempt.index + 1}</span>}
       </span>
       {paths.map((path) => (
         <span key={path.join(">")} className="inline-flex min-w-0 items-center gap-1 text-fg-3">
@@ -295,36 +309,88 @@ export function EffectChip({ effect }: { effect: Effect }) {
   return <span className={clsx("inline-flex h-5 shrink-0 items-center rounded-[4px] border px-1.5 text-[11px] font-medium whitespace-nowrap", EFFECT_STYLE[effect])}>{EFFECT[effect].word}</span>;
 }
 
-function LinkRow({ graph, link, direction, onSelect }: { graph: TopologyGraph; link: Link; direction: "up" | "down"; onSelect: (id: string) => void }) {
+function LinkRow({ graph, link, direction, onSelect, effect }: { graph: TopologyGraph; link: Link; direction: "up" | "down"; onSelect: (id: string) => void; effect?: Effect }) {
   const node = graph.byId.get(link.id);
   if (!node) return null;
+  const health = graph.rollups.get(node.id)?.health ?? node.health;
   return (
     <li>
       <button
         type="button"
         onClick={() => onSelect(node.id)}
-        className="grid w-full cursor-pointer grid-cols-[10px_minmax(0,1fr)_auto] items-center gap-2 rounded-md px-2 py-1.5 text-left text-[12.5px] hover:bg-surface-2"
+        className="grid w-full cursor-pointer grid-cols-[10px_minmax(0,1fr)_auto] items-center gap-x-2.5 gap-y-0.5 rounded-md px-2 py-1.5 text-left text-[13px] hover:bg-surface-2"
       >
-        <HealthMark health={node.health} />
+        <HealthMark health={health} />
         <span className="flex min-w-0 items-center gap-1.5">
           <span className="truncate text-fg">{node.name}</span>
           {link.edge.active && <LiveDot />}
         </span>
-        <Tip content={`${EDGE_KIND[link.edge.kind].word}: ${direction === "up" ? "this node → " + node.name : node.name + " → this node"}. ${link.edge.impact}`}>
-          <span className="font-mono text-[11px] text-fg-3">{link.edge.label}</span>
-        </Tip>
+        <span className="flex items-center gap-2">
+          {effect && <EffectChip effect={effect} />}
+          <Tip content={`${EDGE_KIND[link.edge.kind].word}: ${direction === "up" ? "this node → " + node.name : node.name + " → this node"}. ${link.edge.impact}`}>
+            <span className="font-mono text-[11.5px] text-fg-3">{link.edge.label}</span>
+          </Tip>
+        </span>
+        <span className={clsx("col-start-2 col-end-4 truncate text-[12px]", HEALTH_TEXT[health])}>
+          {HEALTH_SHORT[health]} <span className="text-fg-3">· {node.status}</span>
+        </span>
       </button>
     </li>
   );
 }
 
-function Section({ title, count, children, aside }: { title: string; count?: number; children: ReactNode; aside?: ReactNode }) {
+/** Components two or more hops away, grouped by distance: the rest of the chain at a glance. */
+function FartherHops({ graph, hops, onSelect, impact }: { graph: TopologyGraph; hops: Map<string, number>; onSelect: (id: string) => void; impact?: WhatIf }) {
+  const groups = [2, 3]
+    .map((depth) => ({
+      depth,
+      ids: [...hops]
+        .filter(([, d]) => (depth === 3 ? d >= 3 : d === depth))
+        .map(([id]) => id)
+        .filter((id) => graph.byId.has(id))
+        .sort((a, b) => HEALTH[graph.byId.get(a)!.health].rank - HEALTH[graph.byId.get(b)!.health].rank || graph.byId.get(a)!.name.localeCompare(graph.byId.get(b)!.name)),
+    }))
+    .filter((g) => g.ids.length);
+  if (!groups.length) return null;
   return (
-    <section className="grid gap-1.5 border-t border-line pt-3">
+    <div className="grid gap-2 pt-1">
+      {groups.map((group) => (
+        <div key={group.depth} className="grid grid-cols-[52px_minmax(0,1fr)] items-start gap-2">
+          <span className="label pt-1 !text-[10px]">{group.depth === 3 ? "3+ hops" : "2 hops"}</span>
+          <div className="flex min-w-0 flex-wrap gap-1">
+            {group.ids.map((id) => {
+              const node = graph.byId.get(id)!;
+              const effect = impact?.byId.get(id)?.effect;
+              return (
+                <button
+                  key={id}
+                  type="button"
+                  onClick={() => onSelect(id)}
+                  title={effect ? `${node.name}: ${EFFECT[effect].word}` : `${node.name}: ${HEALTH[node.health].word}`}
+                  className={clsx(
+                    "inline-flex h-6 max-w-full min-w-0 cursor-pointer items-center gap-1.5 rounded-[4px] border px-1.5 text-[12px] transition-colors hover:text-fg",
+                    effect === "down" ? "border-warn/50 bg-warn-soft text-fg" : effect ? "border-warn/30 text-fg-2" : "border-line text-fg-2 hover:border-line-strong",
+                  )}
+                >
+                  <HealthMark health={graph.rollups.get(id)?.health ?? node.health} size={9} />
+                  <span className="truncate">{node.name}</span>
+                </button>
+              );
+            })}
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function Section({ title, count, children, aside }: { title: string; count?: ReactNode; children: ReactNode; aside?: ReactNode }) {
+  return (
+    <section className="grid gap-1.5 border-t border-line pt-3.5">
       <div className="flex items-center justify-between gap-2">
         <h4 className="label !text-[10px]">
           {title}
-          {count !== undefined && <span className="ml-1.5 text-fg-3">{count}</span>}
+          {count !== undefined && <span className="ml-1.5 text-fg-3 normal-case">{count}</span>}
         </h4>
         {aside}
       </div>
@@ -333,7 +399,9 @@ function Section({ title, count, children, aside }: { title: string; count?: num
   );
 }
 
-export function WhatIfPanel({ graph, impact, onSelect }: { graph: TopologyGraph; impact: WhatIf; onSelect: (id: string) => void }) {
+const hopCount = (direct: number, all: number) => (all > direct ? `${direct} direct · ${all} in all` : direct);
+
+function WhatIfPanel({ graph, impact, onSelect }: { graph: TopologyGraph; impact: WhatIf; onSelect: (id: string) => void }) {
   const counts = { down: 0, impaired: 0, outcome: 0 };
   for (const i of impact.impacts) counts[i.effect] += 1;
   return (
@@ -399,7 +467,7 @@ export function WhatIfPanel({ graph, impact, onSelect }: { graph: TopologyGraph;
   );
 }
 
-export function WhatIfToggle({ on, onChange, className }: { on: boolean; onChange: (on: boolean) => void; className?: string }) {
+function WhatIfToggle({ on, onChange, className }: { on: boolean; onChange: (on: boolean) => void; className?: string }) {
   return (
     <button
       type="button"
@@ -442,9 +510,10 @@ export function ChangeList({ id, limit = 5 }: { id: string; limit?: number }) {
 }
 
 /**
- * The node inspector every option shares: health and why, what it contains,
- * what it needs, what needs it, the simulated failure, facts, and how it
- * changed during the replay.
+ * The explanation panel: what the component is, its health and why, what it
+ * contains, the simulated failure ("Why each fails"), the chain it sits in
+ * (what it needs and what needs it, by hop distance, with relation words),
+ * facts, and how it changed during the replay.
  */
 export function Inspector({
   graph,
@@ -454,9 +523,8 @@ export function Inspector({
   onWhatIf,
   impact,
   header,
-  footer,
+  back,
   className,
-  hideWhatIf,
 }: {
   graph: TopologyGraph;
   id: string;
@@ -465,27 +533,41 @@ export function Inspector({
   onWhatIf: (on: boolean) => void;
   impact?: WhatIf;
   header?: ReactNode;
-  footer?: ReactNode;
+  /** The previously explained component, for walking back along a chain. */
+  back?: { name: string; onBack: () => void };
   className?: string;
-  /** The option shows the simulated failure elsewhere. */
-  hideWhatIf?: boolean;
 }) {
   const node = graph.byId.get(id);
+  const ups = useMemo(() => (node ? upstream(graph, id) : []), [graph, id, node]);
+  const downs = useMemo(() => (node ? downstream(graph, id) : []), [graph, id, node]);
+  const upAll = useMemo(() => (node ? upstreamAll(graph, id) : new Map<string, number>()), [graph, id, node]);
+  const downAll = useMemo(() => (node ? downstreamAll(graph, id) : new Map<string, number>()), [graph, id, node]);
+  const backLink = back && (
+    <button type="button" onClick={back.onBack} className="inline-flex max-w-full min-w-0 cursor-pointer items-center gap-1 justify-self-start text-[12px] text-fg-3 hover:text-fg">
+      <ArrowLeft className="size-3.5 shrink-0" strokeWidth={2} />
+      <span className="truncate">Back to {back.name}</span>
+    </button>
+  );
   if (!node) {
     return (
-      <div className={clsx("grid content-start gap-2 p-4 text-[12.5px] text-fg-3", className)}>
-        <p>That component isn't present at this moment of the replay.</p>
+      <div className={clsx("grid content-start gap-3 p-4 sm:p-5", className)}>
+        {header}
+        {backLink}
+        <p className="text-[12.5px] text-fg-3">That component isn't present at this moment of the replay.</p>
       </div>
     );
   }
   const rollup = graph.rollups.get(id);
-  const ups = upstream(graph, id);
-  const downs = downstream(graph, id);
   const parent = node.parent ? graph.byId.get(node.parent) : undefined;
   return (
-    <div className={clsx("grid content-start gap-3 p-4", className)}>
-      {header}
-      <div className="grid gap-1">
+    <div className={clsx("grid content-start gap-3.5 p-4 sm:p-5", className)}>
+      {(header || backLink) && (
+        <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1.5">
+          {header}
+          {backLink}
+        </div>
+      )}
+      <div className="grid gap-1.5">
         <div className="flex flex-wrap items-center gap-2">
           <span className="label !text-[10px]">{node.kindLabel}</span>
           {node.tags.includes("selected-lane") && <Tag tone="accent">Selected lane</Tag>}
@@ -495,12 +577,12 @@ export function Inspector({
           {node.scope === "other" && !node.tags.includes("read-only") && <Tag>Other account</Tag>}
         </div>
         <div className="flex items-start gap-2">
-          <NodeIcon node={node} className="mt-[3px] text-fg-3" />
-          <h3 className="min-w-0 font-mono text-[14.5px] leading-snug font-medium break-all">{node.name}</h3>
+          <NodeIcon node={node} className="mt-[4px] size-4 text-fg-3" />
+          <h3 className="min-w-0 font-mono text-[16px] leading-snug font-medium break-all">{node.name}</h3>
         </div>
         {(node.ident || parent) && (
-          <div className="flex flex-wrap gap-x-2 text-[12px] text-fg-3">
-            {node.ident && <span className="font-mono">{node.ident}</span>}
+          <div className="flex flex-wrap gap-x-2 text-[12.5px] text-fg-3">
+            {node.ident && <span className="font-mono break-all">{node.ident}</span>}
             {parent && (
               <button type="button" onClick={() => onSelect(parent.id)} className="cursor-pointer hover:text-fg">
                 in {parent.name}
@@ -510,21 +592,21 @@ export function Inspector({
         )}
       </div>
 
-      <div className="grid gap-1.5">
+      <div className="grid gap-2">
         <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
-          <HealthBadge health={node.health} className="text-[12.5px]" />
-          <span className="text-[12.5px] text-fg-3">·</span>
-          <span className="flex min-w-0 items-center gap-1.5 text-[12.5px] text-fg-2">
+          <HealthBadge health={node.health} className="text-[13px]" />
+          <span className="text-[13px] text-fg-3">·</span>
+          <span className="flex min-w-0 items-center gap-1.5 text-[13px] text-fg-2">
             {node.active && <LiveDot />}
             {node.status}
           </span>
         </div>
-        <p className="text-[12.5px] leading-relaxed text-fg-2">{node.reason}</p>
+        <p className="text-[13px] leading-relaxed text-fg-2">{node.reason}</p>
         {rollup && rollup.total > 0 && (
-          <div className="grid gap-1 rounded-md bg-surface-2 px-2.5 py-2 text-[12px]">
+          <div className="grid gap-1 rounded-md bg-surface-2 px-3 py-2.5 text-[12.5px]">
             <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
               <span className="text-fg-3">Contents</span>
-              <HealthBadge health={rollup.attention.length ? (rollup.counts.failing ? "failing" : "degraded") : "healthy"} />
+              <HealthBadge health={rollup.attention.length ? (rollup.counts.failing ? "failing" : "degraded") : rollup.counts.healthy ? "healthy" : ((["stopped", "unknown"] as Health[]).find((h) => rollup.counts[h]) ?? "healthy")} />
               {(Object.keys(rollup.counts) as Health[])
                 .filter((h) => rollup.counts[h])
                 .map((h) => (
@@ -540,37 +622,48 @@ export function Inspector({
         )}
       </div>
 
-      {!hideWhatIf && <WhatIfToggle on={whatIfOn} onChange={onWhatIf} className="w-full" />}
-      {!hideWhatIf && whatIfOn && impact && <WhatIfPanel graph={graph} impact={impact} onSelect={onSelect} />}
+      <WhatIfToggle on={whatIfOn} onChange={onWhatIf} className="w-full" />
+      {whatIfOn && impact && (
+        <section className="grid gap-1.5">
+          <h4 className="label !text-[10px]">Why each fails</h4>
+          <WhatIfPanel graph={graph} impact={impact} onSelect={onSelect} />
+        </section>
+      )}
 
-      <Section title="Depends on" count={ups.length}>
+      <Section title="Depends on" count={hopCount(ups.length, upAll.size)}>
         {ups.length ? (
-          <ul className="-mx-2 grid">
-            {ups.map((link) => (
-              <LinkRow key={link.edge.id} graph={graph} link={link} direction="up" onSelect={onSelect} />
-            ))}
-          </ul>
+          <>
+            <ul className="-mx-2 grid">
+              {ups.map((link) => (
+                <LinkRow key={link.edge.id} graph={graph} link={link} direction="up" onSelect={onSelect} />
+              ))}
+            </ul>
+            <FartherHops graph={graph} hops={upAll} onSelect={onSelect} />
+          </>
         ) : (
-          <p className="text-[12px] text-fg-3">Nothing: it's a foundation.</p>
+          <p className="text-[12.5px] text-fg-3">Nothing: it's a foundation.</p>
         )}
       </Section>
-      <Section title="Needed by" count={downs.length}>
+      <Section title="Needed by" count={hopCount(downs.length, downAll.size)}>
         {downs.length ? (
-          <ul className="-mx-2 grid">
-            {downs.map((link) => (
-              <LinkRow key={link.edge.id} graph={graph} link={link} direction="down" onSelect={onSelect} />
-            ))}
-          </ul>
+          <>
+            <ul className="-mx-2 grid">
+              {downs.map((link) => (
+                <LinkRow key={link.edge.id} graph={graph} link={link} direction="down" onSelect={onSelect} effect={impact?.byId.get(link.id)?.effect} />
+              ))}
+            </ul>
+            <FartherHops graph={graph} hops={downAll} onSelect={onSelect} impact={impact} />
+          </>
         ) : (
-          <p className="text-[12px] text-fg-3">Nothing depends on it.</p>
+          <p className="text-[12.5px] text-fg-3">Nothing depends on it.</p>
         )}
       </Section>
 
       {node.facts.length > 0 && (
         <Section title="Facts">
-          <dl className="grid gap-1 text-[12px]">
+          <dl className="grid gap-1.5 text-[12.5px]">
             {node.facts.map((fact) => (
-              <div key={fact.label} className="grid grid-cols-[96px_minmax(0,1fr)] gap-2">
+              <div key={fact.label} className="grid grid-cols-[104px_minmax(0,1fr)] gap-3">
                 <dt className="text-fg-3">{fact.label}</dt>
                 <dd className="break-words text-fg">{fact.value}</dd>
               </div>
@@ -581,7 +674,6 @@ export function Inspector({
       <Section title="Recent changes">
         <ChangeList id={id} />
       </Section>
-      {footer}
     </div>
   );
 }

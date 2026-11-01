@@ -1,65 +1,52 @@
 import clsx from "clsx";
 import { ChevronRight } from "lucide-react";
-import { Fragment, useCallback, useMemo, useRef, useState, type KeyboardEvent } from "react";
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type KeyboardEvent, type ReactNode } from "react";
 import { Tag } from "@/components/ui";
-import { downstreamAll, upstreamAll, whatIf, type TopologyGraph, type WhatIf } from "@/demo/topologyGraph";
-import { StageFallback } from "../OptionsRoom";
-import { DemoTag, EffectChip, FilterBar, HEALTH_SHORT, HEALTH_TEXT, HealthMark, Inspector, LaneHealth, LiveDot, matchesFilter, NodeIcon, TrafficLine, useGraph, type FilterId } from "./shared";
-
-// A containment tree in two columns (the lab host, then the selected lane's
-// cluster) with a persistent inspector. Selecting any row marks what it needs
-// and what needs it across both columns; the what-if toggle replaces those
-// marks with the simulated blast radius.
+import { downstreamAll, upstreamAll, type TopologyGraph, type WhatIf } from "@/demo/topologyGraph";
+import { EffectChip, FilterBar, HEALTH_SHORT, HEALTH_TEXT, HealthMark, LiveDot, matchesFilter, NodeIcon, type FilterId } from "./shared";
 
 interface Row {
   key: string;
   id: string;
   depth: number;
   collapsible?: boolean;
-  /** A pointer to a node shown in full elsewhere. */
-  alias?: string;
+  /** Inside the selected lane's cluster, read through the lane's own kubeconfig. */
+  lane?: boolean;
 }
 
 const SYSTEM = ["sys:kube-apiserver", "sys:etcd", "sys:kube-controller-manager", "sys:kube-scheduler", "sys:kube-proxy", "sys:coredns", "sys:storage-provisioner"];
 
-function columns(graph: TopologyGraph, collapsed: Set<string>): { id: string; title: string; caption: string; rows: Row[] }[] {
-  const row = (id: string, depth: number, extra: Partial<Row> = {}): Row[] => (graph.byId.has(id) ? [{ key: extra.alias ? `${id}@alias` : id, id, depth, ...extra }] : []);
-  const kids = (id: string, depth: number, ids: string[]) => (collapsed.has(id) ? [] : ids.flatMap((child) => row(child, depth)));
+/** One containment tree: the lab server, its processes and containers, and the selected lane's cluster nested inside its minikube profile. */
+function tree(graph: TopologyGraph, collapsed: Set<string>): Row[] {
+  const row = (id: string, depth: number, extra: Partial<Row> = {}): Row[] => (graph.byId.has(id) ? [{ key: id, id, depth, ...extra }] : []);
+  const kids = (id: string, depth: number, ids: string[]) => (collapsed.has(id) ? [] : ids.flatMap((child) => row(child, depth, { lane: true })));
   const fixture = ["fixture:pod", "fixture:svc", "fixture:ep"];
   return [
-    {
-      id: "host",
-      title: "Lab host",
-      caption: "Processes, devices, and containers on the lab server",
-      rows: [
-        ...row("host", 0),
-        ...["operator", "worker", "rag", "ollama", "gpu-0", "gpu-1"].flatMap((id) => row(id, 1)),
-        ...row("docker", 1, { collapsible: true }),
-        ...(collapsed.has("docker")
-          ? []
-          : [
-              ...row("pgvector", 2),
-              ...row("profile:minh-lane", 2, { alias: "Expanded in the lane column" }),
-              ...["profile:minikube", "profile:minh", "profile:lamap", "profile:xyz"].flatMap((id) => row(id, 2)),
-            ]),
-        ...row("openai", 0),
-      ],
-    },
-    {
-      id: "lane",
-      title: "Lane minh-lane",
-      caption: "Read through the lane's own kubeconfig",
-      rows: [
-        ...row("profile:minh-lane", 0),
-        ...row("node:minh-lane", 1),
-        ...row("ns:default", 1, { collapsible: true }),
-        ...kids("ns:default", 2, [...fixture, "pod:curl-pod", "pod:tmpcurl"]),
-        ...row("ns:kube-system", 1, { collapsible: true }),
-        ...kids("ns:kube-system", 2, SYSTEM),
-      ],
-    },
+    ...row("host", 0),
+    ...["operator", "worker", "rag", "ollama", "gpu-0", "gpu-1"].flatMap((id) => row(id, 1)),
+    ...row("docker", 1, { collapsible: true }),
+    ...(collapsed.has("docker")
+      ? []
+      : [
+          ...row("pgvector", 2),
+          ...row("profile:minh-lane", 2, { collapsible: true }),
+          ...(collapsed.has("profile:minh-lane")
+            ? []
+            : [
+                ...row("node:minh-lane", 3, { lane: true }),
+                ...row("ns:default", 3, { collapsible: true, lane: true }),
+                ...kids("ns:default", 4, [...fixture, "pod:curl-pod", "pod:tmpcurl"]),
+                ...row("ns:kube-system", 3, { collapsible: true, lane: true }),
+                ...kids("ns:kube-system", 4, SYSTEM),
+              ]),
+          ...["profile:minikube", "profile:minh", "profile:lamap", "profile:xyz"].flatMap((id) => row(id, 2)),
+        ]),
+    ...row("openai", 0),
   ];
 }
+
+// Indentation per depth, narrower on phones so deep rows keep their names.
+const indent = (depth: number) => ({ "--depth": depth }) as CSSProperties;
 
 type Relation = { kind: "up" | "down"; depth: number } | undefined;
 
@@ -106,12 +93,13 @@ function MapRow({
 }) {
   const node = graph.byId.get(row.id)!;
   const rollup = graph.rollups.get(row.id);
-  const shownHealth = rollup && !row.alias ? rollup.health : node.health;
+  const shownHealth = rollup ? rollup.health : node.health;
   const hit = impact?.byId.get(row.id);
   const root = impact?.root === row.id;
   const explained = rollup?.explained.length ?? 0;
   return (
     <div
+      style={indent(row.depth)}
       className={clsx(
         "relative flex items-stretch transition-opacity duration-200",
         selected && "bg-accent-soft",
@@ -121,7 +109,8 @@ function MapRow({
       )}
     >
       {selected && <span className="absolute inset-y-0 left-0 w-0.5 bg-accent" aria-hidden />}
-      <span style={{ width: 12 + row.depth * 18 }} className="shrink-0" aria-hidden />
+      {row.lane && <span className="absolute inset-y-0 left-[42px] w-px bg-accent-line sm:left-[54px]" aria-hidden />}
+      <span className="w-[calc(12px_+_var(--depth)_*_12px)] shrink-0 sm:w-[calc(12px_+_var(--depth)_*_18px)]" aria-hidden />
       {row.collapsible ? (
         <button type="button" tabIndex={-1} onClick={onToggle} aria-label={`${collapsed ? "Expand" : "Collapse"} ${node.name}`} aria-expanded={!collapsed} className="-ml-1 grid w-5 shrink-0 cursor-pointer place-items-center text-fg-3 hover:text-fg">
           <ChevronRight className={clsx("size-3.5 transition-transform", !collapsed && "rotate-90")} strokeWidth={2} />
@@ -141,9 +130,9 @@ function MapRow({
       >
         <span className="flex min-w-0 items-center gap-1.5">
           <NodeIcon node={node} className={selected ? "text-accent" : "text-fg-3"} />
-          <span className={clsx("truncate text-[13px]", row.depth === 0 ? "font-medium" : "", node.kind === "pod" || node.kind === "service" || node.kind === "endpoints" ? "font-mono text-[12.5px]" : "", row.alias ? "text-fg-2" : "text-fg")}>{node.name}</span>
+          <span className={clsx("truncate text-[13px] text-fg", row.depth === 0 ? "font-medium" : "", node.kind === "pod" || node.kind === "service" || node.kind === "endpoints" ? "font-mono text-[12.5px]" : "")}>{node.name}</span>
           {node.active && <LiveDot />}
-          {node.tags.includes("selected-lane") && !row.alias && <Tag tone="accent">Selected</Tag>}
+          {node.tags.includes("selected-lane") && <Tag tone="accent">Selected lane</Tag>}
           {node.tags.includes("default-context") && <Tag>Default context</Tag>}
         </span>
         <span className={clsx("inline-flex items-center gap-1.5 justify-self-end text-[12px] whitespace-nowrap", HEALTH_TEXT[shownHealth])}>
@@ -151,9 +140,9 @@ function MapRow({
           {HEALTH_SHORT[shownHealth]}
         </span>
         <span className="flex min-w-0 items-center gap-1.5 pl-5 text-[12px] text-fg-3">
-          <span className="truncate">{row.alias ?? node.status}</span>
-          {!row.alias && rollup && explained > 0 && <span className="shrink-0">· {explained} explained</span>}
-          {!row.alias && node.ident && node.kind !== "pod" && <span className="hidden truncate font-mono text-[11.5px] sm:inline">· {node.ident}</span>}
+          <span className="truncate">{node.status}</span>
+          {rollup && explained > 0 && <span className="shrink-0">· {explained} explained</span>}
+          {node.ident && node.kind !== "pod" && <span className="hidden truncate font-mono text-[11.5px] sm:inline">· {node.ident}</span>}
         </span>
         <span className="flex justify-end">{root ? <Tag tone="warn">Simulated failure</Tag> : hit ? <EffectChip effect={hit.effect} /> : <RelationChip relation={relation} />}</span>
       </button>
@@ -161,24 +150,65 @@ function MapRow({
   );
 }
 
-export default function StructuredMap() {
-  const { graph } = useGraph();
-  const [selected, setSelected] = useState("profile:minh-lane");
-  const [whatIfOn, setWhatIfOn] = useState(false);
+/**
+ * The containment tree: the lab server, then the selected lane's cluster inside its profile.
+ * Selecting a row marks what it needs and what needs it across the tree;
+ * with the simulated failure on, those marks become what goes down. The
+ * explorer owns the selection and the explanation panel, which sits beside
+ * the map on wide screens and opens under the selected row on narrow ones.
+ */
+export function MapView({
+  graph,
+  selected,
+  onSelect,
+  impact,
+  onToggleWhatIf,
+  onWhatIfOff,
+  panel,
+}: {
+  graph: TopologyGraph;
+  selected: string;
+  onSelect: (id: string) => void;
+  impact?: WhatIf;
+  onToggleWhatIf: () => void;
+  onWhatIfOff: () => void;
+  panel: ReactNode;
+}) {
   const [filter, setFilter] = useState<FilterId>("all");
   const [query, setQuery] = useState("");
   const [collapsed, setCollapsed] = useState<Set<string>>(() => new Set(["ns:kube-system"]));
-  const [focusKey, setFocusKey] = useState<string>("profile:minh-lane");
   const root = useRef<HTMLDivElement>(null);
 
-  const impact = useMemo(() => (graph && whatIfOn ? whatIf(graph, selected) : undefined), [graph, whatIfOn, selected]);
   const relations = useMemo(() => {
-    if (!graph) return new Map<string, Relation>();
     const map = new Map<string, Relation>();
     for (const [id, depth] of downstreamAll(graph, selected, 3)) map.set(id, { kind: "down", depth });
     for (const [id, depth] of upstreamAll(graph, selected, 3)) map.set(id, { kind: "up", depth });
     return map;
   }, [graph, selected]);
+
+  // A selection made elsewhere (the panel, the timeline) opens the branches
+  // that hide it and brings its row into view; the first render never scrolls.
+  const mounted = useRef(false);
+  useEffect(() => {
+    const hidden = [...collapsed].filter((id) => {
+      let parent = graph.byId.get(selected)?.parent;
+      while (parent) {
+        if (parent === id) return true;
+        parent = graph.byId.get(parent)?.parent;
+      }
+      return false;
+    });
+    if (hidden.length) setCollapsed((current) => new Set([...current].filter((id) => !hidden.includes(id))));
+    if (!mounted.current) {
+      mounted.current = true;
+      return;
+    }
+    requestAnimationFrame(() => {
+      const row = root.current?.querySelector<HTMLElement>(`[data-row="${CSS.escape(selected)}"]`);
+      if (row && row !== document.activeElement) row.scrollIntoView({ block: "nearest" });
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- only when the selection changes
+  }, [selected]);
 
   const toggle = useCallback((id: string) => {
     setCollapsed((current) => {
@@ -191,7 +221,6 @@ export default function StructuredMap() {
 
   // A searched or filtered row keeps its ancestors visible for context.
   const visible = useMemo(() => {
-    if (!graph) return undefined;
     if (filter === "all" && !query.trim()) return undefined;
     const keep = new Set<string>();
     for (const node of graph.nodes) {
@@ -206,21 +235,14 @@ export default function StructuredMap() {
     return keep;
   }, [graph, filter, query]);
 
-  const cols = useMemo(() => (graph ? columns(graph, visible ? new Set() : collapsed) : []), [graph, collapsed, visible]);
-  const flat = cols.flatMap((c) => c.rows.filter((r) => !visible || visible.has(r.id)));
-
-  if (!graph) return <StageFallback />;
-
-  const select = (id: string, key?: string) => {
-    setSelected(id);
-    setFocusKey(key ?? id);
-  };
+  const rows = useMemo(() => tree(graph, visible ? new Set() : collapsed).filter((r) => !visible || visible.has(r.id)), [graph, collapsed, visible]);
+  const selectedShown = rows.some((r) => r.id === selected);
 
   const onRowKey = (event: KeyboardEvent<HTMLButtonElement>, index: number, row: Row) => {
     const move = (to: number) => {
-      const next = flat[Math.max(0, Math.min(flat.length - 1, to))];
+      const next = rows[Math.max(0, Math.min(rows.length - 1, to))];
       if (!next) return;
-      select(next.id, next.key);
+      onSelect(next.id);
       root.current?.querySelector<HTMLElement>(`[data-row="${CSS.escape(next.key)}"]`)?.focus();
     };
     if (event.key === "ArrowDown") {
@@ -236,82 +258,61 @@ export default function StructuredMap() {
       event.preventDefault();
       toggle(row.id);
     } else if (event.key === "w") {
-      setWhatIfOn((on) => !on);
+      onToggleWhatIf();
     } else if (event.key === "Escape") {
-      setWhatIfOn(false);
+      onWhatIfOff();
     }
   };
 
-  const inspector = (className?: string) => (
-    <Inspector graph={graph} id={selected} onSelect={(id) => select(id)} whatIfOn={whatIfOn} onWhatIf={setWhatIfOn} impact={impact} className={className} />
-  );
-
   return (
-    <div className="grid gap-3" ref={root}>
-      <div className="grid gap-2 rounded-lg border border-line bg-surface px-4 py-3">
-        <div className="flex flex-wrap items-center gap-x-5 gap-y-2">
-          <DemoTag />
-          <LaneHealth graph={graph} />
-          <span className="text-[12.5px] text-fg-3">
-            Default kubectl context <span className="font-mono text-fg-2">minikube</span> · never used to pick a target
-          </span>
-        </div>
-        <TrafficLine graph={graph} />
-      </div>
+    <div className="grid content-start gap-3" ref={root}>
       <FilterBar graph={graph} filter={filter} onFilter={setFilter} query={query} onQuery={setQuery} />
-
-      <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_340px]">
-        <div className="grid content-start gap-4 lg:grid-cols-2">
-          {cols.map((col) => {
-            const rows = col.rows.filter((r) => !visible || visible.has(r.id));
-            return (
-              <section key={col.id} className={clsx("min-w-0 self-start overflow-hidden rounded-lg border bg-surface", col.id === "lane" ? "border-accent-line" : "border-line")}>
-                <header className="border-b border-line px-4 py-2.5">
-                  <h3 className="text-[13px] font-medium">{col.title}</h3>
-                  <p className="text-[12px] text-fg-3">{col.caption}</p>
-                </header>
-                {rows.length ? (
-                  <ul className="divide-y divide-line">
-                    {rows.map((row) => {
-                      const index = flat.findIndex((r) => r.key === row.key);
-                      const isSelected = row.id === selected;
-                      const dim = impact ? !impact.byId.has(row.id) && impact.root !== row.id : !!visible && !matchesFilter(graph.byId.get(row.id)!, filter, query);
-                      return (
-                        <Fragment key={row.key}>
-                          <li>
-                            <MapRow
-                              graph={graph}
-                              row={row}
-                              selected={isSelected}
-                              relation={relations.get(row.id)}
-                              impact={impact}
-                              dim={dim}
-                              focused={focusKey === row.key || (!flat.some((r) => r.key === focusKey) && index === 0)}
-                              collapsed={collapsed.has(row.id)}
-                              onSelect={() => select(row.id, row.key)}
-                              onToggle={row.collapsible ? () => toggle(row.id) : undefined}
-                              onKeyDown={(event) => onRowKey(event, index, row)}
-                            />
-                          </li>
-                          {isSelected && focusKey === row.key && <li className="border-t border-accent-line bg-bg/40 xl:hidden">{inspector()}</li>}
-                        </Fragment>
-                      );
-                    })}
-                  </ul>
-                ) : (
-                  <p className="px-4 py-6 text-center text-[12.5px] text-fg-3">Nothing here matches.</p>
-                )}
-              </section>
-            );
-          })}
-        </div>
-        <aside className="hidden min-w-0 self-start overflow-hidden rounded-lg border border-line bg-surface xl:sticky xl:top-20 xl:block xl:max-h-[calc(100dvh-6rem)] xl:overflow-y-auto">
-          {inspector()}
-        </aside>
-      </div>
-      <p className="text-[12px] leading-relaxed text-fg-3">
-        Demo state shaped by the lab survey (Nov 1, 2026). Containers summarize their contents; fixtures broken by design and known leftovers are listed as explained and never count against the lane. Arrow keys move between rows, W shows what fails.
-      </p>
+      <section className="min-w-0 self-start overflow-hidden rounded-lg border border-line bg-surface">
+        <header className="border-b border-line px-4 py-2.5">
+          <h3 className="text-[13px] font-medium">Lab server and lane</h3>
+          <p className="text-[12px] text-fg-3">Processes, devices, and containers on the lab server, with the selected lane's cluster inside its minikube profile</p>
+        </header>
+        {rows.length ? (
+          <ul className="divide-y divide-line">
+            {rows.map((row, index) => {
+              const isSelected = row.id === selected;
+              const dim = impact ? !impact.byId.has(row.id) && impact.root !== row.id : !!visible && !matchesFilter(graph.byId.get(row.id)!, filter, query);
+              const laneStarts = row.lane && !rows[index - 1]?.lane;
+              return (
+                <Fragment key={row.key}>
+                  {laneStarts && (
+                    <li style={indent(row.depth)} className="relative flex items-center bg-accent-soft/40 py-1.5 pr-3">
+                      <span className="absolute inset-y-0 left-[42px] w-px bg-accent-line sm:left-[54px]" aria-hidden />
+                      <span className="w-[calc(12px_+_var(--depth)_*_12px_+_16px)] shrink-0 sm:w-[calc(12px_+_var(--depth)_*_18px_+_16px)]" aria-hidden />
+                      <span className="min-w-0 truncate text-[11.5px] text-fg-3">
+                        Inside the lane · read through <span className="font-mono text-fg-2">minh-lane</span>'s own kubeconfig
+                      </span>
+                    </li>
+                  )}
+                  <li>
+                    <MapRow
+                      graph={graph}
+                      row={row}
+                      selected={isSelected}
+                      relation={relations.get(row.id)}
+                      impact={impact}
+                      dim={dim}
+                      focused={isSelected || (!selectedShown && index === 0)}
+                      collapsed={collapsed.has(row.id)}
+                      onSelect={() => onSelect(row.id)}
+                      onToggle={row.collapsible ? () => toggle(row.id) : undefined}
+                      onKeyDown={(event) => onRowKey(event, index, row)}
+                    />
+                  </li>
+                  {isSelected && <li className="border-t border-accent-line bg-bg/40 xl:hidden">{panel}</li>}
+                </Fragment>
+              );
+            })}
+          </ul>
+        ) : (
+          <p className="px-4 py-6 text-center text-[12.5px] text-fg-3">Nothing here matches.</p>
+        )}
+      </section>
     </div>
   );
 }

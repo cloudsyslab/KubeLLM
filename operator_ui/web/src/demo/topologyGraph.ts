@@ -590,6 +590,12 @@ export function graphAt(campaign: DemoCampaign, t: number): TopologyGraph {
   for (const edge of edges) edge.active = !edge.broken && (hops.has(`${edge.source}|${edge.target}`) || hops.has(`${edge.target}|${edge.source}`)) && edge.kind !== "contains";
   for (const node of nodes) node.active = activeNodes.has(node.id);
 
+  return assemble({ t, nodes, edges, attempt, phase, campaignStatus, traffic });
+}
+
+/** Indexes the nodes and summarizes every container and the lane. */
+function assemble(base: Omit<TopologyGraph, "byId" | "children" | "rollups" | "lane">): TopologyGraph {
+  const { nodes } = base;
   const byId = new Map(nodes.map((n) => [n.id, n]));
   const children = new Map<string, string[]>();
   for (const node of nodes) {
@@ -610,7 +616,70 @@ export function graphAt(campaign: DemoCampaign, t: number): TopologyGraph {
   const laneNodes = LANE_MEMBERS.flatMap((id) => [byId.get(id)!, ...collect(id, children, byId)]);
   const lane = summarize(undefined, laneNodes);
 
-  return { t, nodes, edges, byId, children, rollups, attempt, phase, campaignStatus, traffic, lane };
+  return { ...base, byId, children, rollups, lane };
+}
+
+/** A finished preflight, as far as the graph needs it. */
+export interface Preflight {
+  checks: ReadinessCheck[];
+  /** When it finished, for the reasons, e.g. "Nov 1 · 19:09". */
+  at: string;
+}
+
+/**
+ * The graph as the latest preflight shows it. A blocked preflight is newer
+ * evidence about the lane than the replay: a stopped minikube profile takes
+ * its node and pods out of reach (unknown), a refused API server makes the
+ * cluster unreadable, and a failed lane RAG check takes the RAG API down.
+ * Other checks change nothing here; a ready preflight returns the graph as is.
+ */
+export function withPreflight(graph: TopologyGraph, preflight: Preflight | undefined): TopologyGraph {
+  if (!preflight) return graph;
+  const blocked = new Map(preflight.checks.filter((c) => c.level === "block").map((c) => [c.id, c]));
+  const profileStopped = blocked.has("minikube_status");
+  const clusterUnreadable = profileStopped || blocked.has("cluster_access");
+  const ragDown = blocked.get("rag_lane") ?? blocked.get("rag_api");
+  if (!clusterUnreadable && !ragDown) return graph;
+
+  const source = `latest preflight, ${preflight.at}`;
+  const overrides = new Map<string, Partial<TopoNode>>();
+  if (clusterUnreadable) {
+    overrides.set(
+      "profile:minh-lane",
+      profileStopped
+        ? { health: "stopped", status: "Stopped", reason: `The ${source}, found minikube profile 'minh-lane' stopped (minikube_status), so nothing in the lane can run until preparation starts it again.` }
+        : { health: "failing", status: "Unreachable", reason: `The ${source}, could not reach the lane's API server (cluster_access): ${blocked.get("cluster_access")!.detail}` },
+    );
+    for (const node of collect("profile:minh-lane", graph.children, graph.byId)) {
+      overrides.set(node.id, {
+        health: "unknown",
+        status: "Unreadable",
+        reason: `${profileStopped ? "The lane's profile is stopped" : "The lane's API server refused connections"}, so this can't be read (${source}).`,
+      });
+    }
+  }
+  if (ragDown) overrides.set("rag", { health: "failing", status: "Down · no answer", reason: `The ${source}, found the lane RAG API down: ${ragDown.detail}` });
+
+  const nodes = graph.nodes.map((node) => (overrides.has(node.id) ? { ...node, ...overrides.get(node.id), active: false } : node));
+  const edges = graph.edges.map((edge) => (edge.active && (overrides.has(edge.source) || overrides.has(edge.target)) ? { ...edge, active: false } : edge));
+  const result = assemble({ t: graph.t, nodes, edges, attempt: graph.attempt, phase: graph.phase, campaignStatus: graph.campaignStatus, traffic: graph.traffic });
+  // Containers the preflight made unreadable summarize as such, not as "0 healthy".
+  for (const id of overrides.keys()) {
+    const rollup = result.rollups.get(id);
+    if (rollup && clusterUnreadable && id !== "rag") {
+      result.rollups.set(id, { ...rollup, reason: `${rollup.total} inside, none readable while ${profileStopped ? "the profile is stopped" : "the API server refuses connections"}.` });
+    }
+  }
+  const failed = [...blocked.values()].filter((c) => ["minikube_status", "cluster_access", "rag_lane", "rag_api"].includes(c.id)).map((c) => c.label);
+  return {
+    ...result,
+    lane: {
+      ...result.lane,
+      health: "failing",
+      attention: [...new Set([...(clusterUnreadable ? ["profile:minh-lane"] : []), ...result.lane.attention])],
+      reason: `From the ${source}: ${failed.join(", ")} failed. ${result.lane.reason}`,
+    },
+  };
 }
 
 function collect(id: string, children: Map<string, string[]>, byId: Map<string, TopoNode>): TopoNode[] {
