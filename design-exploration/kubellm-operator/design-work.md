@@ -338,6 +338,109 @@ Gaps:
 - Touch gestures and reduced motion were not exercised.
 - `pytest` was not run (not installed on this Mac; no Python changed).
 
+### Consolidation, second round (2026-11-01)
+
+The user picked the remaining surfaces, which closes the options room.
+
+| Surface | Pick | How the pieces combine |
+| --- | --- | --- |
+| Topology | A+C+D | The structured map's hierarchy leads. Blast radius's fuller inspector and "What if this fails?" explanation replace the condensed panel. The health timeline is a second view on the same selection. The dependency graph (B) was not picked. |
+| Environment | B+A | The health board is the overview. The checklist adds run order, durations, streaming, and history. Each check shows its terminal execution (command, stdout, stderr) in the same output view as Execution. |
+| Jobs | B+C+A | The activity feed, with the timeline's durations and relative timing, and the ledger's status coloring and structure. |
+| Publish | C+B | The receipt as a guided path, like New campaign, with an optional full review inside it. |
+| Active work | B | The top bar pill. |
+
+New app-wide element: the sidebar's bottom-left corner gets one health
+summary. It covers the lane (Topology's model), readiness and its repository
+group, lab host warnings, and the data snapshot. It answers "is everything
+healthy?" consistently with the pages it links to.
+
+What was built:
+
+- Topology (`TopologyExplorer.tsx`): one containment tree, from the lab
+  server to Docker, the `minh-lane` profile, and its node, namespaces, and
+  pods. The lane's subtree is accented. Two side-by-side sections truncated
+  names at 60% width, so the builder chose one tree.
+  - The panel takes about 40% beside the map on wide screens and opens under
+    the selected row on narrower ones. It holds:
+    - what the component is, its health, why, and its contents
+    - "What if this fails?", listing each affected component with its
+      reason, the preflight checks that would block, and "Simulated.
+      Nothing is stopped."
+    - Depends on and Needed by, with relation words and the 2-hop and 3+-hop
+      chains
+    - facts, recent changes, and "Back to" for walking a chain
+  - A Map | Timeline switch shares selection and what-if. A timeline cell
+    shows that moment in the same panel.
+  - `?view=` and `?node=` are in the URL.
+  - A blocked preflight now shows in the map: profile Stopped, lane
+    contents Unknown, RAG API Down, and the lane Failing "from the latest
+    preflight".
+  - The dependency graph and `@xyflow/react` are removed.
+- Environment (`LaneHealth.tsx`):
+  - The freshness ring and actions sit on top. Below them, dependency cards
+    in three zones (Lane services, Host, Workspace) with History beside them.
+  - Selecting a card opens its most telling check among CI steps in
+    `check_readiness.py`'s order, which stream during a run.
+  - Each step has a terminal: commands, stdout, amber stderr, and exit codes,
+    drawn with Execution's log line. It follows the running check, with
+    "Back to live".
+  - Commands follow `preflight.py` and `check_readiness.py`. The output is
+    representative and tagged Demo.
+  - Preparation's repair steps have terminals too.
+- Jobs (`JobsFeed.tsx`):
+  - The ledger's search, kind and status filters with counts, kept in the
+    URL.
+  - The timeline's session strip, with idle gaps collapsed.
+  - The running campaign on top.
+  - The feed grouped by working session, each with an operator-lock lane,
+    span bars on a shared time axis, and idle or overlap notes between jobs.
+  - Each entry has an aligned metadata row. Expanded detail adds a step
+    track and the queue wait.
+  - `?job=` opens a job. The ⌘K palette now links finished jobs there.
+- Publish (`GuidedPublish.tsx`):
+  - Steps Prepare a preview, Review, Publish, Done, styled like New
+    campaign, with the receipt alongside.
+  - "Open the full review" is optional, inside Review. When open, its six
+    checks plus the typed pack name replace the single acknowledgment, so the
+    checklist actually gates publishing.
+  - The Publish step states the 941 paths, the commit on `minh`, and the
+    push to `origin/minh`.
+- Active work is decided as the top bar pill. The sidebar card and floating
+  panel are removed.
+- Sidebar health (`components/SystemHealth.tsx`):
+  - Three rows, each with a word: Lane (Topology's `useGraph`, preflight
+    included), Preflight (the shared readiness store), and Host (Topology's
+    host and Docker nodes). Below them sits the data source.
+  - A popover breaks each row down and links to Topology (`?node=`),
+    Environment, Lab resources, and Runs.
+  - On phones it sits in the navigation drawer.
+- Shared fixes:
+  - a route error boundary, because one crashing page blanked the whole
+    shell during the build
+  - the 404 page's label
+  - the Active work room's wording
+
+Checks:
+
+- `npm run build` passes.
+- 20 routes at 1440x900 and 16 at 375x812: no horizontal overflow, no
+  console errors, and no crashed page.
+- Visual review at desktop:
+  - Topology selected through `?node=docker`, then its what-if (20 affected)
+  - Environment in Blocked, with the sidebar card agreeing (Lane Failing,
+    Preflight Blocked) and its popover open
+  - Jobs and Publish
+- Each builder exercised its page at both widths and in the light theme.
+
+Gaps:
+
+- Touch gestures and reduced motion were not exercised.
+- The publish preview's 30-minute expiry branch was not triggered.
+- In Blocked, the demo replay keeps running a campaign on the stopped lane
+  (the replay is independent of the readiness demo switch).
+- `pytest` was not run (not installed on this Mac; no Python changed).
+
 ## Current pass: production front end (checkpoint 1: model explorer)
 
 - State: review-ready (checkpoint 1). Start instruction: the user's explicit

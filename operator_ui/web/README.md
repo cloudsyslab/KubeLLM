@@ -54,28 +54,33 @@ and refuses to write anything containing a filesystem path.
 
 ## Options room and demo replay
 
-`/options` renders every surface still being designed in three to five
-options, so a design can be chosen from working screens. Each surface owns
-its list in `src/options/<surface>/index.ts`; `registry.ts` collects them and
-generates the routes. The viewer's pick per surface is remembered in the
-browser and is what that surface's page shows.
+`/options` is where each surface's design was chosen from working screens.
+Each surface owns its list in `src/options/<surface>/index.ts`, and
+`registry.ts` collects them and generates the routes. Every surface is now
+decided. A decided surface lists one option, the user's pick (id `chosen`,
+`chosen: true`), whose letter names the options it merged. Its page always
+shows that design, and the room and its pick sheet mark it Decided. Once the
+backend is wired, the room can be retired and each page can render its
+design directly.
 
-| Surface | Page | Options (recommended first) |
+| Surface | Page | Design |
 | --- | --- | --- |
-| Runs | `/runs` | A Experiments table, B Timeline, C By configuration |
-| Compare | `/compare` | A Metric rows, B Case diff matrix, C Visual |
-| Execution | `/execution` | C Attempt grid first, A Console first, B Trace first, D Campaign timeline, E Attempt stories |
-| New campaign | `/launch` | A Builder and plan rail, B Guided steps, C Composer, D Matrix planner |
-| Environment | `/environment` | A CI checklist, B Health board, C Timeline and diff |
-| Jobs | `/jobs` | A Ledger, B Activity feed, C Timeline |
-| Publish | `/publish` | A Review panel, B Full review, C Receipt |
-| Lab resources | `/lab` | A Dense instrument, B Calm charts, C Correlated timeline |
-| Topology | `/lab/topology` | B Dependency graph, A Structured map, C Blast radius, D Health timeline |
-| Active work | every page | B Top bar pill, A Sidebar card, C Floating mini panel |
+| Runs | `/runs` | A+B Experiments table with a timeline view (`?view=timeline`) |
+| Compare | `/compare` | A+B Metric rows with the case matrix (`?cases=`) |
+| Execution | `/execution` | C+E+B Attempt grid; the attempt box holds the story and the trace |
+| New campaign | `/launch` | B+A Guided steps with a plan rail |
+| Environment | `/environment` | B+A Health board with CI steps and each check's terminal output |
+| Jobs | `/jobs` | B+C+A Activity feed on a time axis (`?kind=`, `?status=`, `?job=`) |
+| Publish | `/publish` | C+B Guided receipt with an optional full review |
+| Lab resources | `/lab` | A Dense instrument |
+| Topology | `/lab/topology` | A+C+D Structured map with an explanation panel and a health timeline (`?view=`, `?node=`) |
+| Active work | every page | B Top bar pill |
 
-The Overview tab is a pick sheet: one row per surface, picks apply
-immediately, "Copy my picks" puts the choices on the clipboard, and "Reset
-to recommended" clears them.
+The sidebar's bottom-left corner (`components/SystemHealth.tsx`) summarizes
+lane health, preflight freshness, and lab host warnings, plus the data
+source. It reads the same hooks as Topology and Environment, so it always
+agrees with them. Each page renders inside a route error boundary, so one
+failing page keeps the shell up.
 
 The live and operational surfaces are driven by demo data in `src/demo/`:
 
