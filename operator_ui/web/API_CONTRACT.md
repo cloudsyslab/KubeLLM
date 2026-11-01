@@ -8,8 +8,10 @@ telemetry, and topology contracts are added with their views.
 
 - Serve `operator_ui/web/dist/assets/*` at `/assets/`.
 - Return `dist/index.html` for every non-API path the client router owns:
-  `/`, `/models/*`, `/runs/*`, `/compare`, `/execution`, `/launch`,
-  `/environment`, `/lab`, `/lab/topology`. Deep links must load directly.
+  `/`, `/models/*`, `/runs`, `/runs/*`, `/compare`, `/execution`, `/jobs`,
+  `/launch`, `/environment`, `/publish`, `/lab`, `/lab/topology`, and
+  `/options` (the design-review room; drop it once the options are
+  consolidated). Deep links must load directly.
 - The current Content-Security-Policy works as is: scripts, styles, and fonts
   are same-origin files, and React applies inline styles through the CSSOM.
 - Password removal is part of the accepted second pass; the web app has no
@@ -51,6 +53,18 @@ Serve it as `GET /api/jobs/{id}/events` (Server-Sent Events) with persisted
 event IDs so `Last-Event-ID` replays missed events after a refresh or
 reconnect. Redact credentials before persisting. Job state adds the planned
 attempt list (model, case) so progress has a real denominator.
+
+## Readiness and publication details (needed by some options)
+
+- `safe_readiness` currently returns name, label, status, blocking, and hint
+  per check. Environment options that show per-check durations and detail
+  text need redacted `detail` and `duration_ms` fields.
+- Readiness freshness also depends on the lane selector file and the
+  operator app instance (app.py compares both). The UI should say that
+  restarting the app or editing the selector invalidates a fresh result.
+- Publishing commits the reviewed paths and then pushes the commit to the
+  branch's configured upstream (publishing.py). Publish option B, the full
+  review, needs a read endpoint for preview file contents.
 
 ## Compare
 
