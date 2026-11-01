@@ -1,10 +1,7 @@
 import clsx from "clsx";
 import { ChevronRight, File, FileBraces, FileText, Folder, FolderOpen } from "lucide-react";
 import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
-import { displayModel } from "@/components/charts";
-import { LabLogo } from "@/components/ModelCard";
 import data from "@/data/cases.json";
-import { labOf } from "@/data/models";
 import { jobById, PUBLISH_PREVIEW } from "@/demo/jobs";
 import { count } from "@/lib/format";
 import { CheckMark, countdown, stamp } from "../environment/readiness";
@@ -39,8 +36,6 @@ export const ATTEMPTS = Array.from({ length: P.attempts.recorded }, (_, i) => {
 export const PACK_FILE_COUNT = P.attempts.recorded * (P.perAttemptFiles.length + P.perCaseFiles.length) + P.packFiles.length;
 export const COMMIT_PATH_COUNT = PACK_FILE_COUNT + P.catalogEdits.length;
 export const VERIFIER_KNOWN = P.verifier.known;
-
-export const target = PUSHES_AFTER_COMMIT ? `Commit on ${P.target.branch}, then push to its upstream` : `Local commit on ${P.target.branch}; nothing is pushed`;
 
 /** The pack README, exactly as publishing.py writes it for these numbers. */
 export const README_TEXT = [
@@ -238,7 +233,7 @@ export const PUBLISH_STEPS = [
   { label: "Verifying reviewed files and Git target.", detail: "Preview token, every file hash, both catalog hashes, the branch, and HEAD must match the review.", ms: 1500 },
   { label: "Adding only the reviewed export paths.", detail: `git add -- ${count(COMMIT_PATH_COUNT)} literal paths`, ms: 1100 },
   { label: "Creating a commit containing the reviewed result files.", detail: `git commit --only · “${COMMIT_MESSAGE}”`, ms: 1000 },
-  ...(PUSHES_AFTER_COMMIT ? [{ label: "Pushing the export commit to the configured upstream.", detail: `git push · ${P.target.branch} → upstream`, ms: 2200 }] : []),
+  ...(PUSHES_AFTER_COMMIT ? [{ label: "Pushing the export commit to the configured upstream.", detail: `git push · ${P.target.branch} → ${P.target.upstream}`, ms: 2200 }] : []),
 ];
 export const PUBLISH_DONE = PUSHES_AFTER_COMMIT ? "Sanitized results were committed and pushed." : "Sanitized results were committed locally.";
 
@@ -300,23 +295,6 @@ export function PublishSteps({ phase, step, className }: { phase: JobPhase; step
         {message}
       </p>
     </div>
-  );
-}
-
-export function ModelIds({ className }: { className?: string }) {
-  const roles = Object.entries(P.models) as [string, string][];
-  return (
-    <ul className={clsx("grid gap-1", className)}>
-      {roles.map(([role, id]) => (
-        <li key={role} className="flex items-center justify-between gap-3 text-[12.5px]">
-          <span className="inline-flex min-w-0 items-center gap-1.5">
-            <LabLogo lab={labOf(id)} size={13} />
-            <span className="ident truncate text-fg">{displayModel(id)}</span>
-          </span>
-          <span className="text-fg-3">{role === "API" ? "Knowledge" : role === "DebugAgent" ? "Debug" : "Verifier"}</span>
-        </li>
-      ))}
-    </ul>
   );
 }
 
