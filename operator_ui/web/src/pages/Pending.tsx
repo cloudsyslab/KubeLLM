@@ -7,7 +7,7 @@ export function PendingPage({ eyebrow, title, description, items }: { eyebrow: s
     <div className="grid gap-8">
       <PageHeader eyebrow={eyebrow} title={title} description={description} />
       <div className="rounded-lg border border-dashed border-line-strong px-6 py-8">
-        <div className="label">Next checkpoint</div>
+        <div className="label">Where to go</div>
         <ul className="mt-4 grid gap-2.5 text-[13.5px] text-fg-2">
           {items.map((item) => (
             <li key={item} className="flex gap-3">
