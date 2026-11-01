@@ -44,10 +44,106 @@
   second-pass functional work; it supersedes the earlier plan to choose
   references only after implementing the functional changes.
 
-## Current pass: explorer and execution directions
+### Decisions from the 2026-11-01 Claude review (supersede where they conflict)
 
-- State: review-ready. The user explicitly invoked `$build-from-plan
-  $website-design-build` for this bounded direction-room pass.
+- Work split: Claude designs and builds the production front end on the
+  user's Mac against a typed API client with fixture data; Codex later wires
+  the real backend on the lab (password removal, launcher/skill mode, SSE
+  execution events, telemetry, topology, serving the new build).
+- None of the Atlas, Signal, or Fieldnotes directions is adopted. Their visual
+  quality does not reach the Modal/Braintrust/Artificial Analysis bar the user
+  wants. Keep their information architecture (Models / Execution / Lab) and
+  these components as inputs: Signal's run lifecycle (phase steps, event
+  timeline, live output, readiness checks), Fieldnotes' evidence table with
+  coverage and provenance columns, Atlas's selected-model side panel, and the
+  profile topology idea.
+- Visual system: the user's `show-me` house style
+  (`.agents/skills/show-me/references/house-style.md`, `assets/house-tokens.css`):
+  dark-first, Geist and Geist Mono, hairlines over boxes, tight radius, no
+  content shadows, status colors always paired with a word. The accent changes
+  from pink to a cool blue-violet so it cannot be confused with failure red;
+  primary buttons stay neutral; green and red mean Ground Truth outcomes only.
+  Both themes are designed. UI copy is terse operator language.
+- Data: the explorer, model pages, run history, and compare use a read-only
+  snapshot of the real recorded exports produced by `operator_ui/results.py`
+  (`public_run` plus case rows; no paths). Default comparisons use the 7
+  canonical configurations; exploratory packs stay separate. Live execution,
+  host/GPU telemetry, and topology are simulated, tagged "Demo", and shaped to
+  what the lab can actually report (PCP pmproxy for host metrics, nvidia-smi
+  for GPUs, the lane kubeconfig for nodes/pods, no metrics-server, GPU load
+  not attributed to runs, the lane's long-failing leftover pods).
+- Lab facts (read-only survey 2026-11-01): Ubuntu 22.04, 128 threads, 755 GiB
+  RAM, 2x A40 (46 GB), root disk ~98% full; Node 24 user-local; npm and
+  GitHub reachable; lane `minh-lane` (minikube, k8s 1.31, own kubeconfig);
+  9 Ollama models; operator harness on 127.0.0.1:8787.
+
+## Current pass: production front end (checkpoint 1: model explorer)
+
+- State: review-ready (checkpoint 1). Start instruction: the user's explicit
+  `/build-from-plan /website-design-build` on 2026-11-01 in Claude Code.
+- Pass: product implementation, opening with a bounded reference pass.
+- Workline: branch `work/operator-ui-polish` stacked on
+  `handoff/operator-ui-2026-11-01` (main has no operator UI).
+- Objective: a polished React + TypeScript + Vite front end in
+  `operator_ui/web/` that runs on the Mac in fixture mode, with every existing
+  operator feature redesigned plus the agreed second-pass surfaces.
+- Checkpoint 1 (this stop point): reference shelf, design tokens, app shell,
+  real-data snapshot, model explorer homepage and model detail, browser QA.
+  Execution, Lab, launch, history, compare, environment, and publish follow
+  after the user reviews the checkpoint.
+- Scope excluded: backend endpoints, auth removal, launcher, lab services,
+  benchmarks, `data/`, runner, case editing, prompt controls, RAG management.
+  Built assets are not committed; Codex builds on the lab.
+- Validation: TypeScript and Vite build; Claude browser-pane QA at 1440, 768,
+  and 375 px in both themes; keyboard focus; reduced motion; console errors;
+  side-by-side comparison with the measured references.
+
+### Return from checkpoint 1
+
+- Deliverables: `operator_ui/web/` ([README](../../operator_ui/web/README.md),
+  [API contract](../../operator_ui/web/API_CONTRACT.md)). Models homepage with
+  totals, a comparability statement, three Artificial Analysis-style ranked
+  metric panels (Ground Truth success with run range, time per attempt, cost
+  per attempt) with linked hover, a Braintrust-style sortable leaderboard with
+  per-run spread, and a cases x models matrix. Model detail (KPI strip, runs,
+  cases x runs attempt grid, per-role time/tokens/cost) and run detail
+  (attempts with Ground Truth, verifier, runner status; provenance). Dark and
+  light themes; responsive shell with a navigation sheet below 1024 px. Other
+  routes show next-checkpoint placeholders. Preview: `npm run dev` in
+  `operator_ui/web`, http://127.0.0.1:5190.
+- Reference shelf (observed live 2026-11-01, measured with computed styles;
+  no recording, WACZ, or replay was captured): modal.com (canvas rgb(4,8,4),
+  panels rgb(16,18,15) with 1px white/3% borders and 7px radius, off-white
+  text #e3e5e1, 45px/500 display, DM Mono for code); braintrust.dev (Inter,
+  zinc hairlines, blue-violet primary rgb(44,31,234), compact icon sidebar,
+  filter-chip toolbar, row-numbered tables, tabbed detail drawer) plus the
+  saved experiment-comparison figure; artificialanalysis.ai (three sorted
+  metric panels with "higher/lower is better" captions). The saved Modal logs
+  still informs the execution view in checkpoint 2.
+- Adaptations: the house style replaces Modal's green-tinted canvas and Inter;
+  metric panels use neutral bars with accent only for the hovered model,
+  instead of provider colors; the case matrix follows Braintrust's
+  rows-are-cases orientation so case names stay readable.
+- Checks: `npm run build` (TypeScript 7 + Vite 8) passes with no warnings.
+  Browser pane at 1440x900 dark and light, 768x1024 and 375x812 light:
+  Models, model detail with `?case=` focus, run detail with attempt anchor,
+  "All" sources with mixed-settings labeling, navigation sheet open and
+  Escape close, keyboard Tab focus ring and tooltip, linked hover state, and
+  no console errors after a clean load across those routes. Reduced motion is
+  handled by a global CSS rule but was not exercised in an emulated
+  reduced-motion browser. pytest was not run (not installed on the Mac); no
+  backend Python changed besides the standalone snapshot script, which ran.
+- Fidelity gaps: no 1:1 recreation of any vendor UI was intended or verified;
+  authenticated Modal and Braintrust app screens were not inspected.
+- Next decision: review checkpoint 1 in `$website-design`, then a fresh
+  `$build-from-plan $website-design-build` for checkpoint 2 (runs, compare,
+  execution, launch, environment, lab resources, topology).
+
+## Previous pass: explorer and execution directions (superseded)
+
+- State: superseded by the 2026-11-01 decisions above. The user explicitly
+  invoked `$build-from-plan $website-design-build` for this bounded
+  direction-room pass.
 - Pass: direction-room, with bounded supporting reference inspection.
 - Objective: produce three distinct, comparable interactive directions for the
   same model explorer, execution workflow, and live lab view before product
