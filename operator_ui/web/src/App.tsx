@@ -2,6 +2,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { Tooltip } from "radix-ui";
 import { useEffect } from "react";
 import { BrowserRouter, Route, Routes, useLocation } from "react-router";
+import { RouteBoundary } from "@/components/RouteBoundary";
 import { Shell } from "@/components/Shell";
 import { ReplayProvider } from "@/demo/replay";
 import { OptionsRoomPage, SurfacePage } from "@/options/OptionsRoom";
@@ -31,16 +32,18 @@ export function App() {
           <ReplayProvider>
             <ScrollReset />
             <Shell>
-              <Routes>
-                <Route index element={<ModelsPage />} />
-                <Route path="models/:slug" element={<ModelDetailPage />} />
-                <Route path="runs/:ref" element={<RunDetailPage />} />
-                {SURFACES.filter((s) => s.path).map((s) => (
-                  <Route key={s.id} path={s.path!.slice(1)} element={<SurfacePage key={s.id} surface={s.id} />} />
-                ))}
-                <Route path="options" element={<OptionsRoomPage />} />
-                <Route path="*" element={<PendingPage eyebrow="KubeLLM" title="Not found" description="This page does not exist." items={["Use the navigation to return to Models."]} />} />
-              </Routes>
+              <RouteBoundary>
+                <Routes>
+                  <Route index element={<ModelsPage />} />
+                  <Route path="models/:slug" element={<ModelDetailPage />} />
+                  <Route path="runs/:ref" element={<RunDetailPage />} />
+                  {SURFACES.filter((s) => s.path).map((s) => (
+                    <Route key={s.id} path={s.path!.slice(1)} element={<SurfacePage key={s.id} surface={s.id} />} />
+                  ))}
+                  <Route path="options" element={<OptionsRoomPage />} />
+                  <Route path="*" element={<PendingPage eyebrow="KubeLLM" title="Not found" description="This page does not exist." items={["Use the navigation to return to Models."]} />} />
+                </Routes>
+              </RouteBoundary>
             </Shell>
           </ReplayProvider>
         </BrowserRouter>
