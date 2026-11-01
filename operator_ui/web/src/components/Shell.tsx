@@ -19,13 +19,16 @@ import {
   type LucideIcon,
 } from "lucide-react";
 import { Dialog } from "radix-ui";
-import { useState, type ReactNode } from "react";
+import { lazy, Suspense, useState, type ReactNode } from "react";
 import { NavLink, useLocation } from "react-router";
 import { api } from "@/api/client";
 import { DockHost } from "@/options/dock/host";
 import { CommandPalette, useCommandPaletteHotkey } from "./CommandPalette";
 import { useTheme } from "@/lib/theme";
 import { Tip } from "./ui";
+
+// Loaded apart from the shell: it pulls in the topology model and the readiness store.
+const SystemHealth = lazy(() => import("./SystemHealth"));
 
 interface NavItem {
   to: string;
@@ -159,6 +162,7 @@ function Footer() {
   );
 }
 
+/** `onNavigate` is set inside the phone navigation drawer, which it closes. */
 function SidebarBody({ onNavigate }: { onNavigate?: () => void }) {
   return (
     <div className="flex h-full flex-col">
@@ -171,6 +175,9 @@ function SidebarBody({ onNavigate }: { onNavigate?: () => void }) {
           <NavLinks onNavigate={onNavigate} />
         </div>
       </div>
+      <Suspense fallback={<div className="mx-3 mb-3 h-[98px] rounded-md border border-line" aria-hidden />}>
+        <SystemHealth side={onNavigate ? "top" : "right"} onNavigate={onNavigate} />
+      </Suspense>
       <Footer />
     </div>
   );

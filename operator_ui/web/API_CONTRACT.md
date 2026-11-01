@@ -73,6 +73,25 @@ attempt list (model, case) so progress has a real denominator.
   branch's configured upstream (publishing.py). Publish option B, the full
   review, needs a read endpoint for preview file contents.
 
+## Health summary (sidebar)
+
+The sidebar's health card (`components/SystemHealth.tsx`) answers "is
+everything healthy?" from the same sources the pages use. One read-only
+endpoint, for example `GET /api/health`, would serve it:
+
+```ts
+{
+  lane: { health: string; reason: string; attention: string[]; explained: string[] };  // the topology lane rollup
+  readiness: { status: string; finished_at: string; fresh_until: string;
+               groups: { id: string; label: string; worst: string }[] };              // latest preflight, incl. repo and venv groups
+  host: { health: string; docker_root_free_gb: number; profile_start_min_gib: 20; reason: string };
+  data: { source: string; runs: number; generated_at: string };
+}
+```
+
+Health words stay separate from Ground Truth outcomes; the UI never colors
+them green or red.
+
 ## Compare
 
 The Compare options compute shared cases and the alignment checks in the
