@@ -97,8 +97,9 @@
 
 ## Next pass: checkpoint 2 options room
 
-- State: ready. Waits for the user's explicit
-  `/build-from-plan /website-design-build`.
+- State: review-ready (see the return below). Start instruction: the user's
+  explicit `/build-from-plan /website-design-build` on 2026-11-01, after the
+  checkpoint 1 refinement review.
 - Pass: direction room for the three live surfaces, built inside the
   production shell (`operator_ui/web`, route `/options`, linked from each
   surface) so options are judged in their real context and data.
@@ -127,6 +128,40 @@
   motion.
 - Stop point: the user picks one option per surface (or a mix); the next
   implementation pass builds the chosen ones plus the remaining pages.
+
+### Return from the options room
+
+- State: review-ready.
+- Deliverables: `/options` in `operator_ui/web` (also linked from the
+  sidebar under Design review), with Execution A console first, B trace
+  first, C attempt grid first; Lab resources A dense instrument, B calm
+  charts; Topology A structured map, B node graph. Each option card states
+  what it is best for, what it costs, and the pattern it draws on; "Use on
+  the page" sets what `/execution`, `/lab`, and `/lab/topology` show
+  (remembered per viewer). The shared replay bar plays, pauses, scrubs,
+  changes speed (10×, 30×, 90×), switches on the failure branch (runner
+  error in attempt 13, campaign stops, teardown runs, not counted against
+  the model), and freezes a mid-run state.
+- Data honesty: the demo campaign replays the recorded outcomes, verifier
+  judgments, and per-role timings of gpt-6-luna (Sep 23 run) and
+  glm-4.7-flash (Jul 20 run); commands, telemetry, and topology are
+  simulated and tagged Demo. GPU 0 load appears only while the local model
+  is served and is shown as coincident, not attributed; GPU 1 load belongs
+  to another account. Pod states use neutral and amber, never the Ground
+  Truth green and red; fixture and leftover pods are explained in place.
+  The disk panels surface a real constraint from data_analysis/README.md:
+  12 GB free is below the 20 GB standard campaigns require at start.
+- Checks: `npm run build` passes (each option is its own chunk; React Flow
+  only loads for the node graph). Browser QA at 1440x900 for all seven
+  options in dark and Execution C in light; phone width 375 for Execution;
+  page width equals the viewport on six routes after a global fix that lets
+  grid items shrink; no console errors across eleven routes. Gaps: reduced
+  motion is covered by the global CSS rule but was not exercised in an
+  emulated reduced-motion browser; touch scrubbing and the node graph at
+  phone width were not exercised.
+- Next decision: in `$website-design`, pick one option per surface (or a
+  mix). The following implementation pass builds the picks against the API
+  contract, plus Runs, Compare, New campaign, and Environment.
 
 ## Current pass: production front end (checkpoint 1: model explorer)
 
