@@ -5,6 +5,7 @@ import {
   Cpu,
   Database,
   Layers,
+  LayoutGrid,
   Menu,
   Moon,
   Network,
@@ -52,6 +53,10 @@ const NAV: { group: string; items: NavItem[] }[] = [
       { to: "/lab", label: "Resources", icon: Cpu },
       { to: "/lab/topology", label: "Topology", icon: Network },
     ],
+  },
+  {
+    group: "Design review",
+    items: [{ to: "/options", label: "Options room", icon: LayoutGrid }],
   },
 ];
 
@@ -175,6 +180,7 @@ const CRUMBS: Record<string, [string, string]> = {
   "/environment": ["Operate", "Environment"],
   "/lab": ["Lab", "Resources"],
   "/lab/topology": ["Lab", "Topology"],
+  "/options": ["Design review", "Options room"],
 };
 
 export function Shell({ children }: { children: ReactNode }) {

@@ -36,6 +36,22 @@ def explorer():
 Include `local` runs here if they should appear in the explorer; the UI treats
 `source` as a filter dimension and already handles it.
 
+## Execution events (proposed with the options room)
+
+The Execution options consume one ordered event stream per job. The demo
+replay already uses this shape (`DemoEvent` in `src/demo/campaign.ts`):
+
+```ts
+{ id: string; t: number; attempt: number; phase: "setup" | "knowledge" | "debug" | "verify" | "truth" | "teardown";
+  source: "runner" | "kubectl" | "knowledge" | "debug" | "verifier" | "truth";
+  level: "info" | "command" | "output" | "warn" | "error" | "pass" | "fail"; text: string }
+```
+
+Serve it as `GET /api/jobs/{id}/events` (Server-Sent Events) with persisted
+event IDs so `Last-Event-ID` replays missed events after a refresh or
+reconnect. Redact credentials before persisting. Job state adds the planned
+attempt list (model, case) so progress has a real denominator.
+
 ## Existing endpoints the next checkpoint will use
 
 | View | Endpoint | Notes |
