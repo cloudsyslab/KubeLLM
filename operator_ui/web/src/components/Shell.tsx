@@ -11,6 +11,7 @@ import {
   Moon,
   Network,
   Rocket,
+  Search,
   ShieldCheck,
   SquareTerminal,
   Sun,
@@ -22,6 +23,7 @@ import { useState, type ReactNode } from "react";
 import { NavLink, useLocation } from "react-router";
 import { api } from "@/api/client";
 import { DockHost } from "@/options/dock/host";
+import { CommandPalette, useCommandPaletteHotkey } from "./CommandPalette";
 import { useTheme } from "@/lib/theme";
 import { Tip } from "./ui";
 
@@ -189,8 +191,24 @@ const CRUMBS: Record<string, [string, string]> = {
   "/options": ["Design review", "Options room"],
 };
 
+function SearchButton({ onClick, compact }: { onClick: () => void; compact?: boolean }) {
+  return compact ? (
+    <button type="button" onClick={onClick} aria-label="Search" className="ml-auto grid size-8 cursor-pointer place-items-center rounded-md text-fg-2 hover:bg-surface-2">
+      <Search className="size-[17px]" strokeWidth={1.75} />
+    </button>
+  ) : (
+    <button type="button" onClick={onClick} className="inline-flex h-8 w-56 cursor-pointer items-center gap-2 rounded-md border border-line bg-surface px-2.5 text-[12.5px] text-fg-3 transition-colors hover:border-line-strong hover:text-fg-2">
+      <Search className="size-3.5" strokeWidth={1.75} />
+      Search
+      <kbd className="ml-auto rounded border border-line-strong px-1 font-mono text-[10.5px]">⌘K</kbd>
+    </button>
+  );
+}
+
 export function Shell({ children }: { children: ReactNode }) {
   const [open, setOpen] = useState(false);
+  const [paletteOpen, setPaletteOpen] = useState(false);
+  useCommandPaletteHotkey(setPaletteOpen);
   const { pathname } = useLocation();
   const crumbs = CRUMBS[pathname] ?? (pathname.startsWith("/models/") ? ["Evaluate", "Models"] : pathname.startsWith("/runs/") ? ["Evaluate", "Runs"] : ["KubeLLM", ""]);
 
@@ -208,6 +226,7 @@ export function Shell({ children }: { children: ReactNode }) {
             </button>
           </Dialog.Trigger>
           <Brand />
+          <SearchButton compact onClick={() => setPaletteOpen(true)} />
         </header>
         <Dialog.Portal>
           <Dialog.Overlay className="fixed inset-0 z-40 bg-black/50 lg:hidden" />
@@ -230,13 +249,15 @@ export function Shell({ children }: { children: ReactNode }) {
             <span className="text-fg-3/60">/</span>
             <span className="text-fg">{crumbs[1]}</span>
           </nav>
-          <div className="ml-auto">
+          <div className="ml-auto flex items-center gap-3">
             <DockHost slot="topbar" />
+            <SearchButton onClick={() => setPaletteOpen(true)} />
           </div>
         </div>
         <main className="mx-auto w-full max-w-[1440px] px-4 pt-6 pb-16 sm:px-6 lg:px-8 lg:pt-8">{children}</main>
       </div>
       <DockHost slot="floating" />
+      <CommandPalette open={paletteOpen} onOpenChange={setPaletteOpen} />
     </div>
   );
 }

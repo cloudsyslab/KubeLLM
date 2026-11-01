@@ -1,6 +1,6 @@
 import { useQuery } from "@tanstack/react-query";
 import { Coins, Target, Timer } from "lucide-react";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router";
 import { api, snapshotGeneratedAt } from "@/api/client";
 import { CaseMatrix, MatrixLegend } from "@/components/CaseMatrix";
@@ -104,6 +104,11 @@ export function ModelsPage() {
   const cases = useMemo(() => suiteCases(configs), [configs]);
   const maxRuns = Math.max(0, ...configs.map((c) => c.runs.length));
   const open = (config: ModelConfig) => navigate(`/models/${config.slug}`);
+  const focusCase = params.get("case");
+
+  useEffect(() => {
+    if (focusCase && configs.length) document.getElementById(`matrix-${focusCase}`)?.scrollIntoView({ block: "center" });
+  }, [focusCase, configs.length]);
 
   return (
     <div className="grid gap-8">
@@ -195,7 +200,7 @@ export function ModelsPage() {
             caption={`Ground Truth passes per case, out of each model's runs. Select a cell to open those attempts.`}
             actions={<MatrixLegend runs={maxRuns} />}
           >
-            <CaseMatrix configs={configs} cases={cases} />
+            <CaseMatrix configs={configs} cases={cases} focusCase={focusCase} />
           </Panel>
         </>
       )}

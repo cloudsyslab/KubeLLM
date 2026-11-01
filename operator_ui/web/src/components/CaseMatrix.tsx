@@ -46,7 +46,7 @@ function CellTip({ config, tally, id }: { config: ModelConfig; tally?: CaseTally
 
 // Cases x models, Braintrust-style: cases are rows, models are columns in rank
 // order. Each cell counts Ground Truth passes across that model's runs.
-export function CaseMatrix({ configs, cases }: { configs: ModelConfig[]; cases: string[] }) {
+export function CaseMatrix({ configs, cases, focusCase }: { configs: ModelConfig[]; cases: string[]; focusCase?: string | null }) {
   const families = groupCases(cases);
   const navigate = useNavigate();
   const showTechnique = mixedTechniques(configs);
@@ -117,9 +117,9 @@ export function CaseMatrix({ configs, cases }: { configs: ModelConfig[]; cases: 
           <tbody key={family.family} className="[&>tr:first-child>*]:pt-2 [&>tr:last-child>*]:border-b [&>tr:last-child>*]:border-line [&>tr:last-child>*]:pb-2">
             {family.cases.map((item, index) => {
               const share = caseShare(item.id);
-              const rowLit = focus.row === item.id;
+              const rowLit = focus.row === item.id || focusCase === item.id;
               return (
-                <tr key={item.id} className={clsx("transition-colors", rowLit && "bg-surface-2/60")}>
+                <tr key={item.id} id={`matrix-${item.id}`} className={clsx("transition-colors", rowLit && "bg-surface-2/60", focusCase === item.id && "bg-accent-soft")}>
                   <td className="hidden py-[3px] pl-4 align-middle md:table-cell">
                     {index === 0 && (
                       <FamilyCard family={family.family} ids={family.cases.map((c) => c.id)}>

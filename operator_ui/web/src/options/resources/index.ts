@@ -23,4 +23,14 @@ export const OPTIONS: OptionDef[] = [
     reference: "Vercel and Datadog observability",
     component: lazy(() => import("./CalmCharts")),
   },
+  {
+    id: "c",
+    letter: "C",
+    name: "Correlated timeline",
+    idea: "Resource lanes on the campaign's own clock, with attempts as the top lane and a cursor that reads every lane at once.",
+    optimizes: "Relating resource changes to what the run was doing, without claiming the run caused them.",
+    tradeoff: "No per-thread or per-process detail; it explains over time rather than showing the instant.",
+    reference: "Grafana annotations, Datadog correlated views",
+    component: lazy(() => import("./CorrelatedTimeline")),
+  },
 ];
