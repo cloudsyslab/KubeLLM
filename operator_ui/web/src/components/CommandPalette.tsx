@@ -84,7 +84,7 @@ export function CommandPalette({ open, onOpenChange }: { open: boolean; onOpenCh
       group: "Jobs",
       title: job.title,
       detail: `${KIND_LABEL[job.kind]} · ${job.status}`,
-      to: job.kind === "campaign" && job.live ? "/execution" : job.kind === "publish" ? "/publish" : job.kind === "campaign" ? "/jobs" : "/environment",
+      to: job.live ? "/execution" : `/jobs?job=${job.id}`,
       haystack: `${job.title} ${job.kind} ${job.status} ${job.id}`.toLowerCase(),
     }));
     return [...pages, ...models, ...runItems, ...caseItems, ...jobs];
