@@ -164,6 +164,101 @@
   mix). The following implementation pass builds the picks against the API
   contract, plus Runs, Compare, New campaign, and Environment.
 
+## Pass: options for every remaining surface
+
+- State: review-ready (see the return below). Start instruction: the user's
+  explicit `/website-design-build /build-from-plan` on 2026-11-01: build
+  every plausible alternative for all remaining functionality, not just a
+  few, so the user can consolidate. Topology must be a real topology: click
+  around, see which nodes are affected, explore health.
+- Pass: extend the options room to every surface still being designed. Each
+  surface owns its option list (`src/options/<surface>/index.ts`), pages are
+  generated from one registry, and the viewer's pick is what each page
+  shows. All options use the same demo data and real recorded results.
+- Excluded: backend endpoints, removing unpicked options, and anything that
+  starts work on the lab.
+
+### Return from the all-surfaces pass
+
+- State: review-ready.
+- Deliverables: 34 options across 10 surfaces in `/options`. Claude's
+  recommendation is in bold.
+
+  | Surface | Page | Options |
+  | --- | --- | --- |
+  | Runs | `/runs` | **A Experiments table**, B Timeline, C By configuration |
+  | Compare | `/compare` | **A Metric rows**, B Case diff matrix, C Visual |
+  | Execution | `/execution` | A Console first, B Trace first, **C Attempt grid first**, D Campaign timeline, E Attempt stories |
+  | New campaign | `/launch` | **A Builder and plan rail**, B Guided steps, C Composer, D Matrix planner |
+  | Environment | `/environment` | **A CI checklist**, B Health board, C Timeline and diff |
+  | Jobs | `/jobs` | **A Ledger**, B Activity feed, C Timeline |
+  | Publish | `/publish` | **A Review panel**, B Full review, C Receipt |
+  | Lab resources | `/lab` | **A Dense instrument**, B Calm charts, C Correlated timeline |
+  | Topology | `/lab/topology` | A Structured map, **B Dependency graph**, C Blast radius, D Health timeline |
+  | Active work | every page | A Sidebar card, **B Top bar pill**, C Floating mini panel |
+
+  The Overview tab of `/options` is a pick sheet: one row per surface, picks
+  apply immediately, "Copy my picks" copies the choices as text, and "Reset
+  to recommended" clears them. Option cards state what each option is best
+  for, what it costs, and the pattern it draws on. A ⌘K command palette
+  searches pages, models, runs, cases, and jobs.
+- Topology: rebuilt on one graph model (`src/demo/topologyGraph.ts`). It
+  covers the host, Docker daemon, operator app, benchmark worker, RAG API,
+  pgvector, Ollama, both GPUs, and the external model APIs. Inside the lane
+  it covers the minikube profile, node, namespaces, the fixture's pod,
+  Service, and endpoints, the leftover pods, and kube-system. The other four
+  profiles appear read-only. Edges carry calls and containment, and traffic
+  lights up from the replay's current phase. Every option supports select
+  and inspect, plus "What if this fails?", a labeled simulation listing what
+  goes down or is impaired and which preflight checks would block. B draws
+  nested frames with React Flow and starts as a list on phones. C re-centers
+  on any component by hop distance. D shows each component's health at every
+  phase of the campaign. The lane id is `minh` and its minikube profile is
+  `minh-lane`, as in readiness.
+- Data honesty and corrections:
+  - Publishing pushes. `publishing.py` commits the reviewed pack and catalog
+    paths and then pushes to the branch's configured upstream; the earlier
+    brief's "local commit" was wrong. The job history, the Jobs timeline, and
+    the Publish options now say so.
+  - The publish preview targets the unpublished qwen3.8:27b campaign, with
+    counts from its recorded runs: 134 of 135 attempts recorded, 94 passed
+    of 115 known outcomes, verifier agreeing on 112. The gpt-6-luna campaign
+    appears as already published.
+  - The execution setup log prints a Service only for the three demo cases
+    whose fixtures ship one, under their real names.
+  - Readiness uses the runner preflight's check names and
+    `check_readiness.py`'s groups. The Docker data root warning (about 12 GB
+    free against the 20 GiB needed to start a profile) appears only on
+    today's preflight.
+- Backend needs found while building, recorded in `API_CONTRACT.md`:
+  - persisted SSE execution events
+  - redacted `detail` and `duration_ms` per readiness check
+  - readiness invalidation when the lane selector or app instance changes
+  - a preview-file read endpoint for Publish B
+  - Compare computed in the browser from `/api/explorer`
+  - every client route listed for the server
+- Checks:
+  - `npm run build` passes (type check and Vite).
+  - Every option and 13 routes were swept at 1440x900 and 375x812: page
+    width equals the viewport and there are no console errors.
+  - Visual review at desktop of the new New campaign, Environment, Publish,
+    and Topology options, plus Topology B and D in the light theme and
+    Topology at phone width. In the graph, selection and the what-if flow
+    were exercised.
+  - `python3 -m pytest tests/ -q` was not run: this Mac's Python has no
+    pytest, and the pass changes only `operator_ui/web/` and this record.
+- Gaps:
+  - Reduced motion was not exercised in an emulated browser.
+  - Touch gestures (graph pan and zoom, scrubbing) were not exercised on a
+    touch device.
+  - Every option was swept for overflow and errors at phone width, but not
+    every one was inspected visually there.
+- Next decision: in `$website-design`, consolidate to one pick (or a mix)
+  per surface on the Overview pick sheet and paste "Copy my picks" into the
+  review. The following implementation pass removes the unpicked options and
+  builds the picks against `API_CONTRACT.md`. Codex then wires the backend on
+  the lab.
+
 ## Current pass: production front end (checkpoint 1: model explorer)
 
 - State: review-ready (checkpoint 1). Start instruction: the user's explicit

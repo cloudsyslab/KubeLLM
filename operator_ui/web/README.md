@@ -54,12 +54,30 @@ and refuses to write anything containing a filesystem path.
 
 ## Options room and demo replay
 
-`/options` renders each live surface (Execution, Lab resources, Topology) in
-two or three options so a design can be chosen from working screens. The
-viewer's pick per surface is remembered in the browser and is what
-`/execution`, `/lab`, and `/lab/topology` show.
+`/options` renders every surface still being designed in three to five
+options, so a design can be chosen from working screens. Each surface owns
+its list in `src/options/<surface>/index.ts`; `registry.ts` collects them and
+generates the routes. The viewer's pick per surface is remembered in the
+browser and is what that surface's page shows.
 
-Everything on those surfaces is driven by one demo campaign (`src/demo/`):
+| Surface | Page | Options (recommended first) |
+| --- | --- | --- |
+| Runs | `/runs` | A Experiments table, B Timeline, C By configuration |
+| Compare | `/compare` | A Metric rows, B Case diff matrix, C Visual |
+| Execution | `/execution` | C Attempt grid first, A Console first, B Trace first, D Campaign timeline, E Attempt stories |
+| New campaign | `/launch` | A Builder and plan rail, B Guided steps, C Composer, D Matrix planner |
+| Environment | `/environment` | A CI checklist, B Health board, C Timeline and diff |
+| Jobs | `/jobs` | A Ledger, B Activity feed, C Timeline |
+| Publish | `/publish` | A Review panel, B Full review, C Receipt |
+| Lab resources | `/lab` | A Dense instrument, B Calm charts, C Correlated timeline |
+| Topology | `/lab/topology` | B Dependency graph, A Structured map, C Blast radius, D Health timeline |
+| Active work | every page | B Top bar pill, A Sidebar card, C Floating mini panel |
+
+The Overview tab is a pick sheet: one row per surface, picks apply
+immediately, "Copy my picks" puts the choices on the clipboard, and "Reset
+to recommended" clears them.
+
+The live and operational surfaces are driven by demo data in `src/demo/`:
 
 - `campaign.ts` replays the recorded Ground Truth outcomes, verifier
   judgments, and per-role timings of the latest canonical run of
@@ -67,19 +85,29 @@ Everything on those surfaces is driven by one demo campaign (`src/demo/`):
 - `lab.ts` and `topology.ts` simulate host, GPU, process, and cluster state
   shaped by the lab survey (128 threads, 755 GiB, 98% root disk, 2× A40,
   `minh-lane` plus four other minikube profiles, two leftover pods).
+  `topologyGraph.ts` turns that state into one dependency graph (components,
+  calls, containment, live traffic, and what fails with each component) that
+  every Topology option reads.
+- `readiness.ts` and `jobs.ts` hold preflight results (check names from the
+  runner preflight, groups from the benchmark skill's `check_readiness.py`),
+  operator job history, and a publication preview that mirrors
+  `operator_ui/publishing.py`. Publishing commits the sanitized pack and the
+  two catalog edits, then pushes to the branch's configured upstream.
 - `replay.tsx` is the shared clock: play, pause, speed, scrub, a failure
   branch (runner error during setup), and a frozen mid-run state.
 
 Every simulated surface carries a Demo tag. Nothing in the web app starts
-work on the lab.
+work on the lab; "What if this fails?" in Topology is a simulation.
 
 ## Structure
 
 ```text
 src/api/          types mirrored from operator_ui/results.py, the data client
 src/lib/          configuration grouping and aggregation, case families, formatting, theme
-src/components/   shell, primitives, ranked metric bars, leaderboard, case matrix
-src/pages/        Models (home), model detail, run detail, next-checkpoint placeholders
+src/components/   shell, primitives, ranked metric bars, leaderboard, case matrix, command palette
+src/pages/        Models (home), model detail, run detail, not found
+src/options/      options room: one folder of options per surface, the registry, the pick sheet
+src/demo/         demo campaign, lab, topology, readiness, and job data, and the replay clock
 src/styles/app.css  design tokens for both themes, mapped into Tailwind
 ```
 
