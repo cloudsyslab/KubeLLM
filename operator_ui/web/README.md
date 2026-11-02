@@ -20,12 +20,14 @@ the app. Live deployments must build with `VITE_OPERATOR_DATA=api`.
 
 ## Private lab server
 
-The app has no password login and binds to `127.0.0.1` only. Keep the server
-inside the trusted lab network and reach it from a workstation through SSH
-local forwarding. On the server:
+The API requires the configured single-operator password and the app binds to
+`127.0.0.1` only. Keep the server inside the trusted lab network and reach it
+from a workstation through SSH local forwarding. On the server:
 
 ```sh
 export KUBELLM_LAB_CONFIG=<owner-only private lane selector>
+# Initialize once and save the generated password in a password manager.
+make operator-ui-auth
 # Optional when serving from a linked worktree: reuse canonical checkout state.
 export KUBELLM_UI_STATE_DIR=/home/minh/KubeLLM/.local/operator_ui
 operator_ui/service.sh start

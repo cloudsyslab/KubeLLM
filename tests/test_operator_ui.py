@@ -8,7 +8,7 @@ from pathlib import Path
 
 from fastapi.testclient import TestClient
 
-from operator_ui import app, config, jobs, publishing
+from operator_ui import app, auth, config, jobs, publishing
 from operator_ui import results, worker
 from operator_ui.config import private_lab_fingerprint, validate_campaign
 from operator_ui.results import history_summary
@@ -30,6 +30,7 @@ def _isolated_paths(monkeypatch, root: Path) -> None:
     monkeypatch.setattr(jobs, "STATE", state)
     monkeypatch.setattr(jobs, "JOBS_DIR", job_store)
     monkeypatch.setattr(jobs, "DB_PATH", state / "operator.sqlite3")
+    monkeypatch.setattr(auth, "AUTH_PATH", state / "auth.json")
     web_dist = root / "web" / "dist"
     web_dist.mkdir(parents=True, exist_ok=True)
     monkeypatch.setattr(app, "WEB_DIST", web_dist)
@@ -46,8 +47,10 @@ def test_lane_must_be_selected_explicitly(monkeypatch):
         raise AssertionError("an unset lane selector must not fall back to a default")
 
 
-def test_operator_serves_the_live_app_without_a_password_and_checks_write_origin(monkeypatch, tmp_path):
+def test_operator_requires_login_for_api_and_checks_write_origin(monkeypatch, tmp_path):
     _isolated_paths(monkeypatch, tmp_path)
+    password = "an operator password with enough length"
+    auth.create_auth(password)
     (app.WEB_DIST / "index.html").write_text("<!doctype html><main>operator shell</main>", encoding="utf-8")
     monkeypatch.setattr(app, "all_runs", lambda: [])
 
@@ -56,17 +59,31 @@ def test_operator_serves_the_live_app_without_a_password_and_checks_write_origin
         assert page.status_code == 200
         assert "operator shell" in page.text
         assert client.get("/models/gpt-6-luna").text == page.text
-        assert client.get("/api/overview").status_code == 200
+        assert client.get("/api/session").json() == {
+            "authenticated": False, "configured": True, "username": None,
+        }
+        assert client.get("/api/overview").status_code == 401
         policy = page.headers["content-security-policy"]
         assert "script-src 'self'" in policy
         assert "style-src 'self' 'unsafe-inline'" in policy
         assert client.post("/api/unknown").status_code == 403
-        assert client.post("/api/unknown", headers={"origin": "http://testserver"}).status_code == 405
+        origin = {"origin": "http://testserver"}
+        assert client.post("/api/login", json={"password": "wrong password"}, headers=origin).status_code == 401
+        login = client.post("/api/login", json={"password": password}, headers=origin)
+        assert login.status_code == 200
+        assert "httponly" in login.headers["set-cookie"].lower()
+        assert "samesite=strict" in login.headers["set-cookie"].lower()
+        assert client.get("/api/overview").status_code == 200
+        assert client.post("/api/unknown", headers=origin).status_code == 405
+        assert client.post("/api/logout", headers=origin).status_code == 200
+        assert client.get("/api/overview").status_code == 401
         assert "set-cookie" not in page.headers
 
 
 def test_job_event_stream_replays_after_last_event_id(monkeypatch, tmp_path):
     _isolated_paths(monkeypatch, tmp_path)
+    password = "another operator password"
+    auth.create_auth(password)
     job = jobs.create_job("campaign", {"cases": ["wrong_port"]}, total=1)
     jobs.add_event(job["id"], {
         "t": 1.0, "attempt": 0, "phase": "setup", "source": "runner",
@@ -75,6 +92,9 @@ def test_job_event_stream_replays_after_last_event_id(monkeypatch, tmp_path):
     jobs.update_job(job["id"], status="completed", finished_at=jobs.now())
 
     with TestClient(app.app) as client:
+        assert client.post(
+            "/api/login", json={"password": password}, headers={"origin": "http://testserver"},
+        ).status_code == 200
         response = client.get(f"/api/jobs/{job['id']}/events")
         assert response.status_code == 200
         assert response.headers["content-type"].startswith("text/event-stream")
@@ -82,6 +102,28 @@ def test_job_event_stream_replays_after_last_event_id(monkeypatch, tmp_path):
         replay = client.get(f"/api/jobs/{job['id']}/events", headers={"last-event-id": "1"})
         assert replay.status_code == 200
         assert replay.text == ""
+
+
+def test_terminal_job_event_stream_replays_all_pages(monkeypatch, tmp_path):
+    _isolated_paths(monkeypatch, tmp_path)
+    password = "long enough operator password"
+    auth.create_auth(password)
+    job = jobs.create_job("campaign", {"cases": ["wrong_port"]}, total=1)
+    for index in range(510):
+        jobs.add_event(job["id"], {
+            "t": float(index), "attempt": 0, "phase": "debug", "source": "runner",
+            "level": "info", "text": f"Event {index}.",
+        })
+    jobs.update_job(job["id"], status="completed", finished_at=jobs.now())
+
+    with TestClient(app.app) as client:
+        assert client.post(
+            "/api/login", json={"password": password}, headers={"origin": "http://testserver"},
+        ).status_code == 200
+        response = client.get(f"/api/jobs/{job['id']}/events")
+
+    ids = [int(line.removeprefix("id: ")) for line in response.text.splitlines() if line.startswith("id: ")]
+    assert ids == list(range(1, 511))
 
 
 def test_campaign_inputs_are_bounded_and_history_keeps_per_run_rates():
@@ -306,6 +348,14 @@ def test_publication_targets_a_new_results_branch_from_remote_default(monkeypatc
     _git(repo, "commit", "-m", "Fixture baseline")
     _git(repo, "remote", "add", "origin", str(remote))
     _git(repo, "push", "--set-upstream", "origin", "main")
+    writer = tmp_path / "remote-writer"
+    subprocess.run(["git", "clone", str(remote), str(writer)], check=True, capture_output=True)
+    _git(writer, "config", "user.name", "Remote Writer")
+    _git(writer, "config", "user.email", "writer@example.invalid")
+    (writer / "remote-only.txt").write_text("advanced remote base\n", encoding="utf-8")
+    _git(writer, "add", "remote-only.txt")
+    _git(writer, "commit", "-m", "Advance remote default branch")
+    _git(writer, "push", "origin", "main")
     monkeypatch.setattr(publishing, "REPO", repo)
     monkeypatch.setattr(publishing, "_remote_repository", lambda _remote: publishing.CANONICAL_REPOSITORY)
 
@@ -313,7 +363,9 @@ def test_publication_targets_a_new_results_branch_from_remote_default(monkeypatc
     assert target["remote"] == "origin"
     assert target["repository"] == "github.com/cloudsyslab/KubeLLM"
     assert target["base_branch"] == "main"
-    assert target["base_sha"] == _git(repo, "rev-parse", "HEAD")
+    assert target["base_sha"] == _git(writer, "rev-parse", "HEAD")
+    assert target["base_sha"] != _git(repo, "rev-parse", "HEAD")
+    _git(repo, "cat-file", "-e", f"{target['base_sha']}^{{commit}}")
     assert target["branch"] == "codex/operator-results/aaaaaaaa-ffffffffffffffff"
 
 

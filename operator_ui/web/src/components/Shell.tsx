@@ -7,6 +7,7 @@ import {
   Layers,
   ListChecks,
   LayoutGrid,
+  LogOut,
   Menu,
   Moon,
   Network,
@@ -218,7 +219,7 @@ function SearchButton({ onClick, compact }: { onClick: () => void; compact?: boo
   );
 }
 
-export function Shell({ children }: { children: ReactNode }) {
+export function Shell({ children, onLogout }: { children: ReactNode; onLogout?: () => Promise<void> }) {
   const [open, setOpen] = useState(false);
   const [paletteOpen, setPaletteOpen] = useState(false);
   useCommandPaletteHotkey(setPaletteOpen);
@@ -239,6 +240,11 @@ export function Shell({ children }: { children: ReactNode }) {
             </button>
           </Dialog.Trigger>
           <Brand />
+          {onLogout && (
+            <button type="button" onClick={() => { void onLogout().catch(() => {}); }} aria-label="Sign out" title="Sign out" className="grid size-8 cursor-pointer place-items-center rounded-md text-fg-3 hover:bg-surface-2 hover:text-fg">
+              <LogOut className="size-4" strokeWidth={1.75} />
+            </button>
+          )}
           <div id="mobile-dock" className="ml-auto flex min-w-0 items-center" />
           <SearchButton compact onClick={() => setPaletteOpen(true)} />
         </header>
@@ -266,6 +272,11 @@ export function Shell({ children }: { children: ReactNode }) {
           <div className="ml-auto flex items-center gap-3">
             <DockHost slot="topbar" />
             <SearchButton onClick={() => setPaletteOpen(true)} />
+            {onLogout && (
+              <button type="button" onClick={() => { void onLogout().catch(() => {}); }} aria-label="Sign out" title="Sign out" className="grid size-8 cursor-pointer place-items-center rounded-md text-fg-3 hover:bg-surface-2 hover:text-fg">
+                <LogOut className="size-4" strokeWidth={1.75} />
+              </button>
+            )}
           </div>
         </div>
         <main className="mx-auto w-full max-w-[1440px] px-4 pt-6 pb-16 sm:px-6 lg:px-8 lg:pt-8">{children}</main>

@@ -46,31 +46,7 @@ case "${1:-status}" in
     fi
     rm -f "$pid_file"
 
-    web_dir="$repo_root/operator_ui/web"
-    node_bin="${KUBELLM_UI_NODE_BIN:-$HOME/.local/share/nodejs/node-v24.20.0-linux-x64/bin/node}"
-    if [[ ! -x "$node_bin" ]]; then
-      node_bin="$(command -v node || true)"
-    fi
-    if [[ -z "$node_bin" || ! -x "$node_bin" ]]; then
-      echo "Node 20 or newer is required to build operator_ui/web." >&2
-      exit 2
-    fi
-    node_version="$("$node_bin" --version | sed 's/^v//')"
-    node_major="${node_version%%.*}"
-    if [[ ! "$node_major" =~ ^[0-9]+$ || "$node_major" -lt 20 ]]; then
-      echo "Node 20 or newer is required; found $node_version." >&2
-      exit 2
-    fi
-    npm_bin="$(dirname "$node_bin")/npm"
-    if [[ ! -x "$npm_bin" ]]; then
-      echo "npm was not found beside $node_bin." >&2
-      exit 2
-    fi
-    (
-      cd "$web_dir"
-      PATH="$(dirname "$node_bin"):$PATH" "$npm_bin" ci
-      PATH="$(dirname "$node_bin"):$PATH" VITE_OPERATOR_DATA=api "$npm_bin" run build
-    )
+    bash "$repo_root/operator_ui/build_web.sh"
 
     nohup "$python_bin" -m uvicorn operator_ui.app:app --host 127.0.0.1 --port "$port" --workers 1 --no-access-log >> "$log_file" 2>&1 < /dev/null &
     pid="$!"
@@ -83,7 +59,7 @@ case "${1:-status}" in
         tail -n 30 "$log_file" >&2 || true
         exit 1
       fi
-      if curl --silent --fail "http://127.0.0.1:$port/api/overview" >/dev/null; then
+      if curl --silent --fail "http://127.0.0.1:$port/api/session" >/dev/null; then
         echo "Operator app is running on 127.0.0.1:$port (pid $pid)."
         echo "Open the local UI through an SSH tunnel; it is not listening on the network interface."
         exit 0
@@ -95,7 +71,7 @@ case "${1:-status}" in
     ;;
   status)
     if pid="$(read_pid 2>/dev/null)" && process_matches "$pid"; then
-      if curl --silent --fail "http://127.0.0.1:$port/api/overview" >/dev/null; then
+      if curl --silent --fail "http://127.0.0.1:$port/api/session" >/dev/null; then
         echo "Operator app is running and responding on 127.0.0.1:$port (pid $pid)."
       else
         echo "Operator app process $pid is running, but /api/overview did not respond. See $log_file."

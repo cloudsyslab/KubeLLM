@@ -65,6 +65,24 @@ async function sendJson<T>(path: string, method: "POST", body?: unknown): Promis
   return response.json() as Promise<T>;
 }
 
+export interface OperatorSession {
+  authenticated: boolean;
+  configured: boolean;
+  username: string | null;
+}
+
+export const authApi = {
+  session() {
+    return readJson<OperatorSession>("/api/session");
+  },
+  login(password: string) {
+    return sendJson<{ authenticated: boolean }>("/api/login", "POST", { password });
+  },
+  logout() {
+    return sendJson<{ authenticated: boolean }>("/api/logout", "POST");
+  },
+};
+
 async function unavailable<T>(): Promise<T> {
   throw new Error("This action is available when the operator is connected to its backend.");
 }

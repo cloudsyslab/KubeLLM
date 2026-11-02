@@ -14,9 +14,14 @@ What the web app expects from `operator_ui/app.py` in live mode
 - Scripts remain same-origin only. Components use React style attributes, so
   `style-src` allows inline styles; fonts, stylesheets, images, and API
   connections remain same-origin (`data:` is also allowed for images).
-- The app has no password login. Run it on a trusted lab host and access it
-  through an SSH tunnel; write requests still require a same-origin `Origin`
-  header.
+- `GET /api/session` exposes only whether login is configured and whether the
+  current browser has a session. `POST /api/login` verifies the configured
+  password and sets an HttpOnly, SameSite=Strict session cookie. Other API
+  routes, including event streams, require that cookie; `POST` requests also
+  require a same-origin `Origin` header. `POST /api/logout` revokes all current
+  sessions for the single operator.
+- Run the app on a trusted lab host and access it through an SSH tunnel; the
+  process listens on loopback only.
 
 On the workstation, forward a local port with `ssh -N -L
 8787:127.0.0.1:8787 <server>` and open `http://127.0.0.1:8787`. The server
@@ -56,7 +61,8 @@ replay already uses this shape (`DemoEvent` in `src/demo/campaign.ts`):
 
 Serve it as `GET /api/jobs/{id}/events` (Server-Sent Events) with persisted
 integer event IDs so `Last-Event-ID` replays missed events after a refresh or
-reconnect. Persist only the allowlisted event projection; never persist
+reconnect. Terminal jobs replay every stored event in bounded pages before the
+stream closes. Persist only the allowlisted event projection; never persist
 prompts or raw command output. Job state includes the planned attempt list
 (model, case) so progress has a real denominator.
 

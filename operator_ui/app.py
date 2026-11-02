@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import secrets
 import subprocess
 import sys
 import time
@@ -16,14 +17,16 @@ from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
-from . import jobs
+from . import auth, jobs
 from .config import JOB_ID_RE, JOBS_DIR, REPO, private_lab_config, private_lab_fingerprint, secure_state_dir, validate_campaign
 from .results import all_runs, find_run, history_summary, inspect_detail, public_run
 from . import telemetry
 
 
 WEB_DIST = Path(__file__).parent / "web" / "dist"
-OPERATOR_INSTANCE_ID = f"{os.getpid()}-{time.time_ns()}"
+COOKIE_NAME = "kubellm_operator"
+OPERATOR_INSTANCE_ID = secrets.token_hex(16)
+_LOGIN_FAILURES: dict[str, list[float]] = {}
 
 
 @asynccontextmanager
@@ -45,6 +48,10 @@ def _same_origin(request: Request) -> bool:
     if not origin or not host:
         return False
     return origin.rstrip("/") == f"{request.url.scheme}://{host}".rstrip("/")
+
+
+def _authenticated(request: Request) -> bool:
+    return auth.verify_session(request.cookies.get(COOKIE_NAME, ""))
 
 
 def _readiness_fresh() -> bool:
@@ -102,6 +109,8 @@ def _new_worker(kind: str, config: dict, total: int = 0) -> dict:
 async def operator_security(request: Request, call_next):
     if request.method not in {"GET", "HEAD", "OPTIONS"} and not _same_origin(request):
         response = JSONResponse({"detail": "Request origin could not be verified."}, status_code=403)
+    elif request.url.path.startswith("/api/") and request.url.path not in {"/api/login", "/api/session"} and not _authenticated(request):
+        response = JSONResponse({"detail": "Sign in to continue."}, status_code=401)
     else:
         response = await call_next(request)
     response.headers.setdefault("X-Content-Type-Options", "nosniff")
@@ -124,6 +133,61 @@ def index():
     if not index_path.is_file():
         raise HTTPException(status_code=503, detail="Build the operator web app with npm run build in operator_ui/web.")
     return FileResponse(index_path)
+
+
+@app.get("/api/session")
+def session(request: Request):
+    authenticated = _authenticated(request)
+    return {
+        "authenticated": authenticated,
+        "configured": auth.auth_configured(),
+        "username": "Operator" if authenticated else None,
+    }
+
+
+@app.post("/api/login")
+async def login(request: Request):
+    client = request.client.host if request.client else "unknown"
+    now = time.monotonic()
+    attempts = [stamp for stamp in _LOGIN_FAILURES.get(client, []) if now - stamp < 900]
+    _LOGIN_FAILURES[client] = attempts
+    if len(attempts) >= 8:
+        raise HTTPException(status_code=429, detail="Too many sign-in attempts. Try again in 15 minutes.")
+    try:
+        body = await request.json()
+    except (ValueError, json.JSONDecodeError) as exc:
+        raise HTTPException(status_code=400, detail="Enter your operator password.") from exc
+    password = body.get("password") if isinstance(body, dict) else None
+    if not auth.auth_configured():
+        raise HTTPException(status_code=503, detail="Initialize the private operator login on the server first.")
+    if not isinstance(password, str) or not auth.verify_password(password):
+        attempts.append(now)
+        _LOGIN_FAILURES[client] = attempts[-8:]
+        raise HTTPException(status_code=401, detail="The password did not match.")
+    _LOGIN_FAILURES.pop(client, None)
+    session_id, expires = auth.make_session()
+    token = auth.sign_session(session_id, expires)
+    if not token:
+        raise HTTPException(status_code=503, detail="The operator login is unavailable.")
+    response = JSONResponse({"authenticated": True})
+    response.set_cookie(
+        COOKIE_NAME,
+        token,
+        httponly=True,
+        secure=False,
+        samesite="strict",
+        max_age=auth.SESSION_HOURS * 3600,
+        path="/",
+    )
+    return response
+
+
+@app.post("/api/logout")
+def logout():
+    auth.revoke_sessions()
+    response = JSONResponse({"authenticated": False})
+    response.delete_cookie(COOKIE_NAME, path="/", httponly=True, samesite="strict")
+    return response
 
 
 @app.get("/api/overview")
@@ -247,7 +311,7 @@ def get_job_events(job_id: str, request: Request):
                 cursor = event["id"]
                 payload = json.dumps(event, ensure_ascii=True, separators=(",", ":"))
                 yield f"id: {cursor}\ndata: {payload}\n\n"
-            if jobs.job_is_terminal(job_id):
+            if jobs.job_is_terminal(job_id) and len(records) < 250:
                 return
             if not records:
                 yield ": keep-alive\n\n"

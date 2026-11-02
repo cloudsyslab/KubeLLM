@@ -56,7 +56,7 @@ def _git(args: list[str], *, cwd: Path | None = None, timeout: int = 15, check: 
     return result
 
 
-def _remote_head(remote: str) -> tuple[str, str]:
+def _remote_head(remote: str, campaign_job_id: str) -> tuple[str, str]:
     result = _git(["ls-remote", "--symref", remote, "HEAD"], timeout=30, check=False)
     if result.returncode:
         raise RuntimeError("Git could not inspect the configured results remote.")
@@ -75,7 +75,18 @@ def _remote_head(remote: str) -> tuple[str, str]:
     branch = symbolic.removeprefix("refs/heads/")
     if not SAFE_BRANCH.fullmatch(branch):
         raise RuntimeError("The configured results remote has an unsupported default branch.")
-    return branch, head
+    base_ref = f"refs/kubellm-operator/publish-bases/{campaign_job_id}"
+    fetched = _git(
+        ["fetch", "--no-tags", remote, f"+{symbolic}:{base_ref}"],
+        timeout=30,
+        check=False,
+    )
+    if fetched.returncode:
+        raise RuntimeError("Git could not fetch the configured results base commit.")
+    fetched_head = _git(["rev-parse", "--verify", f"{base_ref}^{{commit}}"], check=False).stdout.strip()
+    if not re.fullmatch(r"[0-9a-f]{40,64}", fetched_head) or fetched_head != head:
+        raise RuntimeError("The configured results branch changed while its base was being verified. Prepare a fresh preview.")
+    return branch, fetched_head
 
 
 def _remote_branch_exists(remote: str, branch: str) -> bool:
@@ -108,7 +119,7 @@ def _publication_target(campaign_job_id: str, token: str) -> dict:
     if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,62}", remote) or remote not in _git(["remote"]).stdout.split():
         raise RuntimeError("Configure a Git remote for reviewed result publication.")
     repository = _remote_repository(remote)
-    base_branch, base_sha = _remote_head(remote)
+    base_branch, base_sha = _remote_head(remote, campaign_job_id)
     branch = f"codex/operator-results/{campaign_job_id[:8]}-{token[:16]}"
     if _remote_branch_exists(remote, branch):
         raise RuntimeError("The proposed results branch already exists. Prepare a new preview.")
