@@ -21,6 +21,7 @@ from .results import _read_json, _safe_model
 ARCHIVER = REPO / "scripts" / "archive_exploratory_run.py"
 PREVIEW_TTL = timedelta(minutes=30)
 SAFE_BRANCH = re.compile(r"^[A-Za-z0-9._/-]{1,160}$")
+PROTECTED_BRANCHES = frozenset({"main", "master"})
 _ARCHIVE_RUN = None
 
 
@@ -54,16 +55,29 @@ def _git(args: list[str], *, timeout: int = 15, check: bool = True) -> subproces
     return result
 
 
+def _remote_default_branch(remote: str) -> str | None:
+    ref = _git(["symbolic-ref", "--quiet", "--short", f"refs/remotes/{remote}/HEAD"], check=False).stdout.strip()
+    return ref.split("/", 1)[1] if ref.startswith(f"{remote}/") else None
+
+
 def _publication_target() -> dict:
     branch = _git(["branch", "--show-current"]).stdout.strip()
     upstream = _git(["rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{upstream}"]).stdout.strip()
     head = _git(["rev-parse", "HEAD"]).stdout.strip()
     if not SAFE_BRANCH.fullmatch(branch) or not SAFE_BRANCH.fullmatch(upstream):
         raise RuntimeError("Check out a branch with a configured upstream before publishing results.")
+    remote, _, upstream_branch = upstream.partition("/")
+    if not upstream_branch or remote not in _git(["remote"]).stdout.split():
+        raise RuntimeError("The current branch must track a branch on a configured remote before publishing results.")
+    # Results never go straight to the default branch: publish on a results
+    # branch and integrate it through a pull request.
+    protected = PROTECTED_BRANCHES | {name for name in (_remote_default_branch(remote),) if name}
+    if branch in protected or upstream_branch in protected:
+        raise RuntimeError("Publishing never pushes to the default branch. Check out a results branch with its own upstream, then publish and open a pull request.")
     ahead = _git(["rev-list", "--count", f"{upstream}..HEAD"]).stdout.strip()
     if ahead != "0":
         raise RuntimeError("The current branch has unpublished commits. Push or integrate them before publishing results.")
-    return {"branch": branch, "upstream": upstream, "head": head}
+    return {"branch": branch, "upstream": upstream, "remote": remote, "upstream_branch": upstream_branch, "head": head}
 
 
 def _ensure_paths_clean(paths: list[str]) -> None:
@@ -498,7 +512,10 @@ def publish_campaign(publish_job_id: str, campaign_job_id: str, token: str) -> N
             raise RuntimeError("Git could not create the export commit.")
         committed = True
         jobs.update_job(publish_job_id, current_label="Pushing the export commit to the configured upstream.")
-        pushed = _log_git(publish_job_id, ["push"], timeout=180)
+        # An explicit refspec pushes only this commit to the reviewed upstream
+        # branch, whatever the server's push.default says.
+        reviewed = manifest["target"]
+        pushed = _log_git(publish_job_id, ["push", reviewed["remote"], f"HEAD:refs/heads/{reviewed['upstream_branch']}"], timeout=180)
         if pushed.returncode:
             _finish_publish(publish_job_id, "failed", "The export commit is local, but pushing it failed. Check server Git access and push the current branch.")
             return

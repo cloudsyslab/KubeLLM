@@ -70,8 +70,9 @@ attempt list (model, case) so progress has a real denominator.
   operator app instance (app.py compares both). The UI should say that
   restarting the app or editing the selector invalidates a fresh result.
 - Publishing commits the reviewed paths and then pushes the commit to the
-  branch's configured upstream (publishing.py). Publish option B, the full
-  review, needs a read endpoint for preview file contents.
+  branch's configured upstream (publishing.py). It refuses the default
+  branch, so the preview's target is always a results branch. The full
+  review needs a read endpoint for preview file contents.
 
 ## Health summary (sidebar)
 

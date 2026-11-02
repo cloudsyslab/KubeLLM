@@ -73,7 +73,9 @@ lane that is less than 20 minutes old.
 
 Completed campaigns include a safe Markdown summary. **Publish results** opens
 a preview of the exact sanitized archive files and model identifiers; confirming
-it creates a path-scoped commit and pushes to the branch's configured upstream.
+it creates a path-scoped commit and pushes it to the branch's configured
+upstream. Publishing refuses the default branch: run it on a results branch
+and merge that through a pull request.
 Raw logs and prompts stay in ignored `.local/` storage. Case, prompt, and RAG
 editing are not part of this first operator pass.
 

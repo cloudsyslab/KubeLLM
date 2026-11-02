@@ -183,6 +183,43 @@ def test_serial_campaign_stop_waits_for_active_runner_then_preserves_unknown_out
     assert manifest["attempts_completed"] == 1
 
 
+def test_publication_refuses_the_default_branch(monkeypatch, tmp_path):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    remote = tmp_path / "remote.git"
+    subprocess.run(["git", "init", "--bare", "--initial-branch=main", str(remote)], check=True, capture_output=True)
+    subprocess.run(["git", "init", "--initial-branch=main"], cwd=repo, check=True, capture_output=True)
+    _git(repo, "config", "user.name", "Fixture Operator")
+    _git(repo, "config", "user.email", "fixture@example.invalid")
+    (repo / "README.md").write_text("base\n", encoding="utf-8")
+    _git(repo, "add", "README.md")
+    _git(repo, "commit", "-m", "Fixture baseline")
+    _git(repo, "remote", "add", "origin", str(remote))
+    _git(repo, "push", "--set-upstream", "origin", "main")
+    monkeypatch.setattr(publishing, "REPO", repo)
+
+    try:
+        publishing._publication_target()
+    except RuntimeError as exc:
+        assert "default branch" in str(exc)
+    else:
+        raise AssertionError("publishing on main must be refused")
+
+    # A differently named local branch that still tracks main is refused too.
+    _git(repo, "checkout", "-b", "export", "--track", "origin/main")
+    try:
+        publishing._publication_target()
+    except RuntimeError as exc:
+        assert "default branch" in str(exc)
+    else:
+        raise AssertionError("publishing to origin/main must be refused")
+
+    _git(repo, "checkout", "-b", "results")
+    _git(repo, "push", "--set-upstream", "origin", "results")
+    target = publishing._publication_target()
+    assert (target["remote"], target["upstream_branch"]) == ("origin", "results")
+
+
 def test_publish_preview_exports_allowlisted_files_and_pushes_only_reviewed_paths(monkeypatch, tmp_path):
     repo = tmp_path / "repo"
     (repo / "data" / "exploratory").mkdir(parents=True)
@@ -207,6 +244,10 @@ def test_publish_preview_exports_allowlisted_files_and_pushes_only_reviewed_path
     _git(repo, "commit", "-m", "Fixture baseline")
     _git(repo, "remote", "add", "origin", str(remote))
     _git(repo, "push", "--set-upstream", "origin", "main")
+    remote_main = _git(repo, "rev-parse", "origin/main")
+    # Results are published on a results branch, never on the default branch.
+    _git(repo, "checkout", "-b", "results")
+    _git(repo, "push", "--set-upstream", "origin", "results")
 
     state = tmp_path / "private-state"
     campaign_id = "a" * 32
@@ -280,7 +321,8 @@ def test_publish_preview_exports_allowlisted_files_and_pushes_only_reviewed_path
     latest_paths = set(_git(repo, "diff-tree", "--no-commit-id", "--name-only", "-r", "HEAD").splitlines())
     reviewed_paths = {item["path"] for item in preview["files"]}
     assert latest_paths == reviewed_paths
-    assert _git(repo, "rev-parse", "HEAD") == _git(repo, "rev-parse", "origin/main")
+    assert _git(repo, "rev-parse", "HEAD") == _git(repo, "rev-parse", "origin/results")
+    assert _git(repo, "--git-dir", str(remote), "rev-parse", "main") == remote_main
     assert _git(repo, "show", "HEAD:unrelated.txt") == "base"
     assert _git(repo, "diff", "--cached", "--", "unrelated.txt")
     published_pack = repo / "data" / "exploratory" / next(Path(item["path"]).parts[2] for item in preview["files"] if item["path"].endswith("/README.md") and item["path"].startswith("data/exploratory/operator-campaign"))
