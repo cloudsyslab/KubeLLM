@@ -11,8 +11,9 @@ What the web app expects from `operator_ui/app.py` in live mode
   `/launch`, `/environment`, `/publish`, `/lab`, `/lab/topology`, and
   `/options` (the design-review room; drop it once the options are
   consolidated). Deep links must load directly.
-- The current Content-Security-Policy works as is: scripts, styles, and fonts
-  are same-origin files, and React applies inline styles through the CSSOM.
+- Scripts remain same-origin only. Components use React style attributes, so
+  `style-src` allows inline styles; fonts, stylesheets, images, and API
+  connections remain same-origin (`data:` is also allowed for images).
 - The app has no password login. Run it on a trusted lab host and access it
   through an SSH tunnel; write requests still require a same-origin `Origin`
   header.

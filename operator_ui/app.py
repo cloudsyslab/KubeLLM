@@ -110,7 +110,7 @@ async def operator_security(request: Request, call_next):
     response.headers.setdefault("Permissions-Policy", "camera=(), microphone=(), geolocation=()")
     response.headers.setdefault(
         "Content-Security-Policy",
-        "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; "
+        "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; "
         "connect-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'",
     )
     if request.url.path.startswith("/api/"):

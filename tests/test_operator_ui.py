@@ -57,6 +57,9 @@ def test_operator_serves_the_live_app_without_a_password_and_checks_write_origin
         assert "operator shell" in page.text
         assert client.get("/models/gpt-6-luna").text == page.text
         assert client.get("/api/overview").status_code == 200
+        policy = page.headers["content-security-policy"]
+        assert "script-src 'self'" in policy
+        assert "style-src 'self' 'unsafe-inline'" in policy
         assert client.post("/api/unknown").status_code == 403
         assert client.post("/api/unknown", headers={"origin": "http://testserver"}).status_code == 405
         assert "set-cookie" not in page.headers
