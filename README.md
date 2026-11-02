@@ -45,8 +45,8 @@ integrity status.
 The local operator UI checks or prepares the selected private lab lane, runs
 serial benchmark campaigns through the canonical runner, and visualizes
 structured benchmark history. It binds to `127.0.0.1` and stores its login,
-job database, runner logs, and results under ignored `.local/operator_ui/`
-and `.local/test_runs/operator_ui/` paths.
+job database, runner logs, and each attempt's runner output under the ignored
+`.local/operator_ui/` folder; History lists those attempts as local runs.
 
 Set up the single-operator login once, save the generated password in your
 password manager, then start the server:

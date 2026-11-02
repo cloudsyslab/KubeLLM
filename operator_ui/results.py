@@ -212,6 +212,31 @@ def _project_run(run_dir: Path, config_path: Path, source: str, rel: str) -> dic
     }
 
 
+def _local_rel(run_dir: Path) -> str:
+    """The history key of a local run, shared by History and the campaign worker."""
+    try:
+        return f"local/{run_dir.resolve().relative_to(RUNS_DIR.resolve()).as_posix()}"
+    except (OSError, ValueError):
+        return f"local/{run_dir.name}"
+
+
+def _operator_runs() -> list[tuple[Path, Path, str]]:
+    """Runner output of operator campaigns, only under <jobs>/<job id>/attempts/.
+
+    Other job folders (logs, publish previews) are never read as runs.
+    """
+    found: list[tuple[Path, Path, str]] = []
+    if not RUNS_DIR.is_dir():
+        return found
+    for job_dir in sorted(RUNS_DIR.iterdir(), key=lambda item: item.name, reverse=True):
+        attempts = job_dir / "attempts"
+        if job_dir.is_symlink() or attempts.is_symlink() or not attempts.is_dir():
+            continue
+        for run_dir, config, _ in _discover_configs(attempts, "local"):
+            found.append((run_dir, config, _local_rel(run_dir)))
+    return found
+
+
 def _all_runs() -> list[dict]:
     data = REPO / "data"
     records = []
@@ -221,7 +246,7 @@ def _all_runs() -> list[dict]:
         if record:
             records.append(record)
 
-    for run_dir, config, rel in _discover_configs(RUNS_DIR, "local"):
+    for run_dir, config, rel in _operator_runs():
         record = _project_run(run_dir, config, "local", rel)
         if record:
             records.append(record)
@@ -279,9 +304,9 @@ def inspect_detail(ref: str) -> dict | None:
 def safe_campaign_attempts(attempt_paths: list[Path]) -> list[dict]:
     rows = []
     for path in attempt_paths:
-        candidates = [(path, _candidate_config(path), path.name)]
+        candidates = [(path, _candidate_config(path), _local_rel(path))]
         if candidates[0][1] is None:
-            candidates = _discover_configs(path, "local")
+            candidates = [(run_dir, config, _local_rel(run_dir)) for run_dir, config, _ in _discover_configs(path, "local")]
         for run_dir, config, rel in candidates:
             if config:
                 row = _project_run(run_dir, config, "local", rel)

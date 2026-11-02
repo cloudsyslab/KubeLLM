@@ -11,7 +11,9 @@ from pathlib import Path
 REPO = Path(__file__).resolve().parents[1]
 STATE = REPO / ".local" / "operator_ui"
 JOBS_DIR = STATE / "jobs"
-RUNS_DIR = REPO / ".local" / "test_runs" / "operator_ui"
+# Campaigns keep each attempt's runner output at <jobs>/<job id>/attempts/<attempt>/;
+# History reads local runs from there.
+RUNS_DIR = JOBS_DIR
 DATA_INDEXES = (REPO / "data" / "exploratory" / "README.md", REPO / "data" / "README.md")
 TECHNIQUES = ("allStepsAtOnce", "stepByStep", "singleAgent", "knowledgeAgentOnly")
 MAX_CAMPAIGN_ATTEMPTS = 5000

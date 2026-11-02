@@ -194,6 +194,29 @@ def test_serial_campaign_stop_waits_for_active_runner_then_preserves_unknown_out
     assert manifest["attempts_completed"] == 1
 
 
+def test_history_lists_campaign_attempts_under_the_ref_the_worker_records(monkeypatch, tmp_path):
+    jobs_root = tmp_path / "jobs"
+    attempt = jobs_root / ("c" * 32) / "attempts" / "0001-wrong_port-allStepsAtOnce-default"
+    (attempt / "wrong_port").mkdir(parents=True)
+    (attempt / "run_config.json").write_text(json.dumps({
+        "run_id": "2026-10-30T10-30-00", "test_names": ["wrong_port"], "technique": "allStepsAtOnce",
+    }), encoding="utf-8")
+    (attempt / "wrong_port" / "summary.json").write_text(json.dumps({
+        "test_name": "wrong_port", "technique": "allStepsAtOnce", "status": "PASS",
+        "ground_truth_passed": True, "ground_truth_configured": True,
+    }), encoding="utf-8")
+    # A publish preview copy in the same job folder is not a run.
+    preview = jobs_root / ("c" * 32) / "publish-preview" / "attempt-0001"
+    preview.mkdir(parents=True)
+    (preview / "run_config.archived.json").write_text(json.dumps({"run_id": "2026-10-30T10-30-00"}), encoding="utf-8")
+    monkeypatch.setattr(results, "RUNS_DIR", jobs_root)
+
+    local = [run for run in results._all_runs() if run["source"] == "local"]
+    recorded = results.safe_campaign_attempts([attempt])
+    assert len(local) == 1 and len(recorded) == 1
+    assert local[0]["ref"] == recorded[0]["ref"]
+
+
 def test_publication_refuses_the_default_branch(monkeypatch, tmp_path):
     repo = tmp_path / "repo"
     repo.mkdir()
