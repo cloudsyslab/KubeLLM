@@ -182,6 +182,8 @@ async def login(request: Request):
 
 @app.post("/api/logout")
 def logout():
+    # Single operator: logging out ends every session, not just this browser's cookie.
+    auth.revoke_sessions()
     response = JSONResponse({"authenticated": False})
     response.delete_cookie(COOKIE_NAME, path="/", httponly=True, samesite="strict")
     return response

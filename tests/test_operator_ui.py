@@ -67,6 +67,12 @@ def test_operator_login_and_origin_protection(monkeypatch, tmp_path):
         assert "httponly" in cookie_header and "samesite=strict" in cookie_header
         assert client.get("/api/overview").status_code == 200
 
+        # Logging out revokes the session itself, so a copied token stops working.
+        copied = response.cookies.get(app.COOKIE_NAME)
+        assert client.post("/api/logout", headers={"origin": "http://testserver"}).status_code == 200
+        client.cookies.set(app.COOKIE_NAME, copied)
+        assert client.get("/api/overview").status_code == 401
+
 
 def test_campaign_inputs_are_bounded_and_history_keeps_per_run_rates():
     valid = validate_campaign(

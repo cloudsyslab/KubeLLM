@@ -33,9 +33,18 @@ def create_auth(password: str | None = None, *, replace: bool = False) -> str:
         "version": 1,
         "password_salt": base64.b64encode(salt).decode("ascii"),
         "password_hash": base64.b64encode(digest).decode("ascii"),
-        "session_key": base64.b64encode(secrets.token_bytes(48)).decode("ascii"),
+        "session_key": _new_session_key(),
         "created_at": datetime.now(timezone.utc).isoformat(),
     }
+    _write_auth(data)
+    return password
+
+
+def _new_session_key() -> str:
+    return base64.b64encode(secrets.token_bytes(48)).decode("ascii")
+
+
+def _write_auth(data: dict) -> None:
     temporary = AUTH_PATH.with_suffix(".tmp")
     fd = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
     with os.fdopen(fd, "w", encoding="utf-8") as handle:
@@ -45,7 +54,15 @@ def create_auth(password: str | None = None, *, replace: bool = False) -> str:
         os.fsync(handle.fileno())
     os.replace(temporary, AUTH_PATH)
     os.chmod(AUTH_PATH, 0o600)
-    return password
+
+
+def revoke_sessions() -> None:
+    """Rotate the session key so every issued session, including copied tokens, stops verifying."""
+    data = _auth_data()
+    if not data:
+        return
+    data["session_key"] = _new_session_key()
+    _write_auth(data)
 
 
 def _auth_data() -> dict | None:
