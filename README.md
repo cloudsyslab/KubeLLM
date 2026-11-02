@@ -64,9 +64,9 @@ forward it through your existing private SSH connection:
 ssh -L 8787:127.0.0.1:8787 <server>
 ```
 
-The app uses `KUBELLM_LAB_CONFIG` when set, or the private
-`~/.config/kubellm/lanes/minh.json` selector by default. It never falls back to
-the active Kubernetes context. Change the login with
+The app requires `KUBELLM_LAB_CONFIG`, the path to your owner-only lane
+selector; `start.sh` and the app refuse to start without it. There is no
+default lane, and it never falls back to the active Kubernetes context. Change the login with
 `python3 -m operator_ui.setup_auth --reset`.
 Campaigns require a preflight from the current server session and selected
 lane that is less than 20 minutes old.

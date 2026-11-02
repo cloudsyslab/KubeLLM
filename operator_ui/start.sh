@@ -9,6 +9,11 @@ if [[ ! -x "$python_bin" ]]; then
   python_bin="python3"
 fi
 
+if [[ -z "${KUBELLM_LAB_CONFIG:-}" ]]; then
+  echo "Select a private lane first: export KUBELLM_LAB_CONFIG=<owner-only lane selector file>" >&2
+  exit 2
+fi
+
 if [[ ! -f "$repo_root/.local/operator_ui/auth.json" ]]; then
   echo "Set up the operator login first: $python_bin -m operator_ui.setup_auth" >&2
   exit 2

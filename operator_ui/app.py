@@ -30,6 +30,7 @@ _LOGIN_FAILURES: dict[str, list[float]] = {}
 
 @asynccontextmanager
 async def lifespan(_: FastAPI):
+    private_lab_config()  # refuse to start without an explicitly selected lane
     secure_state_dir()
     jobs.initialize()
     jobs.reconcile_jobs()

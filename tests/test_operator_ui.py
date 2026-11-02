@@ -30,6 +30,17 @@ def _isolated_paths(monkeypatch, root: Path) -> None:
     monkeypatch.setattr(jobs, "JOBS_DIR", job_store)
     monkeypatch.setattr(jobs, "DB_PATH", state / "operator.sqlite3")
     monkeypatch.setattr(auth, "AUTH_PATH", state / "auth.json")
+    monkeypatch.setenv("KUBELLM_LAB_CONFIG", str(root / "private-lane-selector.json"))
+
+
+def test_lane_must_be_selected_explicitly(monkeypatch):
+    monkeypatch.delenv("KUBELLM_LAB_CONFIG", raising=False)
+    try:
+        config.private_lab_config()
+    except RuntimeError as exc:
+        assert "KUBELLM_LAB_CONFIG" in str(exc)
+    else:
+        raise AssertionError("an unset lane selector must not fall back to a default")
 
 
 def test_operator_login_and_origin_protection(monkeypatch, tmp_path):

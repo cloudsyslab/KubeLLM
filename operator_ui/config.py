@@ -20,13 +20,19 @@ MODEL_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.:/+-]{0,119}$")
 JOB_ID_RE = re.compile(r"^[0-9a-f]{32}$")
 
 
+LANE_REQUIRED = "Select a private lane explicitly: set KUBELLM_LAB_CONFIG to its owner-only selector file before starting the operator app."
+
+
 def private_lab_config() -> Path:
-    """Resolve Minh's owner-only lane selector without reading its contents."""
-    selected = os.environ.get("KUBELLM_LAB_CONFIG")
-    if selected:
-        return Path(selected).expanduser().resolve()
-    config_home = Path(os.environ.get("XDG_CONFIG_HOME", Path.home() / ".config"))
-    return (config_home / "kubellm" / "lanes" / "minh.json").expanduser().resolve()
+    """Resolve the explicitly selected owner-only lane selector without reading its contents.
+
+    The lane is never inferred: there is no per-user default and no fallback to
+    the active Kubernetes context.
+    """
+    selected = os.environ.get("KUBELLM_LAB_CONFIG", "").strip()
+    if not selected:
+        raise RuntimeError(LANE_REQUIRED)
+    return Path(selected).expanduser().resolve()
 
 
 def private_lab_fingerprint() -> str:
