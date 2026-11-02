@@ -15,6 +15,7 @@ The user owns decisions. Codex owns discovery: if a fact can be found by reading
 
 - Do not enact the plan, build, modify files, or make irreversible decisions while grilling is active. Only the user's fresh, explicit `$build-from-plan` invocation permits the transition to execution; apply the Execution Gate below.
 - Keep discovery read-only. Do not install dependencies, provision or start runtimes, create implementation artifacts, or run implementation smoke tests as interview preparation.
+- Keep Git setup read-only too. Record the repository, intended outcome, and any known existing workline; do not create a branch, worktree, commit, or pull request during grilling. `$build-from-plan` creates or resumes the workline after its fresh invocation.
 - Ask one question per assistant turn, then wait for the user's answer.
 - For every question, include Codex's recommended answer.
 - Prioritize questions where the answer would change architecture, scope, user experience, implementation order, risk, validation, or rollback.
@@ -63,6 +64,8 @@ Use pre-action patterns as needed:
 8. Present a concise shared-understanding summary, including discovery status for any evidence-backed assumptions. Remain in grilling under the Execution Gate; agreement with the summary does not authorize action.
 
 ## Question Selection
+
+For implementation plans, capture the intended repository and integration target when discoverable. Use the repository's default branch for a new workline unless the user chose a stacked dependency. Leave branch naming and worktree placement to `$build-from-plan`; do not spend a question on reversible naming details.
 
 Prefer questions in this order:
 

@@ -107,6 +107,6 @@ At the end of each quick pass, and at each concept boundary and close of a sessi
 
 1. Append one line per concept to `log.md`: `- YYYY-MM-DD · <concept> · <topic or —> · <links>`. The links point to the map, blog, kept artifacts, or demos. Do not add grades or levels; the artifacts speak for themselves.
 2. In the learning repository only, commit the files this pass wrote with the message `learn: <concept>`. Commit on the open `learn/*` branch. When a remote exists, fetch the default branch first. If the checkout is on the default branch, or the open learning branch has already merged into it, start `learn/YYYY-MM-DD` from the updated default branch, adding a suffix if that name is taken.
-3. Never push, and never commit in any other repository. When the user wants a checkpoint, `$commit-pr` pushes the branch and opens the PR. Its body is a digest of what was learned since the last checkpoint.
+3. Never push, and never commit in any other repository. `$learn` checkpoints stay local. If the user explicitly wants to publish a completed checkpoint, they can invoke `$build-from-plan` in publication-only mode for the existing `learn/*` branch; its PR should summarize what was learned since the last checkpoint.
 
 If the learning home is not a git repository, write the files, skip the commit, and say so once.

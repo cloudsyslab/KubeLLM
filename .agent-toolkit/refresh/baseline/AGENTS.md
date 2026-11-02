@@ -13,7 +13,10 @@ These are durable personal defaults across repositories. Keep this file small. R
 
 - Use `$workspace-onboarding` when initializing this toolkit in a repository or refreshing its tailored agent instructions and skills from upstream `main`. Refresh is explicit per target: reconcile the previously adopted base, latest upstream candidate, and live repository configuration; preserve repository context, then validate and append its workspace snapshot.
 - Use `$grilling` when the user asks to be grilled, interviewed, aligned, stress-tested, or wants a blind-spot pass before action.
+- Use `$show-me` when a concept needs a visual explanation or a learning artifact; it owns the artifact forms, the house style, and the shared workbench.
+- Use `$learn` only when the user explicitly invokes it to learn a concept or topic; it teaches, has the user explain back, and probes, routing frontier questions through `$discovery`.
 - Use `$discovery` for current, external, private-source, GitHub, arXiv, X/Twitter, OpenAI documentation, or explicit Deep Research work; let that router select the specialist route.
+- Use `$cloudflare-cli` for Cloudflare administration and deployment. Prefer the project's Wrangler and the Cloudflare API with existing environment or Keychain credentials; reserve dashboard navigation for operations that require rendered interaction or human setup.
 - Use `$browser-workflow` for website interaction, rendered previews, or browser QA. Keep those activities in Codex's sidebar `@Browser`; the user chooses explicitly before each task leaves that surface.
 - Use `$build-from-plan` when an understood plan is ready for autonomous implementation. After every grilling pass, only the user's fresh, explicit invocation of that skill to execute the current plan permits execution. Agreement, earlier build permission, skill references, and agent-initiated loading do not count; a new grilling pass suspends execution and resets the gate.
 - Use `$writing-session` for PRDs, technical or functional specifications, RFCs, design documents, and their review or reconciliation.
@@ -53,6 +56,8 @@ These are durable personal defaults across repositories. Keep this file small. R
 ## Git
 
 - Git is manual by default. Do not commit, branch, push, merge, stash, or create automatic checkpoints unless explicitly requested.
+- Before cloning a repository, check whether the workspace already has its canonical checkout. Reuse that clone; use a linked worktree when you need another branch checked out at the same time.
 - Completing `$workspace-onboarding` or a later repository-toolkit reconciliation is a narrow standing exception: after the repo-owned toolkit is validated and marked ready, publish its agent-configuration snapshot with the vendored helper to the corresponding `workspace/<host>/<owner>/<repo>` branch. This exception never authorizes committing, branching, or pushing the target repository itself, or updating the toolkit's `main` branch.
+- `$learn` is a second narrow standing exception: it commits only the files it wrote to the user's learning repository, on that repository's open `learn/*` branch. It never pushes and never commits in any other repository; checkpoints go through `$commit-pr`.
 - Preserve remotes, authentication, history, local commits, and dirty worktrees. Read-only Git inspection is allowed when relevant.
 - Do not install lifecycle hooks or branch automation without an explicit request.

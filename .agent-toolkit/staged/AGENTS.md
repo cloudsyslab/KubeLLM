@@ -20,8 +20,8 @@ These are durable personal defaults across repositories. Keep this file small. R
 - Use `$browser-workflow` for website interaction, rendered previews, or browser QA. Keep those activities in Codex's sidebar `@Browser`; the user chooses explicitly before each task leaves that surface.
 - Use `$build-from-plan` when an understood plan is ready for autonomous implementation. After every grilling pass, only the user's fresh, explicit invocation of that skill to execute the current plan permits execution. Agreement, earlier build permission, skill references, and agent-initiated loading do not count; a new grilling pass suspends execution and resets the gate.
 - Use `$writing-session` for PRDs, technical or functional specifications, RFCs, design documents, and their review or reconciliation.
-- Use `$commit-pr` after a completed feature-branch work pass to propose coherent commits and PR text. Present the exact proposal and wait for approval before committing, pushing the named branch, and opening or updating its draft PR. An explicit commit-only request skips PR execution.
-- Use `$reconcile-branches` after feature branches have PRs to inventory all branches, prepare and test an approved integration, and merge approved PRs in dependency order.
+- Use `$build-from-plan` for the complete feature workline: create or resume its feature branch and linked worktree, implement and validate the plan, make coherent commits, push the verified personal repo or fork, and open or update its draft PR. Do not push to workplace or third-party repositories or directly to a default branch.
+- Use `$reconcile-branches` after feature PRs are ready. Its fresh invocation owns integration, required checks, independent regression review, eligible merges in dependency order, and safe cleanup of completed worklines. It cannot bypass repository gates.
 - Use `$publish-github` to polish a side project and stage it in a private GitHub repository. Public visibility always requires separate explicit approval.
 - Load specialist skills directly when their trigger is narrower than these general routes.
 
@@ -55,9 +55,9 @@ These are durable personal defaults across repositories. Keep this file small. R
 
 ## Git
 
-- Git is manual by default. Do not commit, branch, push, merge, stash, or create automatic checkpoints unless explicitly requested.
-- Before cloning a repository, check whether the workspace already has its canonical checkout. Reuse that clone; use a linked worktree when you need another branch checked out at the same time.
+- Git is manual by default outside the named workflows. A fresh `$build-from-plan` invocation authorizes scoped branch/worktree setup, commits, and draft-PR publication in the user's verified personal repository or fork; it does not authorize merging. A fresh `$reconcile-branches` invocation authorizes in-scope merges after their required checks and independent regression review pass.
+- Start each new implementation workline in one feature branch and linked worktree; reuse both when continuing it. Keep the canonical checkout on the default branch when safe. Before cloning a repository, check for its canonical checkout and reuse it; do not make duplicate clones.
 - Completing `$workspace-onboarding` or a later repository-toolkit reconciliation is a narrow standing exception: after the repo-owned toolkit is validated and marked ready, publish its agent-configuration snapshot with the vendored helper to the corresponding `workspace/<host>/<owner>/<repo>` branch. This exception never authorizes committing, branching, or pushing the target repository itself, or updating the toolkit's `main` branch.
-- `$learn` is a second narrow standing exception: it commits only the files it wrote to the user's learning repository, on that repository's open `learn/*` branch. It never pushes and never commits in any other repository; checkpoints go through `$commit-pr`.
+- `$learn` remains a narrow exception: it commits only the files it wrote to the user's learning repository, on that repository's open `learn/*` branch. It never pushes or commits in any other repository. Keep learning checkpoints local unless the user explicitly promotes selected work through the normal feature workflow.
 - Preserve remotes, authentication, history, local commits, and dirty worktrees. Read-only Git inspection is allowed when relevant.
 - Do not install lifecycle hooks or branch automation without an explicit request.
