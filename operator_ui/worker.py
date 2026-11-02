@@ -14,6 +14,7 @@ from pathlib import Path
 from .config import JOBS_DIR, REPO, private_lab_config, private_lab_fingerprint
 from .jobs import (
     add_attempt,
+    add_event,
     app_value,
     get_job,
     now,
@@ -21,6 +22,7 @@ from .jobs import (
     update_job,
     worker_config,
 )
+from .events import ProgressLogTail, project_progress, redact_text
 from .results import safe_campaign_attempts
 from .safe import safe_readiness
 
@@ -28,6 +30,7 @@ from .safe import safe_readiness
 READINESS_SCRIPT = REPO / ".agents" / "skills" / "kubellm-benchmarks" / "scripts" / "check_readiness.py"
 RUNNER = REPO / "debug_assistant_latest" / "runner.py"
 REPORTER = REPO / ".agents" / "skills" / "kubellm-benchmarks" / "scripts" / "summarize_run.py"
+_RUN_STARTED: dict[str, float] = {}
 
 
 def _private_json(path: Path, data: dict) -> None:
@@ -47,6 +50,23 @@ def _private_json(path: Path, data: dict) -> None:
 def _stop_requested(job_id: str) -> bool:
     job = get_job(job_id)
     return bool(job and job["stop_requested"])
+
+
+def _elapsed(job_id: str) -> float:
+    started = _RUN_STARTED.get(job_id)
+    if started is not None:
+        return max(0.0, time.monotonic() - started)
+    job = get_job(job_id)
+    stamp = (job or {}).get("started_at") or (job or {}).get("created_at")
+    if stamp:
+        try:
+            parsed = datetime.fromisoformat(stamp)
+            if parsed.tzinfo is None:
+                parsed = parsed.replace(tzinfo=timezone.utc)
+            return max(0.0, (datetime.now(timezone.utc) - parsed).total_seconds())
+        except (TypeError, ValueError):
+            pass
+    return 0.0
 
 
 def _job_dir(job_id: str) -> Path:
@@ -92,6 +112,22 @@ def _readiness(job_id: str, mode: str) -> dict:
 
 
 def _finish(job_id: str, status: str, label: str, result: dict | None = None) -> None:
+    job = get_job(job_id)
+    if not job:
+        return
+    phase = "teardown" if job["kind"] == "campaign" and status in {"completed", "stopped"} else "setup"
+    attempt = max(0, job["current_index"] - 1) if job["kind"] == "campaign" else 0
+    level = "error" if status == "failed" else "warn" if status in {"blocked", "interrupted"} else "info"
+    add_event(job_id, {
+        "t": _elapsed(job_id),
+        "attempt": attempt,
+        "phase": phase,
+        "source": "runner",
+        "level": level,
+        "text": redact_text(label),
+    })
+    # Add the final event before exposing terminal state so an SSE reader
+    # cannot close its stream before that event becomes replayable.
     update_job(
         job_id,
         status=status,
@@ -101,11 +137,44 @@ def _finish(job_id: str, status: str, label: str, result: dict | None = None) ->
     )
 
 
+def _save_progress(tail: ProgressLogTail, job_id: str, attempt: int, started: float) -> None:
+    for raw in tail.read_new():
+        event = project_progress(raw, attempt=attempt, elapsed_s=time.monotonic() - started)
+        if event:
+            add_event(job_id, event)
+
+
+def _wait_for_runner(process, progress_path: Path, job_id: str, attempt: int, started: float) -> int:
+    """Tail bounded, allowlisted progress records without exposing raw logs."""
+    tail = ProgressLogTail(progress_path)
+    poll = getattr(process, "poll", None)
+    if not callable(poll):
+        # Small test doubles and compatible process wrappers may expose only wait().
+        result = process.wait()
+        _save_progress(tail, job_id, attempt, started)
+        return result
+    while True:
+        _save_progress(tail, job_id, attempt, started)
+        result = poll()
+        if result is not None:
+            _save_progress(tail, job_id, attempt, started)
+            return result
+        time.sleep(0.25)
+
+
 def _run_readiness_job(job_id: str, kind: str) -> None:
     mode = "repair-safe" if kind == "prepare" else "check-only"
     lane_fingerprint = private_lab_fingerprint()
     server_id = os.environ.get("KUBELLM_OPERATOR_INSTANCE_ID", "")
     update_job(job_id, status="running", started_at=now(), current_label="Checking the selected lab environment.")
+    add_event(job_id, {
+        "t": _elapsed(job_id),
+        "attempt": 0,
+        "phase": "setup",
+        "source": "runner",
+        "level": "info",
+        "text": "Environment preparation started." if kind == "prepare" else "Preflight started.",
+    })
     first = _readiness(job_id, mode)
     result: dict = {"readiness": first}
     if kind == "prepare" and not _stop_requested(job_id):
@@ -134,6 +203,14 @@ def _run_readiness_job(job_id: str, kind: str) -> None:
         set_app_value("readiness_job", job_id)
         set_app_value("readiness_lane_fingerprint", lane_fingerprint)
         set_app_value("readiness_server_id", server_id)
+        add_event(job_id, {
+            "t": _elapsed(job_id),
+            "attempt": 0,
+            "phase": "setup",
+            "source": "runner",
+            "level": "info",
+            "text": "Readiness checks passed.",
+        })
         _finish(job_id, "completed", "Environment checks passed.", result)
     else:
         set_app_value("readiness_status", "BLOCKED")
@@ -141,6 +218,14 @@ def _run_readiness_job(job_id: str, kind: str) -> None:
         set_app_value("readiness_job", job_id)
         set_app_value("readiness_lane_fingerprint", lane_fingerprint)
         set_app_value("readiness_server_id", server_id)
+        add_event(job_id, {
+            "t": _elapsed(job_id),
+            "attempt": 0,
+            "phase": "setup",
+            "source": "runner",
+            "level": "warn",
+            "text": "Readiness checks found blockers.",
+        })
         _finish(job_id, "blocked", "One or more required checks need attention.", result)
 
 
@@ -240,6 +325,7 @@ def _write_campaign_report(job_id: str, run_root: Path, planned: int, rows: list
 
 
 def _run_campaign(job_id: str, config: dict, run_root: Path) -> None:
+    campaign_started = _RUN_STARTED.get(job_id, time.monotonic())
     if not _readiness_fresh():
         _finish(job_id, "blocked", "Run environment readiness again before launching a campaign.", {"reason": "fresh_readiness_required"})
         return
@@ -278,6 +364,14 @@ def _run_campaign(job_id: str, config: dict, run_root: Path) -> None:
         model_label = item["debug_model"] or "configured case default"
         label = f"{item['case']} · {item['technique']} · {model_label} · repetition {item['repetition']}"
         update_job(job_id, current_index=sequence - 1, current_label=label)
+        add_event(job_id, {
+            "t": max(0.0, round(time.monotonic() - campaign_started, 3)),
+            "attempt": sequence - 1,
+            "phase": "setup",
+            "source": "runner",
+            "level": "info",
+            "text": redact_text(f"Attempt {sequence} started · {item['case']} · {item['technique']}"),
+        })
         model_key = hashlib_label(item["debug_model"])
         attempt_dir = attempts_dir / f"{sequence:04d}-{item['case']}-{item['technique']}-{model_key}"
         attempt_dir.mkdir(parents=True, exist_ok=False, mode=0o700)
@@ -309,7 +403,13 @@ def _run_campaign(job_id: str, config: dict, run_root: Path) -> None:
                     start_new_session=False,
                 )
                 update_job(job_id, current_label=label, current_index=sequence - 1)
-                return_code = process.wait()
+                return_code = _wait_for_runner(
+                    process,
+                    attempt_dir / "progress.log",
+                    job_id,
+                    sequence - 1,
+                    campaign_started,
+                )
             except OSError:
                 return_code = 127
         _report_attempt(attempt_dir, job_id, sequence)
@@ -363,6 +463,7 @@ def run_job(job_id: str) -> None:
     job = worker_config(job_id)
     if not job:
         return
+    _RUN_STARTED[job_id] = time.monotonic()
     update_job(job_id, worker_pid=os.getpid())
     try:
         if job["kind"] in {"readiness", "prepare"}:
@@ -379,6 +480,8 @@ def run_job(job_id: str) -> None:
         current = get_job(job_id)
         if current and current["status"] not in {"completed", "blocked", "stopped", "failed"}:
             _finish(job_id, "failed", "The operator task stopped unexpectedly. Recorded outputs are preserved.")
+    finally:
+        _RUN_STARTED.pop(job_id, None)
 
 
 def re_full_job_id(value: str) -> bool:

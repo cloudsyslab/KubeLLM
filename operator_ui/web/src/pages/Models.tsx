@@ -93,6 +93,26 @@ function Totals({ configs }: { configs: ModelConfig[] }) {
   );
 }
 
+function LiveOverview() {
+  const query = useQuery({ queryKey: ["operator-overview"], queryFn: api.overview, enabled: api.isLive, staleTime: 0, refetchInterval: 30_000, retry: 0 });
+  if (!api.isLive) return null;
+  if (query.error) return <p className="rounded-md border border-warn/40 bg-warn-soft px-3 py-2 text-[12px] text-warn">Live overview unavailable: {query.error.message}</p>;
+  if (!query.data) return <p className="text-[12px] text-fg-3">Loading live overview…</p>;
+  const readiness = query.data.readiness?.status ?? "Not checked";
+  const sources = query.data.sources ?? {};
+  const sourceCounts = query.data.sources
+    ? `Sources · canonical ${sources.canonical ?? 0} · exploratory ${sources.exploratory ?? 0} · local ${sources.local ?? 0}`
+    : "Source counts unavailable";
+  const recentJobCount = query.data.jobs?.length;
+  return (
+    <div className="flex flex-wrap items-center gap-x-6 gap-y-2 border-y border-line py-3 text-[12px]">
+      <span className="flex items-center gap-2"><span className="label !text-[10px]">Live preflight</span><Tag tone={readiness === "READY" ? "accent" : readiness === "BLOCKED" ? "warn" : "neutral"}>{readiness}</Tag>{query.data.readiness?.checked_at && <span className="num text-fg-3">{new Date(query.data.readiness.checked_at).toLocaleString()}</span>}</span>
+      <span className="text-fg-2">{sourceCounts}</span>
+      <span className="text-fg-3">{recentJobCount == null ? "Recent jobs unavailable" : `${recentJobCount} recent operator job${recentJobCount === 1 ? "" : "s"}`}</span>
+    </div>
+  );
+}
+
 export function ModelsPage() {
   const query = useQuery({ queryKey: ["explorer"], queryFn: api.explorerRuns });
   const [params, setParams] = useSearchParams();
@@ -125,6 +145,8 @@ export function ModelsPage() {
           />
         }
       />
+
+      <LiveOverview />
 
       {query.isLoading ? (
         <LoadingState label="Reading recorded runs" />

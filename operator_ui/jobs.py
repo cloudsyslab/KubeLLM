@@ -3,12 +3,15 @@
 from __future__ import annotations
 
 import json
+import math
 import os
 import secrets
 import sqlite3
 import subprocess
 from datetime import datetime, timezone
 from pathlib import Path
+
+from .events import LEVELS, PHASES, SOURCES, MAX_EVENT_TEXT, redact_text
 
 from .config import JOBS_DIR, STATE, secure_state_dir
 
@@ -60,6 +63,16 @@ def initialize() -> None:
         CREATE TABLE IF NOT EXISTS app_state (
             key TEXT PRIMARY KEY,
             value TEXT NOT NULL
+        )
+        """)
+        db.execute("""
+        CREATE TABLE IF NOT EXISTS job_events (
+            job_id TEXT NOT NULL,
+            event_id INTEGER NOT NULL,
+            event_json TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            PRIMARY KEY (job_id, event_id),
+            FOREIGN KEY (job_id) REFERENCES jobs(id) ON DELETE CASCADE
         )
         """)
 
@@ -118,6 +131,79 @@ def list_jobs(limit: int = 30) -> list[dict]:
     with connect() as db:
         rows = db.execute("SELECT * FROM jobs ORDER BY created_at DESC LIMIT ?", (limit,)).fetchall()
     return [_public(row) for row in rows]
+
+
+def add_event(job_id: str, event: dict) -> dict | None:
+    """Persist a normalized public event and assign its replay ID."""
+    if not isinstance(event, dict):
+        raise ValueError("Invalid job event.")
+    elapsed = event.get("t")
+    attempt = event.get("attempt")
+    phase = event.get("phase")
+    source = event.get("source")
+    level = event.get("level")
+    text = event.get("text")
+    if isinstance(elapsed, bool) or not isinstance(elapsed, (int, float)):
+        raise ValueError("Invalid job event.")
+    try:
+        elapsed = float(elapsed)
+    except (OverflowError, ValueError):
+        raise ValueError("Invalid job event.") from None
+    if not math.isfinite(elapsed) or elapsed < 0:
+        raise ValueError("Invalid job event.")
+    if isinstance(attempt, bool) or not isinstance(attempt, int) or attempt < 0:
+        raise ValueError("Invalid job event.")
+    if (not isinstance(phase, str) or phase not in PHASES
+            or not isinstance(source, str) or source not in SOURCES
+            or not isinstance(level, str) or level not in LEVELS
+            or not isinstance(text, str)):
+        raise ValueError("Invalid job event.")
+    normalized = {
+        "t": round(elapsed, 3),
+        "attempt": attempt,
+        "phase": phase,
+        "source": source,
+        "level": level,
+        "text": redact_text(text, limit=MAX_EVENT_TEXT),
+    }
+    if not normalized["text"]:
+        raise ValueError("Invalid job event.")
+    initialize()
+    with connect() as db:
+        db.execute("BEGIN IMMEDIATE")
+        if not db.execute("SELECT 1 FROM jobs WHERE id=?", (job_id,)).fetchone():
+            return None
+        last = db.execute(
+            "SELECT COALESCE(MAX(event_id), 0) FROM job_events WHERE job_id=?", (job_id,)
+        ).fetchone()[0]
+        event_id = int(last) + 1
+        record = {**normalized, "id": event_id}
+        db.execute(
+            "INSERT INTO job_events(job_id, event_id, event_json, created_at) VALUES (?, ?, ?, ?)",
+            (job_id, event_id, json.dumps(record, separators=(",", ":")), now()),
+        )
+    return record
+
+
+def events_after(job_id: str, last_event_id: int = 0, limit: int = 250) -> list[dict]:
+    """Return ordered events after the caller's cursor for SSE replay."""
+    initialize()
+    cursor = max(0, int(last_event_id))
+    bounded_limit = max(1, min(int(limit), 1000))
+    with connect() as db:
+        rows = db.execute(
+            "SELECT event_json FROM job_events WHERE job_id=? AND event_id>? ORDER BY event_id LIMIT ?",
+            (job_id, cursor, bounded_limit),
+        ).fetchall()
+    return [json.loads(row["event_json"]) for row in rows]
+
+
+def job_is_terminal(job_id: str) -> bool:
+    """Whether the SSE producer may close after draining the event cursor."""
+    initialize()
+    with connect() as db:
+        row = db.execute("SELECT status FROM jobs WHERE id=?", (job_id,)).fetchone()
+    return bool(row and row["status"] in TERMINAL_STATES)
 
 
 def worker_config(job_id: str) -> dict | None:

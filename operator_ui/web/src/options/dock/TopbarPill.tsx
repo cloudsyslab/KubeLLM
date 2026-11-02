@@ -4,6 +4,8 @@ import { Popover } from "radix-ui";
 import { forwardRef, useState, type ComponentPropsWithoutRef } from "react";
 import { createPortal } from "react-dom";
 import { Link } from "react-router";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { api } from "@/api/client";
 import { Outcome, Tag, Tip } from "@/components/ui";
 import { clock } from "@/demo/ReplayBar";
 import { humanize } from "@/lib/cases";
@@ -183,6 +185,11 @@ function PillWithPopover({ work, compact, align = "end" }: { work: ActiveWork; c
 
 /** Registered in GLOBAL for the "topbar" slot. */
 export function TopbarPillGlobal() {
+  if (api.isLive) return <ApiTopbarPill />;
+  return <FixtureTopbarPill />;
+}
+
+function FixtureTopbarPill() {
   const work = useActiveWork();
   const onExecution = useOnExecution();
   if (!work.ready) return null;
@@ -224,6 +231,50 @@ export function TopbarPillGlobal() {
       <LiveAnnouncer work={work} />
     </>
   );
+}
+
+function ApiTopbarPill() {
+  const queryClient = useQueryClient();
+  const query = useQuery({ queryKey: ["operator-jobs"], queryFn: api.jobs, enabled: api.isLive, refetchInterval: 1_500, staleTime: 0, retry: 0 });
+  const [error, setError] = useState("");
+  const stop = useMutation({
+    mutationFn: (id: string) => api.stopJob(id),
+    onMutate: () => setError(""),
+    onError: (cause) => setError(cause instanceof Error ? cause.message : "Stop request failed."),
+    onSuccess: async () => { await queryClient.invalidateQueries({ queryKey: ["operator-jobs"] }); },
+  });
+  const jobs = [...(query.data ?? [])].sort((a, b) => Date.parse(b.created_at) - Date.parse(a.created_at));
+  const active = jobs.find((job) => ["queued", "running", "stop_requested"].includes(job.status));
+  const job = active ?? jobs.find((item) => item.kind === "campaign") ?? jobs[0];
+  const onExecution = useOnExecution();
+  const busy = Boolean(active);
+  const status = query.isLoading ? "Connecting" : query.error ? "Unavailable" : job?.status.replaceAll("_", " ") ?? "Idle";
+  const progress = job && job.total > 0 ? `${job.current_index}/${job.total}` : "";
+  const title = job ? ({ readiness: "Preflight", prepare: "Preparation", campaign: "Campaign", publish: "Publication" } as const)[job.kind] : "No operator jobs";
+  const content = (
+    <div className="grid gap-3 p-4">
+      <div className="flex flex-wrap items-center gap-2"><span className="label !text-[10px]">Live operator work</span><Tag tone={query.error ? "warn" : busy ? "accent" : "neutral"}>{status}</Tag></div>
+      {query.error ? <p className="text-[12px] text-warn">Jobs unavailable: {query.error.message}</p> : job ? <>
+        <div className="font-medium">{title} · {job.id.slice(0, 8)}</div>
+        {job.current_label && <p className="text-[12px] text-fg-2">{job.current_label}</p>}
+        {progress && <div className="num text-[12px] text-fg-3">{progress} attempts</div>}
+        {active?.kind === "campaign" && active.status !== "stop_requested" && <button type="button" disabled={stop.isPending} onClick={() => stop.mutate(active.id)} className="inline-flex h-7 w-fit items-center gap-1.5 rounded-md border border-line-strong px-2.5 text-[12px] hover:bg-surface-2 disabled:opacity-50"><Square className="size-3" />Stop after current attempt</button>}
+      </> : <p className="text-[12px] text-fg-3">No operator jobs have been recorded.</p>}
+      {error && <p className="text-[12px] text-warn">{error}</p>}
+      <Link to={busy ? "/execution" : "/jobs"} onClick={(event) => closeEnclosingSheet(event.currentTarget)} className="ml-auto inline-flex h-7 items-center gap-1.5 rounded-md bg-fg px-2.5 text-[12px] font-medium text-bg hover:bg-fg/85">{busy ? "Open execution" : "Open jobs"}<ArrowUpRight className="size-3.5" /></Link>
+    </div>
+  );
+  const trigger = (
+    <button type="button" className={clsx("inline-flex h-8 items-center gap-2 rounded-full border bg-surface px-3 text-[12.5px] hover:bg-surface-2", query.error ? "border-warn/45" : busy ? "border-accent-line" : "border-line")} aria-label={`Live operator work: ${status}${progress ? `, ${progress}` : ""}`}>
+      <LiveDot state={query.error ? "failed" : busy ? "running" : "idle"} />
+      {!onExecution && <span className="font-medium">{status}</span>}
+      {progress && <span className="num">{progress}</span>}
+    </button>
+  );
+  const slot = typeof document !== "undefined" ? document.getElementById("mobile-dock") : null;
+  const mobile = !onExecution && typeof document !== "undefined" ? createPortal(<div className="lg:hidden"><Popover.Root><Popover.Trigger asChild>{trigger}</Popover.Trigger><Popover.Portal><Popover.Content align="end" sideOffset={8} className="z-50 w-[min(360px,calc(100vw-24px))] rounded-lg border border-line bg-surface shadow-pop">{content}</Popover.Content></Popover.Portal></Popover.Root></div>, slot ?? document.body) : null;
+  if (onExecution) return <span className="inline-flex h-8 items-center gap-2 px-1 text-[12px] text-fg-2" aria-label={progress || status}><LiveDot state={query.error ? "failed" : busy ? "running" : "idle"} />{progress || status}</span>;
+  return <><div className="hidden lg:block"><Popover.Root><Popover.Trigger asChild>{trigger}</Popover.Trigger><Popover.Portal><Popover.Content align="end" sideOffset={8} collisionPadding={12} className="z-50 w-[360px] max-w-[calc(100vw-24px)] rounded-lg border border-line bg-surface shadow-pop">{content}</Popover.Content></Popover.Portal></Popover.Root></div>{mobile}</>;
 }
 
 export default function TopbarPillOption() {

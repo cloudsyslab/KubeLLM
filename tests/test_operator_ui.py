@@ -8,7 +8,7 @@ from pathlib import Path
 
 from fastapi.testclient import TestClient
 
-from operator_ui import app, auth, config, jobs, publishing
+from operator_ui import app, config, jobs, publishing
 from operator_ui import results, worker
 from operator_ui.config import private_lab_fingerprint, validate_campaign
 from operator_ui.results import history_summary
@@ -30,7 +30,9 @@ def _isolated_paths(monkeypatch, root: Path) -> None:
     monkeypatch.setattr(jobs, "STATE", state)
     monkeypatch.setattr(jobs, "JOBS_DIR", job_store)
     monkeypatch.setattr(jobs, "DB_PATH", state / "operator.sqlite3")
-    monkeypatch.setattr(auth, "AUTH_PATH", state / "auth.json")
+    web_dist = root / "web" / "dist"
+    web_dist.mkdir(parents=True, exist_ok=True)
+    monkeypatch.setattr(app, "WEB_DIST", web_dist)
     monkeypatch.setenv("KUBELLM_LAB_CONFIG", str(root / "private-lane-selector.json"))
 
 
@@ -44,35 +46,39 @@ def test_lane_must_be_selected_explicitly(monkeypatch):
         raise AssertionError("an unset lane selector must not fall back to a default")
 
 
-def test_operator_login_and_origin_protection(monkeypatch, tmp_path):
+def test_operator_serves_the_live_app_without_a_password_and_checks_write_origin(monkeypatch, tmp_path):
     _isolated_paths(monkeypatch, tmp_path)
-    auth.create_auth("a-private-test-password-with-length", replace=True)
+    (app.WEB_DIST / "index.html").write_text("<!doctype html><main>operator shell</main>", encoding="utf-8")
     monkeypatch.setattr(app, "all_runs", lambda: [])
 
     with TestClient(app.app) as client:
         page = client.get("/")
         assert page.status_code == 200
-        assert 'id="login-form"' in page.text
-        assert client.get("/api/overview").status_code == 401
-        assert client.post("/api/logout").status_code == 403
-        assert client.post("/api/logout", headers={"origin": "http://testserver"}).status_code == 401
-
-        response = client.post(
-            "/api/login",
-            headers={"origin": "http://testserver"},
-            json={"password": "a-private-test-password-with-length"},
-        )
-        assert response.status_code == 200
-        assert response.cookies.get(app.COOKIE_NAME)
-        cookie_header = response.headers["set-cookie"].lower()
-        assert "httponly" in cookie_header and "samesite=strict" in cookie_header
+        assert "operator shell" in page.text
+        assert client.get("/models/gpt-6-luna").text == page.text
         assert client.get("/api/overview").status_code == 200
+        assert client.post("/api/unknown").status_code == 403
+        assert client.post("/api/unknown", headers={"origin": "http://testserver"}).status_code == 405
+        assert "set-cookie" not in page.headers
 
-        # Logging out revokes the session itself, so a copied token stops working.
-        copied = response.cookies.get(app.COOKIE_NAME)
-        assert client.post("/api/logout", headers={"origin": "http://testserver"}).status_code == 200
-        client.cookies.set(app.COOKIE_NAME, copied)
-        assert client.get("/api/overview").status_code == 401
+
+def test_job_event_stream_replays_after_last_event_id(monkeypatch, tmp_path):
+    _isolated_paths(monkeypatch, tmp_path)
+    job = jobs.create_job("campaign", {"cases": ["wrong_port"]}, total=1)
+    jobs.add_event(job["id"], {
+        "t": 1.0, "attempt": 0, "phase": "setup", "source": "runner",
+        "level": "info", "text": "Attempt started.",
+    })
+    jobs.update_job(job["id"], status="completed", finished_at=jobs.now())
+
+    with TestClient(app.app) as client:
+        response = client.get(f"/api/jobs/{job['id']}/events")
+        assert response.status_code == 200
+        assert response.headers["content-type"].startswith("text/event-stream")
+        assert "id: 1\ndata:" in response.text
+        replay = client.get(f"/api/jobs/{job['id']}/events", headers={"last-event-id": "1"})
+        assert replay.status_code == 200
+        assert replay.text == ""
 
 
 def test_campaign_inputs_are_bounded_and_history_keeps_per_run_rates():
@@ -123,8 +129,29 @@ def test_readiness_projection_drops_endpoint_and_private_details():
     })
     serialized = json.dumps(projected)
     assert projected["checks"][0]["label"] == "Database connection"
+    assert projected["checks"][0]["detail"] == "<endpoint>"
     assert "private-pass" not in serialized
     assert "127.0.0.1" not in serialized
+
+
+def test_readiness_projection_includes_redacted_check_and_repair_messages():
+    projected = safe_readiness({
+        "status": "BLOCKED",
+        "checks": [{
+            "name": "rag_api", "status": "fail", "blocking": True,
+            "message": "Could not connect to http://10.2.3.4:8000/healthz?token=private-token",
+        }],
+        "repairs": [{
+            "name": "rag_api", "status": "fail",
+            "message": "API_KEY=private-key could not be rotated",
+        }],
+    })
+    serialized = json.dumps(projected)
+    assert projected["checks"][0]["detail"].startswith("Could not connect to <endpoint>")
+    assert projected["repairs"][0]["message"] == "API_KEY=<redacted> could not be rotated"
+    assert "10.2.3.4" not in serialized
+    assert "private-token" not in serialized
+    assert "private-key" not in serialized
 
 
 def test_readiness_fingerprint_tracks_only_the_private_lane_file_version(monkeypatch, tmp_path):
@@ -263,7 +290,7 @@ def test_history_lists_campaign_attempts_under_the_ref_the_worker_records(monkey
     assert local[0]["ref"] == recorded[0]["ref"]
 
 
-def test_publication_refuses_the_default_branch(monkeypatch, tmp_path):
+def test_publication_targets_a_new_results_branch_from_remote_default(monkeypatch, tmp_path):
     repo = tmp_path / "repo"
     repo.mkdir()
     remote = tmp_path / "remote.git"
@@ -277,27 +304,32 @@ def test_publication_refuses_the_default_branch(monkeypatch, tmp_path):
     _git(repo, "remote", "add", "origin", str(remote))
     _git(repo, "push", "--set-upstream", "origin", "main")
     monkeypatch.setattr(publishing, "REPO", repo)
+    monkeypatch.setattr(publishing, "_remote_repository", lambda _remote: publishing.CANONICAL_REPOSITORY)
 
+    target = publishing._publication_target("a" * 32, "f" * 32)
+    assert target["remote"] == "origin"
+    assert target["repository"] == "github.com/cloudsyslab/KubeLLM"
+    assert target["base_branch"] == "main"
+    assert target["base_sha"] == _git(repo, "rev-parse", "HEAD")
+    assert target["branch"] == "codex/operator-results/aaaaaaaa-ffffffffffffffff"
+
+
+def test_publication_remote_must_be_the_canonical_repository(monkeypatch, tmp_path):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _git(repo, "init", "--initial-branch=main")
+    _git(repo, "remote", "add", "origin", "https://user:private-token@github.com/cloudsyslab/KubeLLM.git")
+    monkeypatch.setattr(publishing, "REPO", repo)
+
+    assert publishing._remote_repository("origin") == "github.com/cloudsyslab/KubeLLM"
+    assert "private-token" not in publishing._remote_repository("origin")
+    _git(repo, "remote", "add", "other", "https://github.com/someone-else/KubeLLM.git")
     try:
-        publishing._publication_target()
+        publishing._remote_repository("other")
     except RuntimeError as exc:
-        assert "default branch" in str(exc)
+        assert "someone-else" not in str(exc)
     else:
-        raise AssertionError("publishing on main must be refused")
-
-    # A differently named local branch that still tracks main is refused too.
-    _git(repo, "checkout", "-b", "export", "--track", "origin/main")
-    try:
-        publishing._publication_target()
-    except RuntimeError as exc:
-        assert "default branch" in str(exc)
-    else:
-        raise AssertionError("publishing to origin/main must be refused")
-
-    _git(repo, "checkout", "-b", "results")
-    _git(repo, "push", "--set-upstream", "origin", "results")
-    target = publishing._publication_target()
-    assert (target["remote"], target["upstream_branch"]) == ("origin", "results")
+        raise AssertionError("results publication must reject non-canonical remotes")
 
 
 def test_publish_preview_exports_allowlisted_files_and_pushes_only_reviewed_paths(monkeypatch, tmp_path):
@@ -325,10 +357,6 @@ def test_publish_preview_exports_allowlisted_files_and_pushes_only_reviewed_path
     _git(repo, "remote", "add", "origin", str(remote))
     _git(repo, "push", "--set-upstream", "origin", "main")
     remote_main = _git(repo, "rev-parse", "origin/main")
-    # Results are published on a results branch, never on the default branch.
-    _git(repo, "checkout", "-b", "results")
-    _git(repo, "push", "--set-upstream", "origin", "results")
-
     state = tmp_path / "private-state"
     campaign_id = "a" * 32
     publish_id = "b" * 32
@@ -377,6 +405,7 @@ def test_publish_preview_exports_allowlisted_files_and_pushes_only_reviewed_path
     monkeypatch.setattr(publishing, "REPO", repo)
     monkeypatch.setattr(publishing, "JOBS_DIR", state / "jobs")
     monkeypatch.setattr(worker, "JOBS_DIR", state / "jobs")
+    monkeypatch.setattr(publishing, "_remote_repository", lambda _remote: publishing.CANONICAL_REPOSITORY)
     monkeypatch.setattr(publishing.jobs, "get_job", lambda job_id: public_campaign if job_id == campaign_id else None)
     monkeypatch.setattr(publishing.jobs, "worker_config", lambda job_id: internal_campaign if job_id == campaign_id else publish_worker if job_id == publish_id else None)
     updates = []
@@ -392,20 +421,40 @@ def test_publish_preview_exports_allowlisted_files_and_pushes_only_reviewed_path
     assert preview["models"] == ["api-test-model", "debug-test-model", "verify-test-model"]
     assert any(item["path"].endswith("run_config.archived.json") for item in preview["files"])
     assert all(item["path"].startswith("data/") for item in preview["files"])
+    assert preview["target"]["base_branch"] == "main"
+    assert preview["target"]["branch"].startswith("codex/operator-results/aaaaaaaa-")
+    reviewed_readme = next(item["path"] for item in preview["files"] if item["path"].endswith("/README.md") and "operator-campaign-" in item["path"])
+    assert publishing.read_preview_file(campaign_id, reviewed_readme).startswith("# operator-campaign-")
+    try:
+        publishing.read_preview_file(campaign_id, "data/../../private.txt")
+    except FileNotFoundError:
+        pass
+    else:
+        raise AssertionError("preview file reads must be limited to reviewed manifest paths")
     assert publishing.validate_publish_token(campaign_id, preview["preview_token"])
 
     (repo / "unrelated.txt").write_text("staged private change\n", encoding="utf-8")
     _git(repo, "add", "unrelated.txt")
     publishing.publish_campaign(publish_id, campaign_id, preview["preview_token"])
 
-    latest_paths = set(_git(repo, "diff-tree", "--no-commit-id", "--name-only", "-r", "HEAD").splitlines())
+    target_branch = preview["target"]["branch"]
+    commit = _git(repo, "--git-dir", str(remote), "rev-parse", f"refs/heads/{target_branch}")
+    latest_paths = set(_git(repo, "--git-dir", str(remote), "diff-tree", "--no-commit-id", "--name-only", "-r", commit).splitlines())
     reviewed_paths = {item["path"] for item in preview["files"]}
     assert latest_paths == reviewed_paths
-    assert _git(repo, "rev-parse", "HEAD") == _git(repo, "rev-parse", "origin/results")
+    assert _git(repo, "rev-parse", "HEAD") == remote_main
     assert _git(repo, "--git-dir", str(remote), "rev-parse", "main") == remote_main
     assert _git(repo, "show", "HEAD:unrelated.txt") == "base"
     assert _git(repo, "diff", "--cached", "--", "unrelated.txt")
-    published_pack = repo / "data" / "exploratory" / next(Path(item["path"]).parts[2] for item in preview["files"] if item["path"].endswith("/README.md") and item["path"].startswith("data/exploratory/operator-campaign"))
+    pack_path = next(item["path"] for item in preview["files"] if item["path"].startswith("data/exploratory/operator-campaign-")).split("/", 3)[:3]
+    pack_name = pack_path[2]
+    published_pack = tmp_path / "published-pack"
+    for path in latest_paths:
+        prefix = f"data/exploratory/{pack_name}/"
+        if path.startswith(prefix):
+            destination = published_pack / Path(path).relative_to(prefix)
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            destination.write_text(_git(repo, "--git-dir", str(remote), "show", f"{commit}:{path}"), encoding="utf-8")
     serialized_pack = "\n".join(path.read_text(encoding="utf-8") for path in published_pack.rglob("*") if path.is_file())
     for private in ("private-prompt-marker", "private-summary-marker", "private-aggregate-marker", "private-endpoint-marker", "private-model"):
         assert private not in serialized_pack
@@ -419,4 +468,5 @@ def test_publish_preview_exports_allowlisted_files_and_pushes_only_reviewed_path
     assert record["case_rows"][0]["ground_truth_configured"] is True
     assert record["ground_truth_rate"] == 1.0
     assert updates[-1][1]["status"] == "completed"
+    assert updates[-1][1]["result_json"]["branch"] == target_branch
 

@@ -16,7 +16,28 @@ npm run build      # type-check, then write dist/
 ```
 
 `dist/` and `node_modules/` are not committed. Build on the machine that serves
-the app.
+the app. Live deployments must build with `VITE_OPERATOR_DATA=api`.
+
+## Private lab server
+
+The app has no password login and binds to `127.0.0.1` only. Keep the server
+inside the trusted lab network and reach it from a workstation through SSH
+local forwarding. On the server:
+
+```sh
+export KUBELLM_LAB_CONFIG=<owner-only private lane selector>
+# Optional when serving from a linked worktree: reuse canonical checkout state.
+export KUBELLM_UI_STATE_DIR=/home/minh/KubeLLM/.local/operator_ui
+operator_ui/service.sh start
+operator_ui/service.sh status
+operator_ui/service.sh logs
+operator_ui/service.sh stop
+```
+
+The service script validates the explicit lane selector, builds the frontend
+with the server's Node 20+ installation, and manages a private PID and log
+under the selected state directory (`.local/operator_ui/` by default). From the workstation, run
+`ssh -N -L 8787:127.0.0.1:8787 <server>` and open `http://127.0.0.1:8787`.
 
 ## Data modes
 
@@ -82,7 +103,16 @@ source. It reads the same hooks as Topology and Environment, so it always
 agrees with them. Each page renders inside a route error boundary, so one
 failing page keeps the shell up.
 
-The live and operational surfaces are driven by demo data in `src/demo/`:
+In fixture mode, the operational surfaces use demo data in `src/demo/`. Live
+mode reads the corresponding backend endpoints and persists job progress:
+
+- Readiness, launch, jobs, execution, publish review, host telemetry, and
+  selected-lane topology call the API documented in `API_CONTRACT.md`.
+- Runs and compare use the backend's live explorer projection. Publish shows
+  the exact files and dedicated results branch before the user confirms.
+
+The fixture samples below support design review and do not start work on the
+lab:
 
 - `campaign.ts` replays the recorded Ground Truth outcomes, verifier
   judgments, and per-role timings of the latest canonical run of
@@ -93,16 +123,16 @@ The live and operational surfaces are driven by demo data in `src/demo/`:
   `topologyGraph.ts` turns that state into one dependency graph (components,
   calls, containment, live traffic, and what fails with each component) that
   every Topology option reads.
-- `readiness.ts` and `jobs.ts` hold preflight results (check names from the
+- `readiness.ts` and `jobs.ts` hold sample preflight results (check names from the
   runner preflight, groups from the benchmark skill's `check_readiness.py`),
-  operator job history, and a publication preview that mirrors
-  `operator_ui/publishing.py`. Publishing commits the sanitized pack and the
-  two catalog edits, then pushes to the branch's configured upstream.
+  operator job history, and a publication preview for design review.
 - `replay.tsx` is the shared clock: play, pause, speed, scrub, a failure
   branch (runner error during setup), and a frozen mid-run state.
 
-Every simulated surface carries a Demo tag. Nothing in the web app starts
-work on the lab; "What if this fails?" in Topology is a simulation.
+Every simulated surface carries a Demo tag. Fixture mode never starts work on
+the lab; “What if this fails?” in Topology remains a simulation in either mode.
+In live mode, preflight, preparation, campaign, stop, and publish actions call
+the backend only after the user selects those controls.
 
 ## Structure
 

@@ -138,7 +138,7 @@ class PairedCampaignTests(unittest.TestCase):
         self.assertIn("--replay-knowledge-response", command)
         self.assertIn("fixed-api", command)
         self.assertIn("fixed-verifier", command)
-        self.assertIn("/tmp/private-lane.json", command)
+        self.assertIn(str(Path("/tmp/private-lane.json").resolve()), command)
 
     def test_local_candidate_command_opts_into_debug_entry_warmup(self):
         command = _build_command(

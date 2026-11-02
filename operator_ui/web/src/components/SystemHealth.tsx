@@ -5,6 +5,7 @@ import { Popover } from "radix-ui";
 import { useState, type ReactNode } from "react";
 import { Link } from "react-router";
 import { api, snapshotGeneratedAt } from "@/api/client";
+import type { OperatorJob, TelemetrySample, TopologySnapshot } from "@/api/types";
 import { HOST } from "@/demo/lab";
 import { HEALTH, type Health, type TopologyGraph } from "@/demo/topologyGraph";
 import { useGraph } from "@/options/topology/shared";
@@ -268,7 +269,7 @@ function Details({ signals, graph, readiness, onGo }: { signals: Signal[]; graph
  * desktop sidebar, above the card inside the phone navigation drawer.
  * `onNavigate` closes the drawer when a link is followed.
  */
-export default function SystemHealth({ side = "right", onNavigate }: { side?: "right" | "top"; onNavigate?: () => void }) {
+function FixtureSystemHealth({ side = "right", onNavigate }: { side?: "right" | "top"; onNavigate?: () => void }) {
   const { signals, graph, readiness } = useSignals();
   const [open, setOpen] = useState(false);
   const go = () => {
@@ -324,4 +325,63 @@ export default function SystemHealth({ side = "right", onNavigate }: { side?: "r
       </Popover.Portal>
     </Popover.Root>
   );
+}
+
+function liveJobStatus(job: OperatorJob | undefined) {
+  if (!job) return { word: "Not checked", level: "off" as Level };
+  if (["queued", "running", "stop_requested"].includes(job.status)) return { word: "Checking", level: "busy" as Level };
+  const readiness = job.result?.readiness;
+  if (readiness?.status === "READY") return { word: "Ready", level: "ok" as Level };
+  if (readiness?.status === "BLOCKED" || ["blocked", "failed", "interrupted"].includes(job.status)) return { word: "Blocked", level: "attention" as Level };
+  return { word: job.status.replaceAll("_", " "), level: "off" as Level };
+}
+
+function ApiSystemHealth({ side = "right", onNavigate }: { side?: "right" | "top"; onNavigate?: () => void }) {
+  const topology = useQuery({ queryKey: ["topology"], queryFn: api.topology, refetchInterval: 5_000, staleTime: 0, retry: 0 });
+  const telemetry = useQuery({ queryKey: ["telemetry"], queryFn: api.telemetry, refetchInterval: 2_000, staleTime: 0, retry: 0 });
+  const jobsQuery = useQuery({ queryKey: ["operator-jobs"], queryFn: api.jobs, refetchInterval: 1_500, staleTime: 0, retry: 0 });
+  const [open, setOpen] = useState(false);
+  const go = () => { setOpen(false); onNavigate?.(); };
+  const jobs = [...(jobsQuery.data ?? [])].sort((a, b) => Date.parse(b.created_at) - Date.parse(a.created_at));
+  const latest = jobs.find((job) => (job.kind === "readiness" || job.kind === "prepare") && job.result?.readiness);
+  const active = jobs.find((job) => ["queued", "running", "stop_requested"].includes(job.status));
+  const selected = (topology.data as TopologySnapshot | undefined)?.selected_profile;
+  const sample = telemetry.data as TelemetrySample | undefined;
+  const topologySnapshot = topology.data as TopologySnapshot | undefined;
+  const laneLevel: Level = topology.error || !selected || selected.status.toLowerCase() === "unknown" ? "off" : topologySnapshot?.stale || topologySnapshot?.status === "stale" ? "attention" : selected.status.toLowerCase() === "running" ? "ok" : "attention";
+  const laneWord = topology.error || !selected ? "Unavailable" : topologySnapshot?.stale || topologySnapshot?.status === "stale" ? "Stale" : selected.status;
+  const readiness = jobsQuery.error ? { word: "Unavailable", level: "off" as Level } : liveJobStatus(active?.kind === "readiness" || active?.kind === "prepare" ? active : latest);
+  const hostLevel: Level = telemetry.error || sample?.status === "unavailable" ? "off" : sample?.stale || sample?.status === "stale" ? "attention" : sample ? "ok" : "off";
+  const hostWord = telemetry.error ? "Unavailable" : sample?.status === "unavailable" ? "Unavailable" : sample?.stale || sample?.status === "stale" ? "Stale" : sample ? "Live" : "Loading";
+  const signals: Signal[] = [
+    { id: "lane", label: "Lane", word: laneWord, meta: selected?.name, level: laneLevel },
+    { id: "preflight", label: "Preflight", word: readiness.word, level: readiness.level },
+    { id: "host", label: "Host", word: hostWord, meta: sample?.sampled_at ? shortAgo(Date.now() - Date.parse(sample.sampled_at)) : undefined, level: hostLevel },
+  ];
+  const attention = signals.filter((signal) => signal.level === "attention").length;
+  const summary = `System health: ${attention ? `${attention} need${attention === 1 ? "s" : ""} attention` : "no reported attention"}. ${signals.map((signal) => `${signal.label} ${signal.word}`).join("; ")}. Show details`;
+  return (
+    <Popover.Root open={open} onOpenChange={setOpen}>
+      <Popover.Trigger asChild>
+        <button type="button" aria-label={summary} className="group mx-3 mb-3 grid cursor-pointer gap-1.5 rounded-md border border-line px-3 py-2.5 text-left transition-colors hover:border-line-strong hover:bg-surface-2/60 data-[state=open]:border-line-strong data-[state=open]:bg-surface-2">
+          <span className="flex items-center gap-2"><span className="label !text-[10px]">Health</span><Tag tone="neutral">Live</Tag><ChevronRight className="ml-auto size-3.5 text-fg-3" strokeWidth={1.75} aria-hidden /></span>
+          <span className="grid grid-cols-[7px_minmax(0,1fr)_auto] items-center gap-x-2 gap-y-1">{signals.map((signal) => <span key={signal.id} className="contents"><Dot level={signal.level} /><span className="min-w-0 truncate text-[12px]"><span className="text-fg-2">{signal.label}</span>{signal.meta && <span className="text-fg-3"> · {signal.meta}</span>}</span><span className={clsx("text-[12px] font-medium whitespace-nowrap", WORD[signal.level])}>{signal.word}</span></span>)}</span>
+        </button>
+      </Popover.Trigger>
+      <Popover.Portal>
+        <Popover.Content side={side} align={side === "right" ? "end" : "center"} sideOffset={side === "right" ? 12 : 8} collisionPadding={12} aria-label="Live system health" className="z-[60] max-h-[var(--radix-popover-content-available-height)] w-[min(360px,calc(100vw-24px))] overflow-y-auto rounded-lg border border-line bg-surface shadow-pop outline-none">
+          <div className="grid">
+            <header className="flex items-center gap-2 border-b border-line px-4 py-3"><span className="label !text-[10px]">System health</span><span className="ml-auto text-[12px] text-fg-3">{api.source.label}</span></header>
+            <section className="grid gap-2 border-b border-line px-4 py-3"><div className="flex items-center gap-2"><Dot level={laneLevel} /><span className="text-[13px] font-medium">Selected lane</span><span className={clsx("ml-auto text-[12.5px] font-medium", WORD[laneLevel])}>{laneWord}</span></div>{topology.error ? <p className="text-[12px] text-fg-3">Topology unavailable: {topology.error.message}</p> : selected ? <><p className="ident text-[12px] text-fg-2">{selected.name}</p><p className="text-[12px] text-fg-3">{selected.nodes.length} nodes · {selected.pods == null ? "pod inventory unavailable" : `${selected.pods.length} pods in the selected lane`}</p></> : <p className="text-[12px] text-fg-3">Selected lane inventory is unavailable.</p>}<Link to="/lab/topology" onClick={go} className="inline-flex w-fit items-center gap-1 text-[12px] text-fg-2 hover:text-fg">Open topology <ArrowUpRight className="size-3.5" /></Link></section>
+            <section className="grid gap-2 border-b border-line px-4 py-3"><div className="flex items-center gap-2"><Dot level={readiness.level} /><span className="text-[13px] font-medium">Preflight</span><span className={clsx("ml-auto text-[12.5px] font-medium", WORD[readiness.level])}>{readiness.word}</span></div>{latest?.finished_at && <p className="num text-[12px] text-fg-3">Checked {new Date(latest.finished_at).toLocaleString()}</p>}{active && <p className="text-[12px] text-fg-3">{active.kind === "prepare" ? "Preparation" : active.kind === "readiness" ? "Preflight" : "Operator job"} is {active.status}.</p>}<Link to="/environment" onClick={go} className="inline-flex w-fit items-center gap-1 text-[12px] text-fg-2 hover:text-fg">Open environment <ArrowUpRight className="size-3.5" /></Link></section>
+            <section className="grid gap-2 border-b border-line px-4 py-3 last:border-b-0"><div className="flex items-center gap-2"><Dot level={hostLevel} /><span className="text-[13px] font-medium">Host telemetry</span><span className={clsx("ml-auto text-[12.5px] font-medium", WORD[hostLevel])}>{hostWord}</span></div>{sample?.sampled_at && <p className="num text-[12px] text-fg-3">Sampled {new Date(sample.sampled_at).toLocaleString()}{sample.stale ? " · stale" : ""}</p>}{telemetry.error && <p className="text-[12px] text-fg-3">Telemetry unavailable: {telemetry.error.message}</p>}<Link to="/lab" onClick={go} className="inline-flex w-fit items-center gap-1 text-[12px] text-fg-2 hover:text-fg">Open resources <ArrowUpRight className="size-3.5" /></Link></section>
+          </div>
+        </Popover.Content>
+      </Popover.Portal>
+    </Popover.Root>
+  );
+}
+
+export default function SystemHealth(props: { side?: "right" | "top"; onNavigate?: () => void }) {
+  return api.isLive ? <ApiSystemHealth {...props} /> : <FixtureSystemHealth {...props} />;
 }

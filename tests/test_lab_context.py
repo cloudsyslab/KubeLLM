@@ -77,7 +77,7 @@ class LabContextTests(unittest.TestCase):
             lane = lab_context.bootstrap_from_argv(["--lab-config", str(config_path)])
             self.assertEqual(lane["lane_id"], "minh")
             self.assertEqual(os.environ["MINIKUBE_PROFILE"], "minh-lane")
-            self.assertEqual(os.environ["KUBECONFIG"], str(Path(tmp) / "lane.kubeconfig"))
+            self.assertEqual(os.environ["KUBECONFIG"], str((Path(tmp) / "lane.kubeconfig").resolve()))
             with self.assertRaisesRegex(lab_context.LaneConfigurationError, "conflicts"):
                 lab_context.bootstrap_from_argv(
                     ["--lab-config", str(config_path), "--minikube-profile", "someone-elses-profile"]
