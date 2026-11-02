@@ -8,6 +8,7 @@ import hmac
 import json
 import os
 import secrets
+import tempfile
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -45,14 +46,21 @@ def _new_session_key() -> str:
 
 
 def _write_auth(data: dict) -> None:
-    temporary = AUTH_PATH.with_suffix(".tmp")
-    fd = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
-    with os.fdopen(fd, "w", encoding="utf-8") as handle:
-        json.dump(data, handle)
-        handle.write("\n")
-        handle.flush()
-        os.fsync(handle.fileno())
-    os.replace(temporary, AUTH_PATH)
+    # A unique temporary file per write, removed on failure, so an interrupted
+    # or concurrent write never blocks the next one.
+    fd, name = tempfile.mkstemp(dir=AUTH_PATH.parent, prefix=".auth-", suffix=".tmp")
+    temporary = Path(name)
+    try:
+        os.chmod(temporary, 0o600)
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            json.dump(data, handle)
+            handle.write("\n")
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(temporary, AUTH_PATH)
+    except BaseException:
+        temporary.unlink(missing_ok=True)
+        raise
     os.chmod(AUTH_PATH, 0o600)
 
 
