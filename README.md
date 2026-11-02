@@ -73,9 +73,11 @@ lane that is less than 20 minutes old.
 
 Completed campaigns include a safe Markdown summary. **Publish results** opens
 a preview of the exact sanitized archive files and model identifiers; confirming
-it creates a path-scoped commit and pushes it to the branch's configured
-upstream. Publishing refuses the default branch: run it on a results branch
-and merge that through a pull request.
+it creates a path-scoped commit in a dedicated worktree based on the canonical
+repository's current default branch, then pushes a new
+`codex/operator-results/...` branch to `cloudsyslab/KubeLLM`. It does not change
+the operator checkout. Review and merge the published results branch through a
+pull request when the archive is ready to join the repository.
 Raw logs and prompts stay in ignored `.local/` storage. Case, prompt, and RAG
 editing are not part of this first operator pass.
 
