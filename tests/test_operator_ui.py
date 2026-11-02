@@ -152,6 +152,36 @@ def test_worker_loss_marks_campaign_interrupted_without_dropping_attempts(monkey
     assert jobs.get_job(check["id"])["status"] == "queued"
 
 
+def test_lane_lock_holds_while_starting_or_while_an_orphaned_runner_lives(monkeypatch, tmp_path):
+    _isolated_paths(monkeypatch, tmp_path)
+    jobs.initialize()
+
+    # Just created: the app has not recorded the worker's PID yet.
+    starting = jobs.create_job("readiness", {})
+    jobs.reconcile_jobs()
+    assert jobs.get_job(starting["id"])["status"] == "queued"
+    jobs.update_job(starting["id"], status="completed", finished_at=jobs.now())
+
+    # The worker is gone, but a process in its group (the runner) still runs.
+    orphan = subprocess.Popen(["sleep", "30"], start_new_session=True)
+    try:
+        job = jobs.create_job("campaign", {"cases": ["wrong_port"]}, total=1)
+        jobs.update_job(job["id"], status="running", worker_pid=orphan.pid)
+        jobs.reconcile_jobs()
+        assert jobs.get_job(job["id"])["status"] == "running"
+        try:
+            jobs.create_job("campaign", {"cases": ["wrong_port"]}, total=1)
+        except RuntimeError:
+            pass
+        else:
+            raise AssertionError("a second campaign must not start while the runner lives")
+    finally:
+        orphan.kill()
+        orphan.wait()
+    jobs.reconcile_jobs()
+    assert jobs.get_job(job["id"])["status"] == "interrupted"
+
+
 def test_serial_campaign_stop_waits_for_active_runner_then_preserves_unknown_outcome(monkeypatch, tmp_path):
     _isolated_paths(monkeypatch, tmp_path)
     jobs.initialize()

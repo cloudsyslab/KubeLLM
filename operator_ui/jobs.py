@@ -6,6 +6,7 @@ import json
 import os
 import secrets
 import sqlite3
+import subprocess
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -15,6 +16,7 @@ from .config import JOBS_DIR, STATE, secure_state_dir
 DB_PATH = STATE / "operator.sqlite3"
 ACTIVE_STATES = ("queued", "running", "stop_requested")
 TERMINAL_STATES = ("completed", "blocked", "failed", "stopped", "interrupted")
+WORKER_START_GRACE_S = 30
 
 
 def now() -> str:
@@ -197,14 +199,50 @@ def request_stop(job_id: str) -> dict | None:
     return get_job(job_id)
 
 
+def _command_line(pid: int) -> bytes:
+    """A process's command line from /proc, or from ps where there is no /proc (macOS)."""
+    if Path("/proc/self").exists():
+        try:
+            return Path(f"/proc/{pid}/cmdline").read_bytes()
+        except OSError:
+            return b""
+    try:
+        result = subprocess.run(
+            ["ps", "-o", "command=", "-p", str(pid)],
+            stdin=subprocess.DEVNULL, capture_output=True, timeout=5,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return b""
+    return result.stdout if result.returncode == 0 else b""
+
+
 def process_is_worker(job_id: str, pid: int | None) -> bool:
     if not pid or pid <= 1:
         return False
+    raw = _command_line(pid)
+    return b"operator_ui.worker" in raw and job_id.encode("ascii") in raw
+
+
+def process_group_alive(pid: int | None) -> bool:
+    """Whether anything in the worker's process group still runs.
+
+    The worker leads its own session, and the runner it starts shares that
+    group, so an orphaned runner keeps the group alive after the worker dies.
+    """
+    if not pid or pid <= 1:
+        return False
     try:
-        raw = Path(f"/proc/{pid}/cmdline").read_bytes()
-        return b"operator_ui.worker" in raw and job_id.encode("ascii") in raw
+        os.killpg(pid, 0)
     except OSError:
         return False
+    return True
+
+
+def _seconds_since(stamp: str) -> float:
+    try:
+        return (datetime.now(timezone.utc) - datetime.fromisoformat(stamp)).total_seconds()
+    except (TypeError, ValueError):
+        return float("inf")
 
 
 def reconcile_jobs() -> None:
@@ -212,10 +250,17 @@ def reconcile_jobs() -> None:
     initialize()
     with connect() as db:
         rows = db.execute(
-            "SELECT id, status, worker_pid FROM jobs WHERE status IN (?, ?, ?)", ACTIVE_STATES
+            "SELECT id, status, worker_pid, created_at FROM jobs WHERE status IN (?, ?, ?)", ACTIVE_STATES
         ).fetchall()
     for row in rows:
         if process_is_worker(row["id"], row["worker_pid"]):
+            continue
+        # The app records the worker's PID just after creating the job.
+        if row["worker_pid"] is None and row["status"] == "queued" and _seconds_since(row["created_at"]) < WORKER_START_GRACE_S:
+            continue
+        # A runner left behind by a dead worker still holds the lane.
+        if process_group_alive(row["worker_pid"]):
+            update_job(row["id"], current_label="The worker stopped; waiting for its runner to exit before releasing the lane.")
             continue
         update_job(
             row["id"],
