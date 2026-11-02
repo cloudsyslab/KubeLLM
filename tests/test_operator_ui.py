@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import shutil
 import subprocess
 from pathlib import Path
@@ -186,6 +187,15 @@ def test_lane_lock_holds_while_starting_or_while_an_orphaned_runner_lives(monkey
         orphan.wait()
     jobs.reconcile_jobs()
     assert jobs.get_job(job["id"])["status"] == "interrupted"
+
+    # A worker that died but was never reaped (a zombie) does not hold the lane.
+    dead = subprocess.Popen(["true"], start_new_session=True)
+    os.waitid(os.P_PID, dead.pid, os.WEXITED | os.WNOWAIT)  # exited, not yet reaped
+    lost = jobs.create_job("campaign", {"cases": ["wrong_port"]}, total=1)
+    jobs.update_job(lost["id"], status="running", worker_pid=dead.pid)
+    jobs.reconcile_jobs()
+    assert jobs.get_job(lost["id"])["status"] == "interrupted"
+    dead.wait()
 
 
 def test_serial_campaign_stop_waits_for_active_runner_then_preserves_unknown_outcome(monkeypatch, tmp_path):

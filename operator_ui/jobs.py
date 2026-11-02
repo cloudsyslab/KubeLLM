@@ -231,6 +231,12 @@ def process_group_alive(pid: int | None) -> bool:
     """
     if not pid or pid <= 1:
         return False
+    # The app starts workers without waiting on them, so a dead worker can
+    # linger as a zombie, which Linux keeps in its group until it is reaped.
+    try:
+        os.waitpid(pid, os.WNOHANG)
+    except OSError:
+        pass
     try:
         os.killpg(pid, 0)
     except OSError:
@@ -262,9 +268,10 @@ def reconcile_jobs() -> None:
         if process_group_alive(row["worker_pid"]):
             update_job(row["id"], current_label="The worker stopped; waiting for its runner to exit before releasing the lane.")
             continue
-        update_job(
-            row["id"],
-            status="interrupted",
-            finished_at=now(),
-            current_label="Worker stopped; recorded attempts are preserved.",
-        )
+        # Only while still active, so a job that finished during the probe keeps its outcome.
+        stamp = now()
+        with connect() as db:
+            db.execute(
+                "UPDATE jobs SET status='interrupted', finished_at=?, current_label=?, updated_at=? WHERE id=? AND status IN (?, ?, ?)",
+                (stamp, "Worker stopped; recorded attempts are preserved.", stamp, row["id"], *ACTIVE_STATES),
+            )
