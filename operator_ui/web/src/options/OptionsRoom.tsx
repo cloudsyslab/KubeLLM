@@ -1,12 +1,15 @@
 import clsx from "clsx";
 import { ArrowUpRight, Check } from "lucide-react";
-import { Suspense } from "react";
+import { lazy, Suspense } from "react";
 import { Link, useSearchParams } from "react-router";
+import { api } from "@/api/client";
 import { PageHeader, Tag } from "@/components/ui";
 import { ReplayBar } from "@/demo/ReplayBar";
 import { useOptionChoice } from "./choice";
 import { PickSheet } from "./PickSheet";
 import { isDecided, SURFACES, surfaceDef, type OptionDef, type Surface } from "./registry";
+
+const LiveSurface = lazy(() => import("./LiveSurfaces"));
 
 export function StageFallback() {
   return <div className="h-[560px] animate-pulse rounded-lg bg-surface" />;
@@ -160,7 +163,9 @@ export function OptionsRoomPage() {
         description={
           open.length === 0
             ? `All ${SURFACES.length} surfaces are decided; each page shows your pick.`
-            : `${total} options across ${open.length} open surfaces${decided ? ` (${decided} decided)` : ""}, each rendered with the same demo data. Compare them, then pick one per surface; your pick is what its page shows.`
+            : api.isLive
+              ? `${total} design options across ${open.length} open surfaces${decided ? ` (${decided} decided)` : ""}. Operational pages use live backend data; this room previews the selected page designs.`
+              : `${total} options across ${open.length} open surfaces${decided ? ` (${decided} decided)` : ""}, each rendered with the same demo data. Compare them, then pick one per surface; your pick is what its page shows.`
         }
       />
       <SurfaceNav value={surface} onChange={(next) => setParams(next === "overview" ? {} : { surface: next }, { replace: true })} />
@@ -170,7 +175,7 @@ export function OptionsRoomPage() {
         </Suspense>
       ) : (
         <>
-          {LIVE_SURFACES.has(surface) && <ReplayBar />}
+          {!api.isLive && LIVE_SURFACES.has(surface) && <ReplayBar />}
           <SurfaceRoom key={surface} surface={surface} />
         </>
       )}
@@ -181,6 +186,13 @@ export function OptionsRoomPage() {
 export function SurfacePage({ surface }: { surface: Surface }) {
   const [option] = useOptionChoice(surface);
   const def = surfaceDef(surface);
+  if (api.isLive && surface !== "runs" && surface !== "compare") {
+    return (
+      <Suspense fallback={<StageFallback />}>
+        <LiveSurface key={surface} surface={surface} />
+      </Suspense>
+    );
+  }
   const Stage = option.component;
   return (
     <div className="grid gap-6">
@@ -196,7 +208,7 @@ export function SurfacePage({ surface }: { surface: Surface }) {
           </Link>
         }
       />
-      {LIVE_SURFACES.has(surface) && <ReplayBar />}
+      {!api.isLive && LIVE_SURFACES.has(surface) && <ReplayBar />}
       <Suspense fallback={<StageFallback />}>
         <Stage key={option.id} />
       </Suspense>

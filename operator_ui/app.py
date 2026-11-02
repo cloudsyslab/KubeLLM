@@ -14,15 +14,16 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from fastapi import FastAPI, HTTPException, Request
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
 from . import auth, jobs
 from .config import JOB_ID_RE, JOBS_DIR, REPO, private_lab_config, private_lab_fingerprint, secure_state_dir, validate_campaign
 from .results import all_runs, find_run, history_summary, inspect_detail, public_run
+from . import telemetry
 
 
-STATIC = Path(__file__).parent / "static"
+WEB_DIST = Path(__file__).parent / "web" / "dist"
 COOKIE_NAME = "kubellm_operator"
 OPERATOR_INSTANCE_ID = secrets.token_hex(16)
 _LOGIN_FAILURES: dict[str, list[float]] = {}
@@ -38,11 +39,7 @@ async def lifespan(_: FastAPI):
 
 
 app = FastAPI(title="KubeLLM Operator", docs_url=None, redoc_url=None, openapi_url=None, lifespan=lifespan)
-app.mount("/static", StaticFiles(directory=STATIC), name="static")
-
-
-def _authenticated(request: Request) -> bool:
-    return auth.verify_session(request.cookies.get(COOKIE_NAME, ""))
+app.mount("/assets", StaticFiles(directory=WEB_DIST / "assets", check_dir=False), name="assets")
 
 
 def _same_origin(request: Request) -> bool:
@@ -53,9 +50,8 @@ def _same_origin(request: Request) -> bool:
     return origin.rstrip("/") == f"{request.url.scheme}://{host}".rstrip("/")
 
 
-def _require_auth(request: Request) -> None:
-    if not _authenticated(request):
-        raise HTTPException(status_code=401, detail="Sign in to continue.")
+def _authenticated(request: Request) -> bool:
+    return auth.verify_session(request.cookies.get(COOKIE_NAME, ""))
 
 
 def _readiness_fresh() -> bool:
@@ -123,7 +119,7 @@ async def operator_security(request: Request, call_next):
     response.headers.setdefault("Permissions-Policy", "camera=(), microphone=(), geolocation=()")
     response.headers.setdefault(
         "Content-Security-Policy",
-        "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; "
+        "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; "
         "connect-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'",
     )
     if request.url.path.startswith("/api/"):
@@ -133,15 +129,19 @@ async def operator_security(request: Request, call_next):
 
 @app.get("/")
 def index():
-    return FileResponse(STATIC / "index.html")
+    index_path = WEB_DIST / "index.html"
+    if not index_path.is_file():
+        raise HTTPException(status_code=503, detail="Build the operator web app with npm run build in operator_ui/web.")
+    return FileResponse(index_path)
 
 
 @app.get("/api/session")
 def session(request: Request):
+    authenticated = _authenticated(request)
     return {
-        "authenticated": _authenticated(request),
+        "authenticated": authenticated,
         "configured": auth.auth_configured(),
-        "username": "Operator" if _authenticated(request) else None,
+        "username": "Operator" if authenticated else None,
     }
 
 
@@ -167,6 +167,8 @@ async def login(request: Request):
     _LOGIN_FAILURES.pop(client, None)
     session_id, expires = auth.make_session()
     token = auth.sign_session(session_id, expires)
+    if not token:
+        raise HTTPException(status_code=503, detail="The operator login is unavailable.")
     response = JSONResponse({"authenticated": True})
     response.set_cookie(
         COOKIE_NAME,
@@ -182,7 +184,6 @@ async def login(request: Request):
 
 @app.post("/api/logout")
 def logout():
-    # Single operator: logging out ends every session, not just this browser's cookie.
     auth.revoke_sessions()
     response = JSONResponse({"authenticated": False})
     response.delete_cookie(COOKIE_NAME, path="/", httponly=True, samesite="strict")
@@ -191,7 +192,6 @@ def logout():
 
 @app.get("/api/overview")
 def overview(request: Request):
-    _require_auth(request)
     runs = all_runs()
     recent = [public_run(item) for item in runs[:8]]
     readiness_at = jobs.app_value("readiness_at")
@@ -217,9 +217,29 @@ def overview(request: Request):
     }
 
 
+@app.get("/api/explorer")
+def explorer():
+    """The live equivalent of the committed results snapshot."""
+    return {
+        "runs": [
+            public_run(run) | {"case_rows": run["case_rows"]}
+            for run in all_runs()
+        ]
+    }
+
+
+@app.get("/api/telemetry")
+def get_telemetry():
+    return telemetry.host_snapshot()
+
+
+@app.get("/api/topology")
+def get_topology():
+    return telemetry.topology_snapshot()
+
+
 @app.get("/api/cases")
 def cases(request: Request):
-    _require_auth(request)
     sys.path.insert(0, str(REPO / "debug_assistant_latest"))
     try:
         from test_discovery import list_test_cases
@@ -232,19 +252,16 @@ def cases(request: Request):
 
 @app.post("/api/readiness")
 def readiness(request: Request):
-    _require_auth(request)
     return _new_worker("readiness", {})
 
 
 @app.post("/api/prepare")
 def prepare(request: Request):
-    _require_auth(request)
     return _new_worker("prepare", {})
 
 
 @app.post("/api/campaign")
 async def campaign(request: Request):
-    _require_auth(request)
     try:
         payload = await request.json()
         sys.path.insert(0, str(REPO / "debug_assistant_latest"))
@@ -262,14 +279,12 @@ async def campaign(request: Request):
 
 @app.get("/api/jobs")
 def get_jobs(request: Request):
-    _require_auth(request)
     jobs.reconcile_jobs()
     return {"jobs": jobs.list_jobs()}
 
 
 @app.get("/api/jobs/{job_id}")
 def get_job(job_id: str, request: Request):
-    _require_auth(request)
     if not JOB_ID_RE.fullmatch(job_id):
         raise HTTPException(status_code=404, detail="Operator task not found.")
     record = jobs.get_job(job_id)
@@ -279,9 +294,38 @@ def get_job(job_id: str, request: Request):
     return jobs.get_job(job_id)
 
 
+@app.get("/api/jobs/{job_id}/events")
+def get_job_events(job_id: str, request: Request):
+    if not JOB_ID_RE.fullmatch(job_id) or not jobs.get_job(job_id):
+        raise HTTPException(status_code=404, detail="Operator task not found.")
+    raw_cursor = request.headers.get("last-event-id", "0").strip() or "0"
+    if not raw_cursor.isdecimal() or len(raw_cursor) > 18:
+        raise HTTPException(status_code=422, detail="The event cursor is invalid.")
+    cursor = int(raw_cursor)
+
+    def stream_events():
+        nonlocal cursor
+        while True:
+            records = jobs.events_after(job_id, cursor, limit=250)
+            for event in records:
+                cursor = event["id"]
+                payload = json.dumps(event, ensure_ascii=True, separators=(",", ":"))
+                yield f"id: {cursor}\ndata: {payload}\n\n"
+            if jobs.job_is_terminal(job_id) and len(records) < 250:
+                return
+            if not records:
+                yield ": keep-alive\n\n"
+            time.sleep(1)
+
+    return StreamingResponse(
+        stream_events(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-store", "X-Accel-Buffering": "no"},
+    )
+
+
 @app.post("/api/jobs/{job_id}/stop")
 def stop_job(job_id: str, request: Request):
-    _require_auth(request)
     if not JOB_ID_RE.fullmatch(job_id):
         raise HTTPException(status_code=404, detail="Operator task not found.")
     current = jobs.get_job(job_id)
@@ -297,7 +341,6 @@ def stop_job(job_id: str, request: Request):
 
 @app.get("/api/jobs/{job_id}/report")
 def report(job_id: str, request: Request):
-    _require_auth(request)
     if not JOB_ID_RE.fullmatch(job_id):
         raise HTTPException(status_code=404, detail="Report not found.")
     job = jobs.worker_config(job_id)
@@ -317,7 +360,6 @@ def report(job_id: str, request: Request):
 
 @app.get("/api/history")
 def history(request: Request, source: str = "all", q: str = "", refresh: bool = False):
-    _require_auth(request)
     if source not in {"all", "canonical", "exploratory", "local"}:
         raise HTTPException(status_code=422, detail="Choose a supported history source.")
     records = all_runs(force_refresh=refresh)
@@ -343,7 +385,6 @@ def history(request: Request, source: str = "all", q: str = "", refresh: bool = 
 
 @app.get("/api/history/{run_ref}")
 def history_detail(run_ref: str, request: Request):
-    _require_auth(request)
     if not re.fullmatch(r"[0-9a-f]{32}", run_ref):
         raise HTTPException(status_code=404, detail="Run not found.")
     result = inspect_detail(run_ref)
@@ -354,7 +395,6 @@ def history_detail(run_ref: str, request: Request):
 
 @app.post("/api/compare")
 async def compare(request: Request):
-    _require_auth(request)
     try:
         payload = await request.json()
     except (ValueError, json.JSONDecodeError) as exc:
@@ -388,7 +428,6 @@ async def compare(request: Request):
 
 @app.post("/api/publish/preview/{job_id}")
 def publish_preview(job_id: str, request: Request):
-    _require_auth(request)
     if not JOB_ID_RE.fullmatch(job_id):
         raise HTTPException(status_code=404, detail="Campaign not found.")
     try:
@@ -404,7 +443,6 @@ def publish_preview(job_id: str, request: Request):
 
 @app.post("/api/publish")
 async def publish(request: Request):
-    _require_auth(request)
     try:
         payload = await request.json()
     except (ValueError, json.JSONDecodeError) as exc:
@@ -420,4 +458,28 @@ async def publish(request: Request):
     except (FileNotFoundError, ValueError) as exc:
         raise HTTPException(status_code=409, detail="The publication preview is no longer available. Review the files again.") from exc
     return _new_worker("publish", {"campaign_job_id": job_id, "preview_token": token}, 0)
+
+
+@app.get("/api/publish/preview/{job_id}/file")
+def publish_preview_file(job_id: str, path: str):
+    if not JOB_ID_RE.fullmatch(job_id):
+        raise HTTPException(status_code=404, detail="Preview file not found.")
+    try:
+        from .publishing import read_preview_file
+
+        content = read_preview_file(job_id, path)
+    except (FileNotFoundError, ValueError, RuntimeError) as exc:
+        raise HTTPException(status_code=404, detail="Preview file not found.") from exc
+    return JSONResponse({"path": path, "content": content})
+
+
+@app.get("/{path:path}")
+def frontend_route(path: str):
+    """Serve the Vite app shell for its client-side routes."""
+    if path.startswith("api/") or path.startswith("assets/"):
+        raise HTTPException(status_code=404, detail="Not found.")
+    index_path = WEB_DIST / "index.html"
+    if not index_path.is_file():
+        raise HTTPException(status_code=503, detail="Build the operator web app with npm run build in operator_ui/web.")
+    return FileResponse(index_path)
 

@@ -7,6 +7,7 @@ import {
   Layers,
   ListChecks,
   LayoutGrid,
+  LogOut,
   Menu,
   Moon,
   Network,
@@ -20,6 +21,7 @@ import {
 } from "lucide-react";
 import { Dialog } from "radix-ui";
 import { lazy, Suspense, useState, type ReactNode } from "react";
+import { useQuery } from "@tanstack/react-query";
 import { NavLink, useLocation } from "react-router";
 import { api } from "@/api/client";
 import { DockHost } from "@/options/dock/host";
@@ -90,13 +92,19 @@ function Brand() {
 }
 
 function Lane() {
+  const topology = useQuery({ queryKey: ["topology"], queryFn: api.topology, enabled: api.isLive, refetchInterval: 5_000, staleTime: 0, retry: 0 });
+  const selected = topology.data?.selected_profile;
+  const stale = topology.isError || topology.data?.stale || topology.data?.status === "stale";
+  const label = api.isLive ? selected ? `${selected.name}${stale ? " · stale" : ""}` : topology.isLoading ? "Loading selected lane…" : "Unavailable" : "minh-lane";
+  const status = selected?.status.toLowerCase();
+  const dotClass = !api.isLive ? "bg-accent" : !selected || status === "unknown" ? "border border-fg-3" : stale ? "bg-warn" : status === "running" ? "bg-accent" : "bg-warn";
   return (
     <Tip side="right" content="Operational controls act only on this explicitly selected private lane. Other lab profiles are visible read-only.">
       <div className="mx-3 rounded-md border border-line px-3 py-2.5">
         <div className="label !text-[10px]">Selected lane</div>
         <div className="mt-1.5 flex items-center gap-2 text-[13px]">
-          <span className="size-1.5 rounded-full bg-accent" aria-hidden />
-          <span className="ident text-fg">minh-lane</span>
+          <span className={clsx("size-1.5 rounded-full", dotClass)} aria-hidden />
+          <span className="ident truncate text-fg">{label}</span>
           <span className="ml-auto text-[11.5px] text-fg-3">private</span>
         </div>
       </div>
@@ -211,7 +219,7 @@ function SearchButton({ onClick, compact }: { onClick: () => void; compact?: boo
   );
 }
 
-export function Shell({ children }: { children: ReactNode }) {
+export function Shell({ children, onLogout }: { children: ReactNode; onLogout?: () => Promise<void> }) {
   const [open, setOpen] = useState(false);
   const [paletteOpen, setPaletteOpen] = useState(false);
   useCommandPaletteHotkey(setPaletteOpen);
@@ -232,6 +240,11 @@ export function Shell({ children }: { children: ReactNode }) {
             </button>
           </Dialog.Trigger>
           <Brand />
+          {onLogout && (
+            <button type="button" onClick={() => { void onLogout().catch(() => {}); }} aria-label="Sign out" title="Sign out" className="grid size-8 cursor-pointer place-items-center rounded-md text-fg-3 hover:bg-surface-2 hover:text-fg">
+              <LogOut className="size-4" strokeWidth={1.75} />
+            </button>
+          )}
           <div id="mobile-dock" className="ml-auto flex min-w-0 items-center" />
           <SearchButton compact onClick={() => setPaletteOpen(true)} />
         </header>
@@ -259,6 +272,11 @@ export function Shell({ children }: { children: ReactNode }) {
           <div className="ml-auto flex items-center gap-3">
             <DockHost slot="topbar" />
             <SearchButton onClick={() => setPaletteOpen(true)} />
+            {onLogout && (
+              <button type="button" onClick={() => { void onLogout().catch(() => {}); }} aria-label="Sign out" title="Sign out" className="grid size-8 cursor-pointer place-items-center rounded-md text-fg-3 hover:bg-surface-2 hover:text-fg">
+                <LogOut className="size-4" strokeWidth={1.75} />
+              </button>
+            )}
           </div>
         </div>
         <main className="mx-auto w-full max-w-[1440px] px-4 pt-6 pb-16 sm:px-6 lg:px-8 lg:pt-8">{children}</main>

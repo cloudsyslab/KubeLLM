@@ -12,6 +12,7 @@ import shutil
 import subprocess
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from urllib.parse import urlsplit
 
 from . import jobs
 from .config import JOBS_DIR, REPO
@@ -21,8 +22,8 @@ from .results import _read_json, _safe_model
 ARCHIVER = REPO / "scripts" / "archive_exploratory_run.py"
 PREVIEW_TTL = timedelta(minutes=30)
 SAFE_BRANCH = re.compile(r"^[A-Za-z0-9._/-]{1,160}$")
-PROTECTED_BRANCHES = frozenset({"main", "master"})
 _ARCHIVE_RUN = None
+CANONICAL_REPOSITORY = "github.com/cloudsyslab/KubeLLM"
 
 
 def _private_write(path: Path, data: object) -> None:
@@ -39,12 +40,12 @@ def _private_write(path: Path, data: object) -> None:
     os.chmod(path, 0o600)
 
 
-def _git(args: list[str], *, timeout: int = 15, check: bool = True) -> subprocess.CompletedProcess:
+def _git(args: list[str], *, cwd: Path | None = None, timeout: int = 15, check: bool = True) -> subprocess.CompletedProcess:
     env = os.environ.copy()
     env["GIT_TERMINAL_PROMPT"] = "0"
     try:
         result = subprocess.run(
-            ["git", *args], cwd=REPO, stdin=subprocess.DEVNULL,
+            ["git", *args], cwd=cwd or REPO, stdin=subprocess.DEVNULL,
             stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
             encoding="utf-8", errors="replace", timeout=timeout, env=env,
         )
@@ -55,38 +56,92 @@ def _git(args: list[str], *, timeout: int = 15, check: bool = True) -> subproces
     return result
 
 
-def _remote_default_branch(remote: str) -> str | None:
-    ref = _git(["symbolic-ref", "--quiet", "--short", f"refs/remotes/{remote}/HEAD"], check=False).stdout.strip()
-    return ref.split("/", 1)[1] if ref.startswith(f"{remote}/") else None
+def _remote_head(remote: str, campaign_job_id: str) -> tuple[str, str]:
+    result = _git(["ls-remote", "--symref", remote, "HEAD"], timeout=30, check=False)
+    if result.returncode:
+        raise RuntimeError("Git could not inspect the configured results remote.")
+    symbolic = None
+    head = None
+    for line in result.stdout.splitlines():
+        fields = line.split("\t", 1)
+        if len(fields) != 2:
+            continue
+        if fields[0].startswith("ref: ") and fields[1] == "HEAD":
+            symbolic = fields[0][5:]
+        elif fields[1] == "HEAD" and re.fullmatch(r"[0-9a-f]{40,64}", fields[0]):
+            head = fields[0]
+    if not symbolic or not symbolic.startswith("refs/heads/") or not head:
+        raise RuntimeError("The configured results remote does not expose a verifiable default branch.")
+    branch = symbolic.removeprefix("refs/heads/")
+    if not SAFE_BRANCH.fullmatch(branch):
+        raise RuntimeError("The configured results remote has an unsupported default branch.")
+    base_ref = f"refs/kubellm-operator/publish-bases/{campaign_job_id}"
+    fetched = _git(
+        ["fetch", "--no-tags", remote, f"+{symbolic}:{base_ref}"],
+        timeout=30,
+        check=False,
+    )
+    if fetched.returncode:
+        raise RuntimeError("Git could not fetch the configured results base commit.")
+    fetched_head = _git(["rev-parse", "--verify", f"{base_ref}^{{commit}}"], check=False).stdout.strip()
+    if not re.fullmatch(r"[0-9a-f]{40,64}", fetched_head) or fetched_head != head:
+        raise RuntimeError("The configured results branch changed while its base was being verified. Prepare a fresh preview.")
+    return branch, fetched_head
 
 
-def _publication_target() -> dict:
-    branch = _git(["branch", "--show-current"]).stdout.strip()
-    upstream = _git(["rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{upstream}"]).stdout.strip()
-    head = _git(["rev-parse", "HEAD"]).stdout.strip()
-    if not SAFE_BRANCH.fullmatch(branch) or not SAFE_BRANCH.fullmatch(upstream):
-        raise RuntimeError("Check out a branch with a configured upstream before publishing results.")
-    remote, _, upstream_branch = upstream.partition("/")
-    if not upstream_branch or remote not in _git(["remote"]).stdout.split():
-        raise RuntimeError("The current branch must track a branch on a configured remote before publishing results.")
-    # Results never go straight to the default branch: publish on a results
-    # branch and integrate it through a pull request.
-    protected = PROTECTED_BRANCHES | {name for name in (_remote_default_branch(remote),) if name}
-    if branch in protected or upstream_branch in protected:
-        raise RuntimeError("Publishing never pushes to the default branch. Check out a results branch with its own upstream, then publish and open a pull request.")
-    ahead = _git(["rev-list", "--count", f"{upstream}..HEAD"]).stdout.strip()
-    if ahead != "0":
-        raise RuntimeError("The current branch has unpublished commits. Push or integrate them before publishing results.")
-    return {"branch": branch, "upstream": upstream, "remote": remote, "upstream_branch": upstream_branch, "head": head}
+def _remote_branch_exists(remote: str, branch: str) -> bool:
+    ref = f"refs/heads/{branch}"
+    result = _git(["ls-remote", "--heads", remote, ref], timeout=30, check=False)
+    if result.returncode:
+        raise RuntimeError("Git could not verify the reviewed results branch on the remote.")
+    return any(line.split("\t", 1)[-1] == ref for line in result.stdout.splitlines())
 
 
-def _ensure_paths_clean(paths: list[str]) -> None:
-    if not paths:
-        raise ValueError("No publication files were prepared.")
-    diff = _git(["diff", "--quiet", "HEAD", "--", *paths], check=False)
-    status = _git(["status", "--porcelain", "--untracked-files=all", "--", *paths], check=False)
-    if diff.returncode != 0 or status.stdout.strip():
-        raise RuntimeError("A publication path has local changes. Resolve them before publishing results.")
+def _remote_repository(remote: str) -> str:
+    result = _git(["remote", "get-url", remote], check=False)
+    if result.returncode:
+        raise RuntimeError("Git could not verify the results repository identity.")
+    value = result.stdout.strip()
+    if "://" in value:
+        parsed = urlsplit(value)
+        host = parsed.hostname or ""
+        path = parsed.path.lstrip("/")
+    else:
+        match = re.fullmatch(r"(?:[^@/]+@)?([^:]+):(.+)", value)
+        host, path = (match.group(1), match.group(2)) if match else ("", "")
+    if path.removesuffix(".git").rstrip("/") != "cloudsyslab/KubeLLM" or host.casefold() != "github.com":
+        raise RuntimeError("Results can only be published to the configured cloudsyslab/KubeLLM repository.")
+    return CANONICAL_REPOSITORY
+
+
+def _publication_target(campaign_job_id: str, token: str) -> dict:
+    remote = os.environ.get("KUBELLM_RESULTS_REMOTE", "origin").strip()
+    if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,62}", remote) or remote not in _git(["remote"]).stdout.split():
+        raise RuntimeError("Configure a Git remote for reviewed result publication.")
+    repository = _remote_repository(remote)
+    base_branch, base_sha = _remote_head(remote, campaign_job_id)
+    branch = f"codex/operator-results/{campaign_job_id[:8]}-{token[:16]}"
+    if _remote_branch_exists(remote, branch):
+        raise RuntimeError("The proposed results branch already exists. Prepare a new preview.")
+    return {
+        "remote": remote,
+        "repository": repository,
+        "branch": branch,
+        "base_branch": base_branch,
+        "base_sha": base_sha,
+        "display": f"{repository} · {remote}/{branch} · from {base_branch}@{base_sha[:12]}",
+    }
+
+
+def _show_at(revision: str, path: str) -> bytes:
+    result = _git(["show", f"{revision}:{path}"], check=False)
+    if result.returncode:
+        raise RuntimeError("The reviewed results target is missing a required catalog file.")
+    return result.stdout.encode("utf-8")
+
+
+def _remote_file_exists(revision: str, path: str) -> bool:
+    return _git(["cat-file", "-e", f"{revision}:{path}"], check=False).returncode == 0
 
 
 def _campaign(campaign_job_id: str) -> tuple[dict, dict]:
@@ -207,6 +262,8 @@ def _prepare_preview(campaign_job_id: str) -> dict:
     except (TypeError, ValueError):
         date_part = datetime.now(timezone.utc).strftime("%Y-%m-%d")
     pack_name = f"operator-campaign-{date_part}-{campaign_job_id[:8]}"
+    token = secrets.token_hex(16)
+    target = _publication_target(campaign_job_id, token)
     pack_root = preview_root / "pack"
     pack_root.mkdir(mode=0o700)
 
@@ -286,11 +343,13 @@ def _prepare_preview(campaign_job_id: str) -> dict:
     ])
     _write_text(pack_root / "README.md", readme)
 
-    explorer_index = REPO / "data" / "exploratory" / "README.md"
-    data_index = REPO / "data" / "README.md"
-    if explorer_index.is_symlink() or data_index.is_symlink():
-        raise RuntimeError("A result index is linked; resolve it before publishing.")
-    explorer_text = explorer_index.read_text(encoding="utf-8")
+    explorer_path = "data/exploratory/README.md"
+    data_path = "data/README.md"
+    if _remote_file_exists(target["base_sha"], f"data/exploratory/{pack_name}"):
+        raise RuntimeError("An export folder with this campaign ID already exists on the reviewed target.")
+    base_explorer = _show_at(target["base_sha"], explorer_path)
+    base_data = _show_at(target["base_sha"], data_path)
+    explorer_text = base_explorer.decode("utf-8")
     marker = "\n\nNew sanitized packs use `scripts/archive_exploratory_run.py`"
     if marker not in explorer_text:
         raise RuntimeError("The exploratory archive index has changed; update the publication flow before continuing.")
@@ -298,7 +357,7 @@ def _prepare_preview(campaign_job_id: str) -> dict:
         f"\n| [`{pack_name}/`]({pack_name}/) | {observed_cases} case outcomes across {len(exported)} exported attempts | "
         f"Operator campaign; {gt_known} configured Ground Truth outcome(s) known; {excluded_attempts} attempt(s) lacked exportable structure and {unstarted} planned attempt(s) were not started. |")
     new_explorer_text = explorer_text.replace(marker, row + marker, 1)
-    data_text = data_index.read_text(encoding="utf-8")
+    data_text = base_data.decode("utf-8")
     link_line = (
         f"\n\nThe [{pack_name}](exploratory/{pack_name}/README.md) operator campaign is an exploratory, "
         "sanitized evidence pack; it does not change the canonical benchmark dataset."
@@ -323,24 +382,19 @@ def _prepare_preview(campaign_job_id: str) -> dict:
     paths = [item["path"] for item in files]
     if any(path.startswith("data/exploratory/") and path != "data/exploratory/README.md" and not path.startswith(f"data/exploratory/{pack_name}/") for path in paths):
         raise RuntimeError("The prepared export contains an unexpected path.")
-    _ensure_paths_clean(["data/exploratory/README.md", "data/README.md"])
     base_files = {
-        path: _hash_file(REPO / path)
-        for path in ("data/exploratory/README.md", "data/README.md")
+        explorer_path: hashlib.sha256(base_explorer).hexdigest(),
+        data_path: hashlib.sha256(base_data).hexdigest(),
     }
-    if (REPO / "data" / "exploratory" / pack_name).exists():
-        raise RuntimeError("An export folder with this campaign ID already exists.")
-    target = _publication_target()
-
-    token = secrets.token_hex(16)
     expires_at = (datetime.now(timezone.utc) + PREVIEW_TTL).isoformat()
     manifest = {
-        "version": 1,
+        "version": 2,
         "campaign_job_id": campaign_job_id,
         "created_at": datetime.now(timezone.utc).isoformat(),
         "expires_at": expires_at,
         "preview_token": token,
         "preview_root": str(preview_root),
+        "worktree_path": str(campaign_dir / f"publish-worktree-{token[:16]}"),
         "pack_name": pack_name,
         "target": target,
         "files": files,
@@ -359,9 +413,11 @@ def _prepare_preview(campaign_job_id: str) -> dict:
     }
     _private_write(campaign_dir / "publish-preview.json", manifest)
     return {
+        "campaign_job_id": campaign_job_id,
         "preview_token": token,
+        "expires_at": expires_at,
         "branch": target["branch"],
-        "upstream": target["upstream"],
+        "target": target,
         "campaign_status": status,
         "attempts_recorded": len(exported),
         "attempts_planned": planned,
@@ -373,7 +429,7 @@ def _prepare_preview(campaign_job_id: str) -> dict:
         "attempts_excluded": excluded_attempts,
         "attempts_unstarted": unstarted,
         "models": models,
-        "files": [{"path": item["path"], "sha256": item["sha256"]} for item in files],
+        "files": [{"path": item["path"], "sha256": item["sha256"], "bytes": (preview_root / item["preview_path"]).stat().st_size} for item in files],
     }
 
 
@@ -387,7 +443,7 @@ def _manifest(campaign_job_id: str) -> dict | None:
         if path.is_symlink() or not path.is_file() or path.stat().st_mode & 0o077:
             return None
         value = json.loads(path.read_text(encoding="utf-8"))
-        return value if isinstance(value, dict) and value.get("version") == 1 else None
+        return value if isinstance(value, dict) and value.get("version") == 2 else None
     except (OSError, ValueError):
         return None
 
@@ -403,10 +459,8 @@ def _verified_manifest(campaign_job_id: str, token: str) -> dict | None:
         preview_root = Path(manifest["preview_root"]).resolve(strict=True)
         preview_root.relative_to((JOBS_DIR / campaign_job_id).resolve(strict=True))
         target = manifest["target"]
-        current = _publication_target()
+        current = _publication_target(campaign_job_id, manifest["preview_token"])
         if current != target:
-            return None
-        if (REPO / "data" / "exploratory" / manifest["pack_name"]).exists():
             return None
         for item in manifest["files"]:
             path = item["path"]
@@ -419,11 +473,6 @@ def _verified_manifest(campaign_job_id: str, token: str) -> dict | None:
             local.relative_to(preview_root)
             if local.is_symlink() or not local.is_file() or _hash_file(local) != item["sha256"]:
                 return None
-        for path, expected_hash in manifest["base_files"].items():
-            base = REPO / path
-            if base.is_symlink() or not base.is_file() or _hash_file(base) != expected_hash:
-                return None
-        _ensure_paths_clean(["data/exploratory/README.md", "data/README.md"])
         return manifest
     except (OSError, KeyError, TypeError, ValueError, RuntimeError, subprocess.TimeoutExpired):
         return None
@@ -433,7 +482,29 @@ def validate_publish_token(campaign_job_id: str, token: str) -> bool:
     return _verified_manifest(campaign_job_id, token) is not None
 
 
-def _log_git(job_id: str, args: list[str], *, timeout: int = 60) -> subprocess.CompletedProcess:
+def read_preview_file(campaign_job_id: str, path: str) -> str:
+    manifest = _manifest(campaign_job_id)
+    if not manifest or not isinstance(path, str):
+        raise FileNotFoundError("Preview file not found.")
+    item = next((entry for entry in manifest.get("files", []) if entry.get("path") == path), None)
+    if item is None:
+        raise FileNotFoundError("Preview file not found.")
+    root = Path(manifest["preview_root"]).resolve(strict=True)
+    root.relative_to((JOBS_DIR / campaign_job_id).resolve(strict=True))
+    candidate = root / item["preview_path"]
+    if candidate.is_symlink():
+        raise FileNotFoundError("Preview file not found.")
+    resolved = candidate.resolve(strict=True)
+    resolved.relative_to(root)
+    if not resolved.is_file() or resolved.stat().st_size > 2_000_000:
+        raise FileNotFoundError("Preview file not found.")
+    content = resolved.read_text(encoding="utf-8")
+    if hashlib.sha256(content.encode("utf-8")).hexdigest() != item.get("sha256"):
+        raise FileNotFoundError("Preview file not found.")
+    return content
+
+
+def _log_git(job_id: str, args: list[str], *, cwd: Path | None = None, timeout: int = 60) -> subprocess.CompletedProcess:
     directory = JOBS_DIR / job_id
     directory.mkdir(parents=True, exist_ok=True, mode=0o700)
     os.chmod(directory, 0o700)
@@ -443,7 +514,7 @@ def _log_git(job_id: str, args: list[str], *, timeout: int = 60) -> subprocess.C
     with log_path.open("ab") as log:
         try:
             result = subprocess.run(
-                ["git", *args], cwd=REPO, stdin=subprocess.DEVNULL,
+                ["git", *args], cwd=cwd or REPO, stdin=subprocess.DEVNULL,
                 stdout=log, stderr=subprocess.STDOUT, timeout=timeout, check=False, env=env,
             )
         except (OSError, subprocess.TimeoutExpired) as exc:
@@ -451,8 +522,11 @@ def _log_git(job_id: str, args: list[str], *, timeout: int = 60) -> subprocess.C
     return result
 
 
-def _finish_publish(job_id: str, status: str, label: str) -> None:
-    jobs.update_job(job_id, status=status, finished_at=jobs.now(), current_label=label)
+def _finish_publish(job_id: str, status: str, label: str, result: dict | None = None) -> None:
+    fields = {"status": status, "finished_at": jobs.now(), "current_label": label}
+    if result is not None:
+        fields["result_json"] = result
+    jobs.update_job(job_id, **fields)
 
 
 def publish_campaign(publish_job_id: str, campaign_job_id: str, token: str) -> None:
@@ -468,21 +542,33 @@ def publish_campaign(publish_job_id: str, campaign_job_id: str, token: str) -> N
     paths = [item["path"] for item in manifest["files"]]
     pathspecs = [f":(literal){path}" for path in paths]
     preview_root = Path(manifest["preview_root"]).resolve(strict=True)
-    existing_indexes = {
-        "data/exploratory/README.md": (REPO / "data" / "exploratory" / "README.md").read_bytes(),
-        "data/README.md": (REPO / "data" / "README.md").read_bytes(),
-    }
-    for path, expected_hash in manifest["base_files"].items():
-        target = REPO / path
-        if target.is_symlink() or not target.is_file() or _hash_file(target) != expected_hash:
-            _finish_publish(publish_job_id, "failed", "A result index changed after review; prepare a fresh preview.")
-            return
-    created_pack = REPO / "data" / "exploratory" / manifest["pack_name"]
-    created_pack.mkdir(parents=False, exist_ok=False)
-    copied = []
-    committed = False
-    initial_head = manifest["target"]["head"]
+    worktree = Path(manifest["worktree_path"]).resolve()
     try:
+        worktree.relative_to((JOBS_DIR / campaign_job_id).resolve(strict=True))
+    except ValueError:
+        _finish_publish(publish_job_id, "failed", "The reviewed results worktree path is invalid.")
+        return
+    if worktree.exists() or worktree.is_symlink():
+        _finish_publish(publish_job_id, "failed", "The isolated results worktree path already exists. Prepare a fresh preview.")
+        return
+    branch = manifest["target"]["branch"]
+    remote = manifest["target"]["remote"]
+    base_sha = manifest["target"]["base_sha"]
+    committed = False
+    try:
+        jobs.update_job(publish_job_id, current_label="Creating the reviewed results branch in an isolated worktree.")
+        worktree.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+        if _log_git(
+            publish_job_id,
+            ["worktree", "add", "--quiet", "-b", branch, str(worktree), base_sha],
+        ).returncode:
+            raise RuntimeError("Git could not create the isolated results worktree.")
+        for path, expected_hash in manifest["base_files"].items():
+            target_file = worktree / path
+            if target_file.is_symlink() or not target_file.is_file() or _hash_file(target_file) != expected_hash:
+                raise RuntimeError("A result index changed on the reviewed target; prepare a fresh preview.")
+        if (worktree / "data" / "exploratory" / manifest["pack_name"]).exists():
+            raise RuntimeError("An export folder with this campaign ID already exists on the results branch.")
         for item in manifest["files"]:
             candidate = preview_root / item["preview_path"]
             if candidate.is_symlink():
@@ -491,53 +577,42 @@ def publish_campaign(publish_job_id: str, campaign_job_id: str, token: str) -> N
             source.relative_to(preview_root)
             if _hash_file(source) != item["sha256"]:
                 raise RuntimeError("A reviewed file changed before publication.")
-            destination = REPO / item["path"]
-            if destination.exists() and item["path"] not in existing_indexes:
+            destination = worktree / item["path"]
+            if destination.exists() and item["path"] not in manifest["base_files"]:
                 raise RuntimeError("An export destination already exists.")
             destination.parent.mkdir(parents=True, exist_ok=True)
             shutil.copyfile(source, destination)
-            copied.append(destination)
-        jobs.update_job(publish_job_id, current_label="Adding only the reviewed export paths.")
-        added = _log_git(publish_job_id, ["add", "--", *pathspecs])
+        jobs.update_job(publish_job_id, current_label="Adding only the reviewed export paths in the results worktree.")
+        added = _log_git(publish_job_id, ["add", "--", *pathspecs], cwd=worktree)
         if added.returncode:
             raise RuntimeError("Git could not stage the reviewed export files.")
-        current_head = _git(["rev-parse", "HEAD"]).stdout.strip()
-        if current_head != initial_head:
-            raise RuntimeError("The current branch changed after preview; no commit was created.")
+        current_head = _git(["rev-parse", "HEAD"], cwd=worktree).stdout.strip()
+        current_branch = _git(["branch", "--show-current"], cwd=worktree).stdout.strip()
+        if current_head != base_sha or current_branch != branch:
+            raise RuntimeError("The isolated results worktree changed before commit.")
         message_file = JOBS_DIR / publish_job_id / "commit-message.txt"
         message_file.write_text(f"Archive KubeLLM operator campaign {campaign_job_id[:8]}\n", encoding="utf-8")
         os.chmod(message_file, 0o600)
         jobs.update_job(publish_job_id, current_label="Creating a commit containing the reviewed result files.")
-        commit = _log_git(publish_job_id, ["commit", "--only", "--file", str(message_file), "--", *pathspecs])
+        commit = _log_git(publish_job_id, ["commit", "--only", "--file", str(message_file), "--", *pathspecs], cwd=worktree)
         if commit.returncode:
             raise RuntimeError("Git could not create the export commit.")
         committed = True
-        jobs.update_job(publish_job_id, current_label="Pushing the export commit to the configured upstream.")
-        # An explicit refspec pushes only this commit to the reviewed upstream
-        # branch, whatever the server's push.default says.
-        reviewed = manifest["target"]
-        pushed = _log_git(publish_job_id, ["push", reviewed["remote"], f"HEAD:refs/heads/{reviewed['upstream_branch']}"], timeout=180)
-        if pushed.returncode:
-            _finish_publish(publish_job_id, "failed", "The export commit is local, but pushing it failed. Check server Git access and push the current branch.")
+        commit_sha = _git(["rev-parse", "HEAD"], cwd=worktree).stdout.strip()
+        if _remote_branch_exists(remote, branch):
+            _finish_publish(publish_job_id, "failed", f"The reviewed branch {branch} now exists remotely. The export commit is preserved locally.", {"branch": branch, "remote": remote, "commit": commit_sha, "worktree": str(worktree)})
             return
-        _finish_publish(publish_job_id, "completed", "Sanitized results were committed and pushed.")
+        jobs.update_job(publish_job_id, current_label=f"Pushing reviewed branch {branch} to {remote}.")
+        pushed = _log_git(publish_job_id, ["push", remote, f"HEAD:refs/heads/{branch}"], cwd=worktree, timeout=180)
+        if pushed.returncode:
+            _finish_publish(publish_job_id, "failed", f"The export commit is preserved on {branch}, but pushing it failed. Check server Git access before retrying.", {"branch": branch, "remote": remote, "commit": commit_sha, "worktree": str(worktree)})
+            return
+        _finish_publish(publish_job_id, "completed", f"Sanitized results were committed and pushed to {remote}/{branch}.", {"branch": branch, "remote": remote, "commit": commit_sha, "base_sha": base_sha, "worktree": str(worktree)})
     except BaseException:
-        if not committed:
-            try:
-                current_head = _git(["rev-parse", "HEAD"], check=False).stdout.strip()
-            except BaseException:
-                current_head = ""
-            if current_head == initial_head:
-                _git(["reset", "--", *pathspecs], check=False)
-                for path, content in existing_indexes.items():
-                    target = REPO / path
-                    target.write_bytes(content)
-                if created_pack.is_dir() and not created_pack.is_symlink():
-                    shutil.rmtree(created_pack)
         if committed:
-            label = "The export commit exists locally, but the push outcome could not be confirmed. Check the upstream before retrying."
-        elif current_head and current_head != initial_head:
-            label = "The current branch changed during publication. Inspect it before retrying."
+            commit_sha = _git(["rev-parse", "HEAD"], cwd=worktree, check=False).stdout.strip()
+            label = f"The export commit is preserved on {branch}, but the push outcome could not be confirmed. Check the remote before retrying."
+            _finish_publish(publish_job_id, "failed", label, {"branch": branch, "remote": remote, "commit": commit_sha, "worktree": str(worktree)})
         else:
-            label = "The export could not be committed. No unrelated paths were staged by the operator app."
-        _finish_publish(publish_job_id, "failed", label)
+            label = f"The reviewed export could not be committed on {branch}; the application checkout was not changed."
+            _finish_publish(publish_job_id, "failed", label, {"branch": branch, "remote": remote, "worktree": str(worktree) if worktree.exists() else None})

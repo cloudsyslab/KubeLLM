@@ -9,7 +9,7 @@ from pathlib import Path
 
 
 REPO = Path(__file__).resolve().parents[1]
-STATE = REPO / ".local" / "operator_ui"
+STATE = Path(os.environ.get("KUBELLM_UI_STATE_DIR", str(REPO / ".local" / "operator_ui"))).expanduser().resolve()
 JOBS_DIR = STATE / "jobs"
 # Campaigns keep each attempt's runner output at <jobs>/<job id>/attempts/<attempt>/;
 # History reads local runs from there.

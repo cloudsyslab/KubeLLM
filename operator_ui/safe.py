@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import re
 
+from .events import redact_text
+
 
 _MODEL = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.:/+-]{0,119}$")
 _CHECK_LABELS = {
@@ -66,6 +68,18 @@ def _model(value: object) -> str | None:
     return value if isinstance(value, str) and _MODEL.fullmatch(value) and "://" not in value and "@" not in value else None
 
 
+def _safe_detail(value: object) -> str | None:
+    if not isinstance(value, str) or not value.strip():
+        return None
+    # check_readiness already applies its lane-specific secret redactor. Apply
+    # the event redactor again, then hide endpoints and IPs that can identify
+    # private lab services.
+    detail = redact_text(value, limit=1_000)
+    detail = re.sub(r"(?i)\b[a-z][a-z0-9+.-]*://[^\s,;]+", "<endpoint>", detail)
+    detail = re.sub(r"\b(?:\d{1,3}\.){3}\d{1,3}\b", "<address>", detail)
+    return detail or None
+
+
 def safe_readiness(value: object) -> dict:
     if not isinstance(value, dict):
         return {"status": "BLOCKED", "checks": [], "repairs": []}
@@ -84,6 +98,7 @@ def safe_readiness(value: object) -> dict:
             "label": _CHECK_LABELS.get(name, "Environment check"),
             "status": status,
             "blocking": item.get("blocking") is True,
+            "detail": _safe_detail(item.get("message")),
             "hint": _CHECK_HINTS.get(name) if status == "fail" else None,
         })
     repairs = []
@@ -99,6 +114,7 @@ def safe_readiness(value: object) -> dict:
             "name": name,
             "label": _REPAIR_LABELS.get(name, "Environment step"),
             "status": status,
+            "message": _safe_detail(item.get("message")),
         })
     effective = value.get("effective") if isinstance(value.get("effective"), dict) else {}
     providers = [
