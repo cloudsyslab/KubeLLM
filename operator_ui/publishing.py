@@ -251,8 +251,9 @@ def _prepare_preview(campaign_job_id: str) -> dict:
         and item.get("ground_truth_configured") is not False
     ]
     verifier_agrees = sum(item["verified"] == item["ground_truth_passed"] for item in verifier_comparable)
+    # Counted over exported attempts only, matching "across N exported attempts" in the catalog row.
     observed_cases = sum(
-        1 for item in attempts
+        1 for item in exported_records
         if item.get("outcome") == "recorded" and item.get("status") in {"PASS", "FAIL", "ERROR", "TIMEOUT"}
     )
     planned = job.get("total") if type(job.get("total")) is int else len(attempts)
