@@ -87,7 +87,7 @@ export function topologyAt(campaign: DemoCampaign, t: number): { profiles: Profi
         defaultContext: false,
         kubernetes: "v1.31.0",
         driver: "docker",
-        nodes: [{ name: "minh-lane", status: "Ready", ip: "192.168.112.2" }],
+        nodes: [{ name: "minh-lane", status: "Ready", ip: "192.168.49.2" }],
         pods: [
           ...fixtures,
           ...LEFTOVERS,

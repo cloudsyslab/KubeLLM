@@ -118,7 +118,7 @@ const PY = ".venv/bin/python";
 const RUNNER = `${PY} debug_assistant_latest/runner.py --lab-config ${LANE.selector}`;
 const RAG_HOST = LANE.ragApi.replace("http://", "");
 /** The lane node's API server, as the topology demo names it. */
-const API_SERVER = "192.168.112.2:8443";
+const API_SERVER = "192.168.49.2:8443";
 const HTTP_NOTE = "HTTP probes are shown as curl equivalents; the script sends them with urllib.";
 const PREFLIGHT_NOTE = "runner.py --preflight runs every live gate in one process and prints one JSON report; these are this gate's lines.";
 const entry = (name: string, passed: boolean, message: string) => JSON.stringify({ name, passed, message });
