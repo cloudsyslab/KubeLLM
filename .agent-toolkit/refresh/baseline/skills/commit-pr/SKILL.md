@@ -1,6 +1,6 @@
 ---
 name: commit-pr
-description: "Turn a completed work pass and its Git changes into a detailed proposal of small coherent commits, complete commit messages, and concise PR text. Use when partitioning finished work or writing commit messages and PR titles/bodies; present everything in chat and wait for LGTM before committing and pushing."
+description: "Turn completed work on a feature branch into a detailed commit proposal and GitHub pull request. Use after a work pass when preparing coherent commits, pushing the branch, and opening or updating its draft PR after approval."
 ---
 
 # Commit & PR
@@ -9,14 +9,15 @@ Turn finished work into useful history and a clear explanation for reviewers. Pr
 
 The default workflow is:
 
-`completed pass + actual changes -> ordered commit proposal + PR text in chat -> user LGTM -> approved commits + push`
+`completed pass on a feature branch -> ordered commit proposal + PR text in chat -> user LGTM -> approved commits + push + draft PR`
 
 ## Authority and scope
 
 - Invoking the skill authorizes inspection and proposed text. Keep the working tree, index, commits, branch, and remote unchanged during proposal preparation.
-- Wait for the user's LGTM or equivalent explicit approval before creating the proposed commits and pushing. Apply existing approval for the same concrete proposal; do not ask again as ceremony. A request for text only ends at the proposal.
-- State what approval will do: create the listed commits and push the named branch to the named remote. Resolve an ambiguous repository or push destination before asking for approval. Do useful drafting while resolving missing decisions.
-- Open or update a PR only when requested. Approval of commit text alone does not authorize a push, and approval of commits and push does not by itself authorize PR creation.
+- Wait for the user's LGTM or equivalent explicit approval before creating the proposed commits, pushing the feature branch, and opening or updating its draft PR. Apply existing approval for the same concrete proposal; do not ask again as ceremony. A request for text only ends at the proposal.
+- State what approval will do: create the listed commits, push the named feature branch to the named remote, and open or update the named PR against the proposed base. Resolve an ambiguous repository, branch, base, or destination before asking for approval. Do useful drafting while resolving missing decisions.
+- PR creation or updating is the default for a feature branch. The user may explicitly request commit-only or text-only output. Approval of the concrete proposal authorizes the listed commit, push, and PR actions.
+- Do not create or push work directly to the repository's default branch. If the current branch is the default branch, propose a feature branch and include its creation in the approval scope, or stop for a missing branch decision.
 - Preserve existing commits unless rewriting history was explicitly requested. Keep unrelated changes outside the approved plan. Product fixes, fresh implementation, merging, and history rewriting require their own task scope.
 
 ## Ground the proposal
@@ -78,8 +79,8 @@ Provide the full text, not just a file or a promise to write it later:
 1. A compact description of what the completed pass achieved and the proposed branch/destination.
 2. An ordered commit map: each commit's purpose, owned paths/hunks, dependencies, and reason for the split. A table works well for comparison.
 3. The exact subject and complete body of every proposed commit, in copyable text blocks. Clearly distinguish commits that already exist.
-4. The exact PR title and complete body, even when PR creation is not yet requested. For an explicitly commit-only request, omit the PR artifact.
-5. Any meaningful leftovers, evidence gaps, or unresolved decisions, plus the concrete scope of LGTM: the listed new commits and normal push to the stated destination; PR creation only if requested.
+4. The exact PR title and complete body for the default draft PR. For an explicitly commit-only request, omit PR execution while retaining PR text only if the user wants it.
+5. Any meaningful leftovers, evidence gaps, or unresolved decisions, plus the concrete scope of LGTM: the listed new commits, normal push, and draft PR creation or update against the named base. PR creation is omitted for an explicit commit-only request.
 
 Keep the plan detailed and the prose purposeful. Do not repeat the complete scope in several formats when the map and messages already make it clear.
 

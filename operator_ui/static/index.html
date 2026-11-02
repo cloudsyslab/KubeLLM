@@ -1,0 +1,143 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light">
+  <title>KubeLLM · Operator</title>
+  <link rel="preconnect" href="/" crossorigin>
+  <link rel="stylesheet" href="/static/operator.css">
+  <script src="/static/operator.js" defer></script>
+</head>
+<body>
+  <section id="login-screen" class="login-screen" aria-labelledby="login-title" hidden>
+    <div class="login-card">
+      <div class="brand-mark brand-mark-large" aria-hidden="true">K</div>
+      <p class="eyebrow">KUBELLM · PRIVATE OPERATOR</p>
+      <h1 id="login-title">Your research, ready.</h1>
+      <p class="muted">Sign in to check your lab, launch benchmark runs, and review results.</p>
+      <form id="login-form">
+        <label for="password">Operator password</label>
+        <input id="password" name="password" type="password" autocomplete="current-password" required>
+        <button type="submit" class="button button-primary button-wide">Sign in <span aria-hidden="true">→</span></button>
+        <p id="login-message" class="form-message" role="status"></p>
+      </form>
+      <p class="login-footnote"><span class="status-dot dot-green"></span> Private connection · operator access only</p>
+    </div>
+    <div class="login-side">
+      <div class="login-aside-art" aria-hidden="true"><div class="orbit orbit-a"></div><div class="orbit orbit-b"></div><div class="orbit-core">K</div></div>
+      <p class="eyebrow eyebrow-light">A QUIETER WAY TO RUN THE BENCHMARK</p>
+      <p class="login-side-copy">Check the lab. Start a fair comparison. Keep every outcome accounted for.</p>
+      <span class="login-side-meta">BUILT FOR THE KUBELLM RESEARCH LOOP</span>
+    </div>
+  </section>
+
+  <div id="app-shell" class="app-shell" hidden>
+    <aside class="sidebar">
+      <a class="brand" href="#overview" data-page-link="overview" aria-label="KubeLLM operator home">
+        <span class="brand-mark">K</span>
+        <span class="brand-copy"><strong>KubeLLM</strong><small>OPERATOR DESK</small></span>
+      </a>
+      <div class="sidebar-divider"></div>
+      <p class="nav-label">WORKSPACE</p>
+      <nav class="nav-group" aria-label="Main navigation">
+        <a href="#overview" data-page-link="overview" class="nav-link active"><span class="nav-icon icon-grid" aria-hidden="true"></span><span>Overview</span></a>
+        <a href="#launch" data-page-link="launch" class="nav-link"><span class="nav-icon icon-play" aria-hidden="true"></span><span>New campaign</span></a>
+        <a href="#runs" data-page-link="runs" class="nav-link"><span class="nav-icon icon-pulse" aria-hidden="true"></span><span>Run history</span><span id="nav-run-count" class="nav-count"></span></a>
+        <a href="#compare" data-page-link="compare" class="nav-link"><span class="nav-icon icon-compare" aria-hidden="true"></span><span>Compare</span></a>
+        <a href="#environment" data-page-link="environment" class="nav-link"><span class="nav-icon icon-sliders" aria-hidden="true"></span><span>Environment</span></a>
+      </nav>
+      <div class="sidebar-fill"></div>
+      <div class="private-lane-card">
+        <div class="private-lane-top"><span class="status-dot dot-green"></span><span>PRIVATE LANE</span><span class="lock-icon" aria-hidden="true">●</span></div>
+        <strong>Minh · isolated lab</strong>
+        <p>Selected lane is checked before every runner action.</p>
+        <button type="button" id="sidebar-readiness" class="text-button">View environment <span aria-hidden="true">↗</span></button>
+      </div>
+      <div class="sidebar-user"><span class="avatar">M</span><span class="sidebar-user-name"><strong>Operator</strong><small>Single-user access</small></span><button type="button" id="logout-button" class="icon-button logout-button" aria-label="Sign out" title="Sign out">↪</button></div>
+    </aside>
+
+    <main class="main-shell">
+      <header class="topbar">
+        <div class="breadcrumbs"><span>KubeLLM</span><span class="breadcrumb-slash">/</span><strong id="page-crumb">Overview</strong></div>
+        <div class="topbar-actions"><span class="server-pill"><span class="status-dot dot-green"></span> Local server</span><span class="topbar-date" id="today-label"></span></div>
+      </header>
+      <div id="toast" class="toast" role="status" aria-live="polite" hidden></div>
+
+      <section id="page-overview" class="page active-page" aria-labelledby="overview-title">
+        <div class="page-heading heading-with-action">
+          <div><p class="eyebrow">YOUR RESEARCH DESK</p><h1 id="overview-title">Good work starts with a healthy lab.</h1><p class="page-subtitle">Check the environment, run an evaluation, and follow results from one place.</p></div>
+          <a href="#launch" class="button button-primary" data-page-link="launch"><span class="play-tiny" aria-hidden="true">▶</span> New campaign</a>
+        </div>
+        <div class="readiness-banner" id="overview-readiness">
+          <div class="readiness-pulse"><span class="status-dot dot-muted"></span></div>
+          <div class="readiness-copy"><span class="eyebrow">ENVIRONMENT STATUS</span><strong id="overview-readiness-title">Preflight has not run</strong><span id="overview-readiness-text">Check database, providers, RAG, and Kubernetes before your next run.</span></div>
+          <div class="readiness-banner-actions"><button type="button" id="run-readiness" class="button button-outline">Run preflight</button><button type="button" id="prepare-environment" class="button button-soft" title="May repair the selected lane's services and pinned dependencies">Prepare environment</button></div>
+        </div>
+        <div id="job-banner" class="job-banner" hidden></div>
+        <div class="section-heading"><div><p class="eyebrow">THE EVIDENCE SO FAR</p><h2>Benchmark snapshot</h2></div><button class="text-button refresh-button" id="refresh-overview" type="button"><span aria-hidden="true">↻</span> Refresh</button></div>
+        <div class="metrics-grid" id="overview-metrics" aria-live="polite"></div>
+        <div class="overview-grid">
+          <article class="surface recent-surface"><div class="surface-heading"><div><p class="eyebrow">JUST IN</p><h2>Recent benchmark runs</h2></div><a href="#runs" class="text-button" data-page-link="runs">View all <span aria-hidden="true">→</span></a></div><div id="overview-runs" class="table-wrap"></div></article>
+          <article class="surface jobs-surface"><div class="surface-heading"><div><p class="eyebrow">BACKGROUND WORK</p><h2>Operator jobs</h2></div></div><div id="overview-jobs" class="job-list"></div></article>
+        </div>
+        <div class="source-strip" id="source-strip"></div>
+      </section>
+
+      <section id="page-launch" class="page" aria-labelledby="launch-title" hidden>
+        <div class="page-heading"><p class="eyebrow">A CONFIGURATION YOU CAN SEE</p><h1 id="launch-title">Build a benchmark campaign.</h1><p class="page-subtitle">Choose the same cases and conditions you want to compare. The runner handles every attempt serially.</p></div>
+        <div class="launch-layout">
+          <form id="campaign-form" class="surface launch-form">
+            <div class="form-section"><div class="form-section-title"><span class="step-number">01</span><div><h2>Choose your cases</h2><p>Available cases are read from the canonical runner.</p></div></div>
+              <div class="field-inline"><label for="case-search" class="sr-only">Filter cases</label><input id="case-search" type="search" placeholder="Filter cases…" class="search-input"><button type="button" id="select-visible-cases" class="small-button">Select visible</button><button type="button" id="clear-cases" class="small-button">Clear</button></div>
+              <div id="case-catalog" class="case-catalog"><p class="muted">Loading runner cases…</p></div>
+            </div>
+            <div class="form-section"><div class="form-section-title"><span class="step-number">02</span><div><h2>Choose execution techniques</h2><p>Each selected technique runs against the selected cases and models.</p></div></div>
+              <div class="choice-grid technique-choices">
+                <label class="choice-card"><input type="checkbox" name="technique" value="allStepsAtOnce" checked><span class="custom-check"></span><span><strong>All steps at once</strong><small>allStepsAtOnce</small></span></label>
+                <label class="choice-card"><input type="checkbox" name="technique" value="stepByStep"><span class="custom-check"></span><span><strong>Step by step</strong><small>stepByStep</small></span></label>
+                <label class="choice-card"><input type="checkbox" name="technique" value="singleAgent"><span class="custom-check"></span><span><strong>Single agent</strong><small>singleAgent</small></span></label>
+                <label class="choice-card"><input type="checkbox" name="technique" value="knowledgeAgentOnly"><span class="custom-check"></span><span><strong>Knowledge agent only</strong><small>knowledgeAgentOnly</small></span></label>
+              </div>
+            </div>
+            <div class="form-section"><div class="form-section-title"><span class="step-number">03</span><div><h2>Choose your models</h2><p>Change DebugAgent across the grid. API and Verification models stay fixed.</p></div></div>
+              <label for="debug-models">DebugAgent models <span class="label-hint">One model per line; blank uses each case's configured model</span></label>
+              <textarea id="debug-models" name="debug_models" rows="3" spellcheck="false" placeholder="Leave empty to use the model configured for each case"></textarea>
+              <div class="model-fixed-grid"><div><label for="api-model">API / Knowledge model <span class="label-hint">Optional fixed override</span></label><input id="api-model" name="api_model" type="text" maxlength="120" placeholder="Use the configured default"></div><div><label for="verification-model">Verification model <span class="label-hint">Optional fixed override</span></label><input id="verification-model" name="verification_model" type="text" maxlength="120" placeholder="Use the configured default"></div></div>
+            </div>
+            <div class="form-section form-section-last"><div class="form-section-title"><span class="step-number">04</span><div><h2>Set repetitions</h2><p>One repetition records one attempt for each case, model, and technique.</p></div></div>
+              <div class="repetitions-row"><div><label for="repetitions">Repetitions</label><p class="label-hint">Teardown stays on; lane runs stay serial.</p></div><div class="stepper"><button type="button" id="rep-minus" class="stepper-button" aria-label="Decrease repetitions">−</button><input id="repetitions" name="repetitions" type="number" min="1" max="500" value="1"><button type="button" id="rep-plus" class="stepper-button" aria-label="Increase repetitions">+</button></div></div>
+            </div>
+            <div class="launch-footer"><div class="launch-note"><span class="shield-icon" aria-hidden="true">◆</span><span>Lane-bound runner · preflight checked · teardown enabled</span></div><button id="start-campaign" type="submit" class="button button-primary" disabled>Review campaign <span aria-hidden="true">→</span></button></div>
+          </form>
+          <aside class="launch-aside"><div class="surface launch-preview"><p class="eyebrow">CAMPAIGN PREVIEW</p><h2>Your planned run</h2><div class="attempt-total"><strong id="attempt-count">0</strong><span>planned attempts</span></div><div id="campaign-breakdown" class="preview-breakdown"><span>Select cases and techniques to see your plan.</span></div><div class="preview-warning" id="readiness-launch-note"><span class="status-dot dot-amber"></span><span>Preflight is required before a campaign can launch.</span></div><div class="preview-footer"><span>Estimated API usage</span><strong>Varies by model and case</strong></div></div><div class="launch-tip"><span class="tip-icon" aria-hidden="true">✳</span><div><strong>Comparable runs share the same conditions.</strong><p>Keep case, repetition, API model, provider, and Verification settings fixed when comparing DebugAgent models.</p></div></div><div class="planned-features"><div class="planned-heading"><span class="mini-orbit" aria-hidden="true">+</span><span>ON THE NEXT PASS</span></div><p>Case editing, agent prompt controls, and RAG knowledge management.</p></div></aside>
+        </div>
+      </section>
+
+      <section id="page-runs" class="page" aria-labelledby="runs-title" hidden>
+        <div class="page-heading heading-with-action"><div><p class="eyebrow">THE FULL RUN RECORD</p><h1 id="runs-title">History with its context intact.</h1><p class="page-subtitle">Browse canonical exports, exploratory packs, and private local runs side by side.</p></div><button class="button button-outline" id="refresh-history" type="button"><span aria-hidden="true">↻</span> Refresh results</button></div>
+        <div id="history-metrics" class="metrics-grid compact-metrics"></div>
+        <div class="surface history-surface"><div class="history-controls"><div class="segmented" role="group" aria-label="Filter result source"><button type="button" class="segment active" data-source="all">All sources</button><button type="button" class="segment" data-source="canonical">Canonical</button><button type="button" class="segment" data-source="exploratory">Exploratory</button><button type="button" class="segment" data-source="local">Local runs</button></div><label class="history-search"><span aria-hidden="true">⌕</span><input type="search" id="history-search" placeholder="Search cases, models, runs…" aria-label="Search history"></label></div>
+          <div id="history-table" class="table-wrap"></div><p id="history-truncated" class="table-footnote" hidden></p>
+        </div>
+        <article id="run-detail" class="surface detail-surface" hidden></article>
+      </section>
+
+      <section id="page-compare" class="page" aria-labelledby="compare-title" hidden>
+        <div class="page-heading"><p class="eyebrow">COMPARE CONDITIONS, KEEP THE DENOMINATOR</p><h1 id="compare-title">Put benchmark runs side by side.</h1><p class="page-subtitle">Select runs from the history table. Outcome, verifier agreement, and resource use remain separate.</p></div>
+        <div id="comparison-empty" class="surface empty-state"><div class="empty-icon" aria-hidden="true">↔</div><h2>Start with two runs</h2><p>Open run history, select two or more comparable entries, and add them to this view.</p><a href="#runs" class="button button-outline" data-page-link="runs">Browse run history <span aria-hidden="true">→</span></a></div>
+        <div id="comparison-results" hidden></div>
+      </section>
+
+      <section id="page-environment" class="page" aria-labelledby="environment-title" hidden>
+        <div class="page-heading"><p class="eyebrow">READY THE SELECTED PRIVATE LANE</p><h1 id="environment-title">Know before you run.</h1><p class="page-subtitle">Check provider access, PostgreSQL, RAG, Kubernetes ownership, and runner readiness. Repair is always an explicit action.</p></div>
+        <div class="environment-layout"><article class="surface environment-card"><div class="surface-heading"><div><p class="eyebrow">SELECTED RESEARCH ENVIRONMENT</p><h2>Minh · owner-only lane</h2></div><span id="environment-status-pill" class="status-tag status-neutral">NEEDS CHECK</span></div><p class="environment-body">The app uses the private lane configuration selected for this KubeLLM checkout. Its database URL, kubeconfig, account credentials, and service addresses remain private on the server.</p><div class="environment-checks" id="environment-checks"><div class="empty-check"><span class="status-dot dot-muted"></span><span>Run preflight to see environment checks.</span></div></div><div id="repair-results" class="repair-results" hidden></div><div class="environment-actions"><button type="button" id="environment-check-button" class="button button-outline">Run preflight</button><button type="button" id="environment-prepare-button" class="button button-primary" title="May repair pinned dependencies and services owned by this lane">Prepare environment</button></div></article><aside class="environment-notes"><div class="surface note-card"><span class="note-number">01</span><div><strong>Check first</strong><p>Readiness verifies the selected lane and its configured database, provider, RAG, and Kubernetes access.</p></div></div><div class="surface note-card"><span class="note-number">02</span><div><strong>Prepare when needed</strong><p>Safe preparation targets only this owner's lane, then runs checks again.</p></div></div><div class="surface note-card"><span class="note-number">03</span><div><strong>Runs stay in sequence</strong><p>Comparison campaigns execute one attempt at a time and retain runner-managed teardown.</p></div></div></aside></div>
+      </section>
+
+      <footer class="app-footer"><span>KubeLLM operator desk</span><span>Evaluation outcomes come from configured Ground Truth.</span></footer>
+    </main>
+  </div>
+  <dialog id="confirm-campaign" class="modal-dialog"><form method="dialog" class="modal-content"><p class="eyebrow">REVIEW BEFORE RUNNING</p><h2>Start this campaign?</h2><p id="campaign-confirm-text" class="muted"></p><div class="modal-summary" id="campaign-confirm-summary"></div><p class="modal-privacy">Your attempts run serially in the selected lane. Closing this browser won't stop them. A stop request takes effect after the active case finishes.</p><div class="modal-actions"><button value="cancel" class="button button-outline">Keep editing</button><button id="confirm-start" value="confirm" class="button button-primary">Start campaign</button></div></form></dialog>
+  <dialog id="publish-dialog" class="modal-dialog publish-dialog"><div class="modal-content"><p class="eyebrow">REVIEW THE EXPORT</p><h2>Publish sanitized results?</h2><p id="publish-summary" class="muted">Preparing the safe export preview…</p><div id="publish-facts" class="modal-summary"></div><div class="publish-models"><strong>Model identifiers included</strong><div id="publish-model-list"></div></div><div class="publish-files-heading"><strong>Exact files to add</strong><span id="publish-file-count"></span></div><pre id="publish-file-list" class="publish-file-list"></pre><p id="publish-exclusions" class="modal-privacy"></p><label class="publish-ack"><input id="publish-ack" type="checkbox"><span>I reviewed the included model IDs and exact file list. Publish this sanitized pack to the configured Git branch.</span></label><div class="modal-actions"><button id="cancel-publish" type="button" class="button button-outline">Cancel</button><button id="confirm-publish" type="button" class="button button-primary" disabled>Publish results</button></div></div></dialog>
+</body>
+</html>

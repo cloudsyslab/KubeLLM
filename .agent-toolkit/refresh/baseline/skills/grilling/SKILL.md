@@ -26,6 +26,8 @@ The user owns decisions. Codex owns discovery: if a fact can be found by reading
 
 ## Unknowns Lens
 
+Any factual lane routed through Discovery, including implicit use during grilling, must be searched and read by its required gpt-6-luna subagent at xhigh effort. The grilling agent uses the returned evidence packet and does not search that lane itself.
+
 Use the map-versus-territory distinction: the map is the user's prompt, plan, and stated context; the territory is the actual codebase, constraints, users, workflows, and failure modes. Interview to reduce the gap.
 
 Track four kinds of unknowns:

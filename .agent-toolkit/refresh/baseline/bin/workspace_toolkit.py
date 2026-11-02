@@ -54,7 +54,10 @@ X_REQUIRED_OVERLAY_PATHS = (
 
 FALLBACK_SKILLS = (
     "build-from-plan",
+    "browser-workflow",
     "commit-pr",
+    "reconcile-branches",
+    "publish-github",
     "discovery",
     "grilling",
     "refresh-docs",
@@ -66,6 +69,15 @@ FALLBACK_SKILLS = (
     "workspace-onboarding",
 )
 REQUIRED_ONBOARDING_SKILL = "workspace-onboarding"
+
+# Claude Code reads CLAUDE.md and .claude/skills, not AGENTS.md beside a
+# CLAUDE.md or .agents/skills.  The binding imports AGENTS.md and links the
+# canonical skill tree so both runtimes share one set of files.
+CLAUDE_INSTRUCTION = "CLAUDE.md"
+CLAUDE_SKILLS_LINK = ".claude/skills"
+CLAUDE_SKILLS_LINK_TARGET = "../.agents/skills"
+CLAUDE_EXCLUSION_KIND = "claude-binding-exclusion"
+CLAUDE_AGENTS_IMPORT_RE = re.compile(r"(?:^|\s)@(?:\./)?AGENTS\.md(?=\s|$)")
 
 EXCLUDED_DIRECTORY_NAMES = {
     ".git",
@@ -927,7 +939,7 @@ def prior_state_is_valid(
         return False
     seen_skills: Set[str] = set()
     helper_count = 0
-    instruction_count = 0
+    seen_instructions: Set[str] = set()
     for item in managed:
         if not isinstance(item, dict):
             return False
@@ -937,9 +949,16 @@ def prior_state_is_valid(
                 return False
             helper_count += 1
         elif kind == "instruction":
-            if item.get("target") != "AGENTS.md" or not isinstance(item.get("source_sha256"), str):
+            # CLAUDE.md is optional so states written before the Claude
+            # binding remain valid until refresh adopts it.
+            target = item.get("target")
+            if (
+                target not in {"AGENTS.md", CLAUDE_INSTRUCTION}
+                or target in seen_instructions
+                or not isinstance(item.get("source_sha256"), str)
+            ):
                 return False
-            instruction_count += 1
+            seen_instructions.add(target)
         elif kind == "skill":
             name = item.get("name")
             target = item.get("target")
@@ -997,7 +1016,7 @@ def prior_state_is_valid(
         for item in managed
         if item.get("kind") == "skill" and item.get("source") == "workspace-local"
     }
-    return managed_upstream_skills == staged_skills and staged_skills.issubset(skill_names) and not (local_skills & staged_skills) and helper_count == 1 and instruction_count == 1
+    return managed_upstream_skills == staged_skills and staged_skills.issubset(skill_names) and not (local_skills & staged_skills) and helper_count == 1 and "AGENTS.md" in seen_instructions
 
 
 def checked_source_path(root: Path, relative: Path, label: str) -> Path:
@@ -1011,6 +1030,27 @@ def checked_source_path(root: Path, relative: Path, label: str) -> Path:
     except ValueError:
         raise ToolkitError(f"{label} escapes toolkit root: {relative.as_posix()}")
     return cursor
+
+
+def manifest_requires(manifest: Dict[str, Any], names: Set[str]) -> Dict[str, List[str]]:
+    """Return each skill's declared dependencies on other toolkit skills."""
+    requires: Dict[str, List[str]] = {}
+    configured = manifest.get("skills")
+    for value in configured if isinstance(configured, list) else []:
+        if not isinstance(value, dict) or not isinstance(value.get("name"), str) or "requires" not in value:
+            continue
+        name = value["name"]
+        declared = value["requires"]
+        if not isinstance(declared, list) or not all(isinstance(item, str) for item in declared):
+            raise ToolkitError(f"requires for skill {name} must be a list of skill names")
+        unknown = sorted(set(declared) - names)
+        if unknown:
+            raise ToolkitError(f"skill {name} requires unknown toolkit skills: {', '.join(unknown)}")
+        if name in declared:
+            raise ToolkitError(f"skill {name} cannot require itself")
+        if declared:
+            requires[name] = sorted(set(declared))
+    return requires
 
 
 def toolkit_configuration(toolkit_root: Path) -> Tuple[Path, List[Tuple[str, Path, Path]], Dict[str, Any]]:
@@ -1071,6 +1111,7 @@ def toolkit_configuration(toolkit_root: Path) -> Tuple[Path, List[Tuple[str, Pat
         if source.is_symlink() or not (source / "SKILL.md").is_file() or (source / "SKILL.md").is_symlink():
             raise ToolkitError(f"missing toolkit skill: {name}")
         skills.append((name, source, target_relative))
+    manifest_requires(manifest, seen)
     return template, skills, manifest
 
 
@@ -1163,6 +1204,82 @@ def stage_candidate(source: Path, staged: Path, root: Path, dry_run: bool) -> No
         copy_file(source, staged, root)
 
 
+def claude_template_path(toolkit_root: Path, manifest: Dict[str, Any]) -> Optional[Path]:
+    configured = manifest.get("claude_template")
+    if configured is None:
+        return None
+    if not isinstance(configured, str) or not configured:
+        raise ToolkitError("claude_template must be a relative path")
+    relative = checked_relative_path(configured, "Claude template path")
+    template = checked_source_path(toolkit_root, relative, "Claude template")
+    if not template.is_file() or template.is_symlink():
+        raise ToolkitError(f"missing Claude template: {relative.as_posix()}")
+    return template
+
+
+def imports_root_agents(text: str) -> bool:
+    """Return whether Claude Code would expand an @AGENTS.md import in text."""
+    fenced = False
+    for line in text.splitlines():
+        if line.lstrip().startswith(("```", "~~~")):
+            fenced = not fenced
+            continue
+        if not fenced and CLAUDE_AGENTS_IMPORT_RE.search(re.sub(r"`[^`]*`", "", line)):
+            return True
+    return False
+
+
+def claude_skills_link_is_current(root: Path) -> bool:
+    link = root / CLAUDE_SKILLS_LINK
+    if link.parent.is_symlink() or not link.is_symlink():
+        return False
+    value = os.readlink(link)
+    if os.path.isabs(value):
+        return False
+    resolved = os.path.normpath(os.path.join(str(link.parent), value))
+    return resolved == os.path.normpath(str(root / ".agents" / "skills"))
+
+
+def materialize_claude_skills_link(root: Path, dry_run: bool) -> str:
+    link = root / CLAUDE_SKILLS_LINK
+    if claude_skills_link_is_current(root):
+        return "unchanged"
+    # A Claude-native skill folder, a link elsewhere, or a symlinked .claude
+    # directory is reconciled during onboarding, never replaced here.
+    if (
+        link.exists()
+        or link.is_symlink()
+        or link.parent.is_symlink()
+        or (link.parent.exists() and not link.parent.is_dir())
+    ):
+        return "staged"
+    if not dry_run:
+        ensure_safe_destination(root, link)
+        link.parent.mkdir(parents=True, exist_ok=True)
+        try:
+            os.symlink(CLAUDE_SKILLS_LINK_TARGET, link, target_is_directory=True)
+        except OSError:
+            # Hosts without symlink support leave the link to onboarding.
+            return "staged"
+    return "installed"
+
+
+def claude_exclusions(lifecycle: Dict[str, Any]) -> Set[str]:
+    decisions = lifecycle.get("decisions")
+    if not isinstance(decisions, list):
+        return set()
+    return {
+        decision["name"]
+        for decision in decisions
+        if isinstance(decision, dict)
+        and decision.get("kind") == CLAUDE_EXCLUSION_KIND
+        and decision.get("decision") == "exclude"
+        and decision.get("name") in {CLAUDE_INSTRUCTION, CLAUDE_SKILLS_LINK}
+        and isinstance(decision.get("reason"), str)
+        and decision.get("reason", "").strip()
+    }
+
+
 def init_repository(target: Path, toolkit_root: Path, dry_run: bool) -> Dict[str, Any]:
     root = git_root(target)
     toolkit_root = toolkit_root.resolve()
@@ -1173,6 +1290,7 @@ def init_repository(target: Path, toolkit_root: Path, dry_run: bool) -> Dict[str
     if root == toolkit_root or root == toolkit_worktree:
         raise ToolkitError("refusing to initialize the toolkit source repository as a target")
     template, skills, manifest = toolkit_configuration(toolkit_root)
+    skill_requires = manifest_requires(manifest, {name for name, _, _ in skills})
     initial_inventory = inventory_repository(root)
     managed: List[Dict[str, Any]] = []
     actions: List[Dict[str, Any]] = []
@@ -1266,6 +1384,7 @@ def init_repository(target: Path, toolkit_root: Path, dry_run: bool) -> Dict[str
                 "target": relative_destination.as_posix(),
                 "source_sha256": source_hash,
                 "status": "current" if status in {"installed", "unchanged"} else status,
+                **({"requires": skill_requires[name]} if name in skill_requires else {}),
             }
         )
         actions.append({"kind": "skill", "name": name, "target": relative_destination.as_posix(), "status": status})
@@ -1278,6 +1397,52 @@ def init_repository(target: Path, toolkit_root: Path, dry_run: bool) -> Dict[str
                     "candidate": (Path(STAGING_DIRECTORY) / "skills" / name).as_posix(),
                 }
             )
+
+    claude_template = claude_template_path(toolkit_root, manifest)
+    claude_staged: List[str] = []
+    if claude_template is not None:
+        prior_claude_exclusions = (
+            claude_exclusions(previous_lifecycle)
+            if prior_state_valid and previous_lifecycle.get("status") == "ready"
+            else set()
+        )
+        claude_excluded = CLAUDE_INSTRUCTION in prior_claude_exclusions and isinstance(previous_managed, list) and any(
+            isinstance(item, dict)
+            and item.get("kind") == "instruction"
+            and item.get("target") == CLAUDE_INSTRUCTION
+            and item.get("status") == "excluded"
+            for item in previous_managed
+        )
+        claude_destination = root / CLAUDE_INSTRUCTION
+        claude_candidate = f"{STAGING_DIRECTORY}/{CLAUDE_INSTRUCTION}"
+        stage_candidate(claude_template, root / claude_candidate, root, dry_run)
+        claude_staged.append(claude_candidate)
+        if claude_excluded:
+            status = "excluded"
+        elif claude_destination.is_symlink():
+            status = "staged"
+        else:
+            status = materialize_candidate(claude_template, claude_destination, root, dry_run)
+        managed.append(
+            {
+                "kind": "instruction",
+                "name": CLAUDE_INSTRUCTION,
+                "source": claude_template.relative_to(toolkit_root).as_posix(),
+                "target": CLAUDE_INSTRUCTION,
+                "source_sha256": sha256_file(claude_template),
+                "status": "current" if status in {"installed", "unchanged"} else status,
+            }
+        )
+        actions.append({"kind": "instruction", "name": CLAUDE_INSTRUCTION, "target": CLAUDE_INSTRUCTION, "status": status})
+        if status == "staged":
+            conflicts.append({"kind": "instruction", "target": CLAUDE_INSTRUCTION, "candidate": claude_candidate})
+        if claude_excluded or CLAUDE_SKILLS_LINK in prior_claude_exclusions:
+            link_status = "excluded"
+        else:
+            link_status = materialize_claude_skills_link(root, dry_run)
+        actions.append({"kind": "link", "name": CLAUDE_SKILLS_LINK, "target": CLAUDE_SKILLS_LINK, "status": link_status})
+        if link_status == "staged":
+            conflicts.append({"kind": "claude-skills-link", "target": CLAUDE_SKILLS_LINK, "expected": CLAUDE_SKILLS_LINK_TARGET})
 
     if prior_state_valid and isinstance(previous_managed, list):
         current_skill_names = {name for name, _, _ in skills}
@@ -1334,6 +1499,7 @@ def init_repository(target: Path, toolkit_root: Path, dry_run: bool) -> Dict[str
         "managed": managed,
         "staged": [
             f"{STAGING_DIRECTORY}/AGENTS.md",
+            *claude_staged,
             *[(Path(STAGING_DIRECTORY) / "skills" / name).as_posix() for name, _, _ in skills],
             *([f"{STAGING_DIRECTORY}/bin/workspace_toolkit.py"] if helper_status == "staged" else []),
         ],
@@ -1365,6 +1531,7 @@ def init_repository(target: Path, toolkit_root: Path, dry_run: bool) -> Dict[str
 
 def refresh_source_entries(toolkit_root: Path) -> Tuple[Dict[Tuple[str, str], Dict[str, Any]], Dict[str, Any]]:
     template, skills, manifest = toolkit_configuration(toolkit_root)
+    skill_requires = manifest_requires(manifest, {name for name, _, _ in skills})
     entries: Dict[Tuple[str, str], Dict[str, Any]] = {
         ("instruction", "AGENTS.md"): {
             "kind": "instruction",
@@ -1376,6 +1543,17 @@ def refresh_source_entries(toolkit_root: Path) -> Tuple[Dict[Tuple[str, str], Di
             "upstream_target": "AGENTS.md",
         }
     }
+    claude_template = claude_template_path(toolkit_root, manifest)
+    if claude_template is not None:
+        entries[("instruction", CLAUDE_INSTRUCTION)] = {
+            "kind": "instruction",
+            "name": CLAUDE_INSTRUCTION,
+            "source": claude_template.relative_to(toolkit_root).as_posix(),
+            "path": claude_template,
+            "hash": sha256_file(claude_template),
+            "directory": False,
+            "upstream_target": CLAUDE_INSTRUCTION,
+        }
     for name, source, target in skills:
         entries[("skill", name)] = {
             "kind": "skill",
@@ -1385,6 +1563,7 @@ def refresh_source_entries(toolkit_root: Path) -> Tuple[Dict[Tuple[str, str], Di
             "hash": sha256_tree(source)[0],
             "directory": True,
             "upstream_target": target.as_posix(),
+            "requires": skill_requires.get(name, []),
         }
     helper = toolkit_root / "scripts" / "workspace_toolkit.py"
     if not helper.is_file() or helper.is_symlink():
@@ -1407,8 +1586,18 @@ def export_toolkit_revision(repository: Path, commit: str, destination: Path) ->
     resolved = run_git(repository, ["rev-parse", "--verify", f"{commit}^{{commit}}"], check=False)
     if not resolved:
         raise ToolkitError("recorded toolkit source commit is unavailable; refresh cannot guess the previous baseline")
+    extract_toolkit_archive(repository, commit, ["AGENTS.md", "toolkit.json", "scripts/workspace_toolkit.py", "skills"], destination)
+    # Revisions before the Claude binding declare no template; export it only
+    # when that revision's manifest names one.
+    claude_template = load_json(destination / "toolkit.json").get("claude_template")
+    if isinstance(claude_template, str) and claude_template:
+        relative = checked_relative_path(claude_template, "Claude template path")
+        extract_toolkit_archive(repository, commit, [relative.as_posix()], destination)
+
+
+def extract_toolkit_archive(repository: Path, commit: str, paths: Sequence[str], destination: Path) -> None:
     archive = subprocess.run(
-        ["git", "-C", str(repository), "archive", "--format=tar", commit, "AGENTS.md", "toolkit.json", "scripts/workspace_toolkit.py", "skills"],
+        ["git", "-C", str(repository), "archive", "--format=tar", commit, *paths],
         check=False,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
@@ -1539,7 +1728,9 @@ def refresh_repository(
                 raise ToolkitError(f"record a decision and reason for the upstream change to {item.get('target')}")
             if required:
                 change = item.get("change")
-                if kind in {"instruction", "helper"}:
+                if kind == "instruction" and name == CLAUDE_INSTRUCTION and change in {"added", "added-collision"}:
+                    allowed = {"adopt-upstream", "exclude", "recontextualize"}
+                elif kind in {"instruction", "helper"}:
                     allowed = {"adopt-upstream", "keep-workspace", "recontextualize"}
                 elif kind == "skill" and change == "removed":
                     allowed = {"keep-as-local", "remove-upstream", "recontextualize"}
@@ -1575,10 +1766,53 @@ def refresh_repository(
         updated_managed: List[Dict[str, Any]] = [
             item for key, item in managed_by_key.items() if key not in refresh_keys
         ]
+        for item in entries:
+            if (
+                not isinstance(item, dict)
+                or item.get("change") != "workspace-only"
+                or not isinstance(item.get("upstream_sha256"), str)
+            ):
+                continue
+            kind, name = str(item["kind"]), str(item["name"])
+            previous = managed_by_key.get((kind, name))
+            if previous is None:
+                continue
+            live_hash = hash_materialized_entry(root, {"kind": kind, "target": item.get("target")})
+            if live_hash is None:
+                raise ToolkitError(f"workspace-only managed entry is missing: {item.get('target')}")
+            updated = {
+                **previous,
+                "source": item.get("upstream_source", previous.get("source")),
+                # The helper's digest validates its installed file, while
+                # other managed digests record the generic toolkit source.
+                "source_sha256": live_hash if kind == "helper" else item["upstream_sha256"],
+                "status": "current" if live_hash == item["upstream_sha256"] else "tailored",
+            }
+            if kind == "skill":
+                requires = item.get("upstream_requires")
+                if requires:
+                    updated["requires"] = list(requires)
+                else:
+                    updated.pop("requires", None)
+            for index, managed_item in enumerate(updated_managed):
+                if (managed_item.get("kind"), managed_item.get("name")) == (kind, name):
+                    updated_managed[index] = updated
+                    break
         exclusion_decisions = lifecycle.get("decisions") if isinstance(lifecycle.get("decisions"), list) else []
         exclusion_decisions = list(exclusion_decisions)
-        candidate_skill_names: Set[str] = set()
-        staged_values: List[str] = []
+        # Keep unchanged, locally tailored entries in the candidate manifest
+        # and staging inventory while preserving their live content.
+        retained_candidates = [
+            item for item in entries
+            if isinstance(item, dict) and item.get("change") == "workspace-only"
+            and isinstance(item.get("upstream_sha256"), str)
+        ]
+        candidate_skill_names: Set[str] = {
+            str(item["name"]) for item in retained_candidates if item.get("kind") == "skill"
+        }
+        staged_values: List[str] = [
+            str(item["candidate"]) for item in retained_candidates if isinstance(item.get("candidate"), str)
+        ]
         for item in entries:
             if not isinstance(item, dict) or item.get("change") == "workspace-only":
                 continue
@@ -1589,6 +1823,9 @@ def refresh_repository(
             decision = str(conflict.get("decision", item.get("decision", "adopt-upstream")))
             if kind == "skill" and isinstance(upstream_hash, str):
                 candidate_skill_names.add(name)
+                previous = {key: value for key, value in previous.items() if key != "requires"}
+                if item.get("upstream_requires"):
+                    previous["requires"] = list(item["upstream_requires"])
                 staged_values.append(f"{STAGING_DIRECTORY}/skills/{name}")
                 target_value = previous.get("target", item.get("upstream_target"))
                 if item.get("excluded"):
@@ -1616,9 +1853,14 @@ def refresh_repository(
                 elif hash_materialized_entry(root, {"kind": "skill", "target": item.get("target")}) is not None:
                     raise ToolkitError(f"remove the retired upstream skill from the workspace before completing: {item.get('target')}")
             elif kind == "instruction" and isinstance(upstream_hash, str):
-                staged_values.append(f"{STAGING_DIRECTORY}/AGENTS.md")
-                live_hash = hash_materialized_entry(root, {"kind": "instruction", "target": "AGENTS.md"})
-                updated_managed.append({**previous, "kind": "instruction", "name": name, "source": item.get("upstream_source"), "target": "AGENTS.md", "source_sha256": upstream_hash, "status": "current" if live_hash == upstream_hash else "tailored"})
+                staged_values.append(f"{STAGING_DIRECTORY}/{name}")
+                if item.get("excluded") or decision == "exclude":
+                    updated_managed.append({**previous, "kind": "instruction", "name": name, "source": item.get("upstream_source"), "target": name, "source_sha256": upstream_hash, "status": "excluded"})
+                    if decision == "exclude" and name not in claude_exclusions({"decisions": exclusion_decisions}):
+                        exclusion_decisions.append({"kind": CLAUDE_EXCLUSION_KIND, "name": name, "decision": "exclude", "reason": conflict.get("reason") or "Excluded during toolkit refresh."})
+                else:
+                    live_hash = hash_materialized_entry(root, {"kind": "instruction", "target": name})
+                    updated_managed.append({**previous, "kind": "instruction", "name": name, "source": item.get("upstream_source"), "target": name, "source_sha256": upstream_hash, "status": "current" if live_hash == upstream_hash else "tailored"})
             elif kind == "helper" and isinstance(upstream_hash, str):
                 staged_values.append(f"{STAGING_DIRECTORY}/bin/workspace_toolkit.py")
                 live_helper = root / HELPER_PATH
@@ -1734,8 +1976,8 @@ def refresh_repository(
         old_names = {name for (kind, name) in baseline_entries if kind == "skill"}
         new_names = {name for (kind, name) in candidate_entries if kind == "skill"}
         excluded = {
-            name for (kind, name), item in managed_by_key.items()
-            if kind == "skill" and item.get("status") == "excluded"
+            key for key, item in managed_by_key.items()
+            if key[0] in {"skill", "instruction"} and item.get("status") == "excluded"
         }
         all_keys = set(baseline_entries) | set(candidate_entries)
         for skill in inventory_repository(root)["skills"]:
@@ -1758,7 +2000,10 @@ def refresh_repository(
             workspace_hash = hash_materialized_entry(root, {"kind": kind, "target": target_value})
             baseline_hash = baseline_entry.get("hash") if baseline_entry else None
             upstream_hash = upstream_entry.get("hash") if upstream_entry else None
-            if baseline_entry is None:
+            # An instruction this workspace never adopted (for example CLAUDE.md
+            # after a refresh through an older helper) is offered as an addition.
+            never_adopted = kind == "instruction" and workspace_entry is None and upstream_entry is not None
+            if baseline_entry is None or never_adopted:
                 change = "workspace-only" if upstream_entry is None else ("added-collision" if workspace_hash is not None else "added")
             elif upstream_entry is None:
                 change = "removed"
@@ -1770,7 +2015,7 @@ def refresh_repository(
                 change = "upstream-only"
             else:
                 change = "both-changed"
-            already_excluded = kind == "skill" and name in excluded
+            already_excluded = (kind, name) in excluded
             if already_excluded and upstream_entry is not None:
                 change = "excluded"
             decision_required = change in {"upstream-only", "both-changed", "added", "added-collision", "removed"} and not already_excluded
@@ -1779,7 +2024,7 @@ def refresh_repository(
             if baseline_entry:
                 baseline_relative = Path(REFRESH_DIRECTORY) / "baseline"
                 if kind == "instruction":
-                    baseline_relative /= "AGENTS.md"
+                    baseline_relative /= name
                 elif kind == "skill":
                     baseline_relative /= Path("skills") / name
                 else:
@@ -1787,7 +2032,7 @@ def refresh_repository(
                 baseline_path = baseline_relative.as_posix()
             if upstream_entry:
                 if kind == "instruction":
-                    candidate_relative = Path(STAGING_DIRECTORY) / "AGENTS.md"
+                    candidate_relative = Path(STAGING_DIRECTORY) / name
                 elif kind == "skill":
                     candidate_relative = Path(STAGING_DIRECTORY) / "skills" / name
                 else:
@@ -1800,6 +2045,7 @@ def refresh_repository(
                 "upstream_target": upstream_entry.get("upstream_target") if upstream_entry else None,
                 "baseline_source": baseline_entry.get("source") if baseline_entry else None,
                 "upstream_source": upstream_entry.get("source") if upstream_entry else None,
+                "upstream_requires": upstream_entry.get("requires", []) if upstream_entry else [],
                 "baseline": baseline_path,
                 "candidate": candidate_path,
                 "baseline_sha256": baseline_hash,
@@ -1822,7 +2068,7 @@ def refresh_repository(
         for key, entry in baseline_entries.items():
             kind, name = key
             if kind == "instruction":
-                destination = baseline_destination / "AGENTS.md"
+                destination = baseline_destination / name
             elif kind == "skill":
                 destination = baseline_destination / "skills" / name
             else:
@@ -1831,7 +2077,7 @@ def refresh_repository(
         for key, entry in candidate_entries.items():
             kind, name = key
             if kind == "instruction":
-                destination = root / STAGING_DIRECTORY / "AGENTS.md"
+                destination = root / STAGING_DIRECTORY / name
             elif kind == "skill":
                 destination = root / STAGING_DIRECTORY / "skills" / name
             else:
@@ -1986,6 +2232,15 @@ def validate_repository(target: Path, state_override: Optional[Dict[str, Any]] =
                 and decision.get("reason", "").strip()
             ):
                 exclusion_decisions.add(decision["name"])
+    for item in managed:
+        if not isinstance(item, dict) or item.get("kind") != "skill" or item.get("status") == "excluded":
+            continue
+        declared = item.get("requires")
+        if not isinstance(declared, list):
+            continue
+        for required in sorted(value for value in declared if isinstance(value, str)):
+            if required in excluded_skills or required not in seen_skill_records:
+                warnings.append({"path": str(item.get("target")), "reason": f"required-skill-not-adopted:{item.get('name')}->{required}"})
     for name in sorted(excluded_skills):
         if name not in exclusion_decisions:
             errors.append({"path": STATE_PATH, "reason": f"missing-skill-exclusion-decision:{name}"})
@@ -2029,6 +2284,40 @@ def validate_repository(target: Path, state_override: Optional[Dict[str, Any]] =
             errors.append({"path": ".", "reason": str(exc)})
     for collision in inventory.get("collisions", []):
         warnings.append({"path": ",".join(collision["paths"]), "reason": f"duplicate-skill-name:{collision['name']}"})
+
+    # The Claude binding is checked only once a toolkit revision that ships it
+    # has been staged or adopted; older ready states keep validating as before.
+    claude_records = [
+        item for item in managed
+        if isinstance(item, dict) and item.get("kind") == "instruction" and item.get("target") == CLAUDE_INSTRUCTION
+    ]
+    recorded_claude_exclusions = claude_exclusions(lifecycle)
+    if len(claude_records) > 1:
+        errors.append({"path": STATE_PATH, "reason": "duplicate-managed-claude-instructions"})
+    elif claude_records and claude_records[0].get("status") == "excluded":
+        if CLAUDE_INSTRUCTION not in recorded_claude_exclusions:
+            errors.append({"path": STATE_PATH, "reason": "missing-claude-binding-exclusion-decision"})
+    elif claude_records:
+        if claude_records[0].get("status") not in {"current", "staged", "tailored"}:
+            errors.append({"path": STATE_PATH, "reason": "invalid-managed-claude-instructions-status"})
+        claude_file = root / CLAUDE_INSTRUCTION
+        if not claude_file.is_file() or claude_file.is_symlink():
+            errors.append({"path": CLAUDE_INSTRUCTION, "reason": "missing-or-symlinked-claude-instructions"})
+        elif not imports_root_agents(claude_file.read_text(encoding="utf-8", errors="replace")):
+            errors.append({"path": CLAUDE_INSTRUCTION, "reason": "claude-instructions-do-not-import-agents"})
+        if CLAUDE_SKILLS_LINK not in recorded_claude_exclusions and not claude_skills_link_is_current(root):
+            errors.append({"path": CLAUDE_SKILLS_LINK, "reason": "missing-or-misdirected-claude-skills-link"})
+        # Claude Code skips a nested AGENTS.md beneath a root CLAUDE.md, so
+        # each one needs a sibling CLAUDE.md that imports it.
+        for instruction in inventory.get("instructions", []):
+            relative = Path(instruction["path"])
+            if relative.name != "AGENTS.md" or len(relative.parts) == 1:
+                continue
+            sibling = root / relative.parent / CLAUDE_INSTRUCTION
+            if not sibling.is_file():
+                warnings.append({"path": relative.as_posix(), "reason": "nested-agents-without-claude-instructions"})
+            elif not imports_root_agents(sibling.read_text(encoding="utf-8", errors="replace")):
+                warnings.append({"path": (relative.parent / CLAUDE_INSTRUCTION).as_posix(), "reason": "nested-claude-instructions-do-not-import-agents"})
 
     if lifecycle.get("status") not in {"needs-agent-review", "ready"}:
         errors.append({"path": STATE_PATH, "reason": "invalid-or-missing-lifecycle-status"})

@@ -2,6 +2,8 @@
 
 Motion is part of the design behavior. Preserve the observed trigger, sequence, timing, easing, loop, input response, and responsive layout where the target can support them. Choose implementation only after inspecting the source motion and its bundled assets. Apply capture and implementation inside the agreed build pass; this reference also supplies acceptance criteria for collaborative review without authorizing new work.
 
+Follow [Browser Workflow](../../browser-workflow/SKILL.md) for live inspection. ArchiveWeb/ReplayWeb capture or another separately launched recording harness leaves the sidebar; explain the evidence gap and let the user choose that runtime for the current task before opening or launching it. If it is not chosen, keep available sidebar evidence and mark archive, recording, or replay checks incomplete.
+
 ## Capture evidence
 
 For a reference component, record:
@@ -17,7 +19,7 @@ Use WACZ replay to preserve and exercise the original delivered client. Use scre
 
 ## Motion acceptance gate
 
-For a motion-bearing reference, capture an unedited live-browser recording and preserve the delivered page as WACZ. Open that WACZ and repeat the original animation, timing, or trigger before labeling the behavior replay-tested. The storyboard/preview must let the reviewer play the source recording and open the corresponding replay. A still-only preview, a SingleFile snapshot, or an extracted media file does not pass as a recreation of the whole component. If an original archive or effect cannot be captured or replayed, show the best live evidence and mark the 1:1 motion result incomplete with the exact missing response, embed, control, or runtime behavior. Keep local package checks and the ReplayWeb receipt separate from replay behavior and visual comparison; invalid hashes/signatures or verifier disagreements remain unresolved rather than being reported as cryptographically verified.
+For a motion-bearing reference, capture an unedited live-browser recording and preserve the delivered page as WACZ only when the sidebar supports the needed evidence or the user has chosen a separate capture runtime for this task. Otherwise, show the best sidebar evidence and mark the 1:1 motion result incomplete. For an authorized WACZ, repeat the original animation, timing, or trigger before labeling the behavior replay-tested. The storyboard/preview must let the reviewer play the source recording and open the corresponding replay. A still-only preview, a SingleFile snapshot, or an extracted media file does not pass as a recreation of the whole component. If an original archive or effect cannot be captured or replayed, show the exact missing response, embed, control, or runtime behavior. Keep local package checks and the ReplayWeb receipt separate from replay behavior and visual comparison; invalid hashes/signatures or verifier disagreements remain unresolved rather than being reported as cryptographically verified.
 
 ## Build the closest supported behavior
 

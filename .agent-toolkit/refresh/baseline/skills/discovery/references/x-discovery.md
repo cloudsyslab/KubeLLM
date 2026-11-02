@@ -78,12 +78,14 @@ Use X results as source observations, not durable knowledge. Cite canonical X UR
 
 ## Guardrails
 
+The companion has no synthetic daily-record quota. Its per-request ceiling is 500, matching the pinned CLI's absolute maximum; the upstream CLI configuration can impose a lower effective count (default maxCount is 200). Search paginates internally to the requested count but exposes no caller continuation cursor. State when the requested count exceeds what the source returned; do not mislabel an upstream or authentication error as a paid-plan error.
+
 - Keep discovery read-only.
 - Do not use browser cookie extraction.
 - Never log or expose `TWITTER_AUTH_TOKEN`, `TWITTER_CT0`, or secret file contents.
 - Do not use write actions such as post, reply, quote, delete, like, retweet, bookmark, follow, or unfollow.
 - Do not use disabled graph/personal endpoints such as followers, following, bookmarks, favorites, likes, or show.
-- Do not default to paid `XAI_API_KEY` or provider-specific search unless the user explicitly asks for it or that provider is already configured for the task.
+- Do not default to paid XAI_API_KEY or provider-specific search. The free, read-only CLI route is the only configured X source.
 
 ## Local State
 
