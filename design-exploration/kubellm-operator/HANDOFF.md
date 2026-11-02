@@ -39,9 +39,9 @@ This implementation still requires its operator password and starts on
 launcher have not been implemented. The root README describes the current
 first-pass behavior; it does not supersede the second-pass requirements.
 
-The harness resolves KUBELLM_LAB_CONFIG, or the private selector at
-~/.config/kubellm/lanes/minh.json. It does not infer the lane from the active
-kubectl context. Local credentials, job database, logs, and raw results are
+The harness requires KUBELLM_LAB_CONFIG, the owner-only lane selector, and
+refuses to start without it. It has no default lane and does not infer the
+lane from the active kubectl context. Local credentials, job database, logs, and raw results are
 under ignored .local paths and are not in this snapshot. Do not reset an
 existing login or print credentials just to inspect the app.
 
