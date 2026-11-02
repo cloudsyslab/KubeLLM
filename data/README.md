@@ -42,3 +42,5 @@ identifiers remain outside Git.
 The [October 2026 prediction selector pilot](exploratory/prediction-pilot-2026-10/README.md)
 is a sanitized paired-campaign evidence pack. It is not a canonical model
 comparison and does not establish predictor quality or generalization.
+
+The [operator-campaign-2026-10-30-aaaaaaaa](exploratory/operator-campaign-2026-10-30-aaaaaaaa/README.md) operator campaign is an exploratory, sanitized evidence pack; it does not change the canonical benchmark dataset.
