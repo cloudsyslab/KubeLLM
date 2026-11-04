@@ -1,6 +1,8 @@
 import clsx from "clsx";
+import { ArrowUpRight, ChevronDown } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { Link, useSearchParams } from "react-router";
 import { api, openJobEvents, type CampaignInput } from "@/api/client";
 import type { JobEvent, OperatorJob, PublishPreview, TelemetrySample, TopologySnapshot } from "@/api/types";
 import { PageHeader, Button, Tag } from "@/components/ui";
@@ -134,14 +136,15 @@ function ReadinessPage() {
   const jobs = latestFirst(jobsQuery.data ?? []);
   const latest = jobs.find((job) => (job.kind === "readiness" || job.kind === "prepare") && job.result?.readiness);
   const readiness = latest?.result?.readiness;
-  const fresh = overviewQuery.data?.readiness?.status === "READY";
-  const readinessLabel = overviewQuery.error ? "State unavailable" : overviewQuery.isLoading ? "Checking" : fresh ? "Ready" : overviewQuery.data?.readiness?.status ?? (readiness ? "Stale" : "Not checked");
+  const snapshot = overviewQuery.data?.readiness;
+  const fresh = snapshot?.ready === true;
+  const readinessLabel = overviewQuery.error ? "State unavailable" : overviewQuery.isLoading ? "Checking" : snapshot?.status === "BLOCKED" ? snapshot.fresh ? "Blocked" : "Stale" : fresh ? "Ready" : snapshot?.status === "READY" ? "Stale" : readiness ? "Stale" : "Not checked";
   const busy = jobsQuery.isError || jobs.some((job) => ["queued", "running", "stop_requested"].includes(job.status));
   return (
     <div className="grid gap-4">
       <ShellCard title="Selected lane readiness">
         <div className="flex flex-wrap items-center gap-2">
-          <Tag tone={fresh ? "neutral" : readinessLabel === "BLOCKED" || readinessLabel === "State unavailable" ? "warn" : "neutral"}>{readinessLabel}</Tag>
+          <Tag tone={fresh ? "neutral" : readinessLabel === "Blocked" || readinessLabel === "State unavailable" ? "warn" : "neutral"}>{readinessLabel}</Tag>
           {latest && <><span className="text-[12px] text-fg-3">{jobTitle(latest)} · {latest.status}</span><Stamp value={latest.finished_at} /></>}
         </div>
         {!readiness && (jobsQuery.error || overviewQuery.error) ? <Message tone="warn">Readiness details are unavailable while the operator API is unreachable.</Message> : !readiness && <Message>Run preflight to check the explicitly selected private lane.</Message>}
@@ -185,7 +188,7 @@ function LaunchPage() {
   const [apiModel, setApiModel] = useState("");
   const [verificationModel, setVerificationModel] = useState("");
   const jobs = jobsQuery.data ?? [];
-  const fresh = overviewQuery.data?.readiness?.status === "READY";
+  const fresh = overviewQuery.data?.readiness?.ready === true;
   const busy = jobsQuery.isError || jobs.some((job) => ["queued", "running", "stop_requested"].includes(job.status));
   const availableModels = useMemo(() => [...new Set((runsQuery.data ?? []).flatMap((item) => item.models.DebugAgent))].sort(), [runsQuery.data]);
   const availableApiModels = useMemo(() => [...new Set((runsQuery.data ?? []).flatMap((item) => item.models.API))].sort(), [runsQuery.data]);
@@ -251,7 +254,9 @@ function Events({ job }: { job: OperatorJob }) {
 function ExecutionPage() {
   const query = useJobs();
   const jobs = latestFirst(query.data ?? []);
-  const listedCampaign = jobs.find((job) => job.kind === "campaign" && ["queued", "running", "stop_requested"].includes(job.status)) ?? jobs.find((job) => job.kind === "campaign");
+  const [params] = useSearchParams();
+  const requestedId = params.get("job");
+  const listedCampaign = jobs.find((job) => job.id === requestedId && job.kind === "campaign") ?? jobs.find((job) => job.kind === "campaign" && ["queued", "running", "stop_requested"].includes(job.status)) ?? jobs.find((job) => job.kind === "campaign");
   const detailQuery = useQuery({ queryKey: ["operator-job", listedCampaign?.id], queryFn: () => api.job(listedCampaign!.id), enabled: api.isLive && Boolean(listedCampaign), refetchInterval: POLL_MS, staleTime: 0, retry: 0 });
   const campaign = detailQuery.data ?? listedCampaign;
   const { run, error } = useFeedback();
@@ -263,6 +268,7 @@ function ExecutionPage() {
     <ShellCard title={`Campaign ${campaign.id.slice(0, 8)}`}>
       <div className="flex flex-wrap items-center gap-2"><JobStatus job={campaign} /><span className="num text-[12px] text-fg-3">{campaign.current_index} / {campaign.total} attempts</span><Stamp value={campaign.started_at ?? campaign.created_at} /></div>
       {campaign.current_label && <p className="text-[12px] text-fg-2">{campaign.current_label}</p>}
+      {campaign.campaign && <p className="text-[12px] text-fg-3">{campaign.campaign.cases.length} cases × {campaign.campaign.techniques.length} techniques × {campaign.campaign.debug_models.length} DebugAgent choices × {campaign.campaign.repetitions} repetitions · API {campaign.campaign.api_model || "case default"} · Verification {campaign.campaign.verification_model || "case default"}</p>}
       {detailQuery.error && <Message tone="warn">Latest job detail unavailable; showing the last jobs-list sample: {detailQuery.error.message}</Message>}
       {campaign.total > 0 && <div className="h-1.5 overflow-hidden rounded bg-surface-3" role="progressbar" aria-valuenow={campaign.current_index} aria-valuemax={campaign.total} aria-label="Completed attempts"><div className="h-full bg-accent" style={{ width: `${Math.min(100, campaign.current_index / campaign.total * 100)}%` }} /></div>}
       {active && <Button variant="secondary" disabled={run.isPending || campaign.status === "stop_requested"} onClick={() => run.mutate(() => api.stopJob(campaign.id))}>Stop after the current runner attempt</Button>}
@@ -280,11 +286,33 @@ function JobsPage() {
   const jobs = latestFirst(query.data ?? []);
   const [filter, setFilter] = useState("all");
   const [search, setSearch] = useState("");
+  const [expanded, setExpanded] = useState<string | null>(null);
+  const { run, error: actionError } = useFeedback();
   const visible = jobs.filter((job) => (filter === "all" || job.kind === filter || job.status === filter) && (!search || `${job.id} ${job.current_label ?? ""} ${job.kind} ${job.status}`.toLowerCase().includes(search.toLowerCase())));
   return <div className="grid gap-4">
     <div className="flex flex-wrap gap-2"><input aria-label="Search jobs" value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search jobs" className="h-8 min-w-48 rounded border border-line bg-bg px-2 text-[12.5px]" /><select aria-label="Filter jobs" value={filter} onChange={(event) => setFilter(event.target.value)} className="h-8 rounded border border-line bg-bg px-2 text-[12.5px]"><option value="all">All jobs</option><option value="campaign">Campaigns</option><option value="readiness">Preflight</option><option value="prepare">Preparation</option><option value="publish">Publication</option><option value="running">Running</option><option value="failed">Failed</option><option value="blocked">Blocked</option><option value="completed">Completed</option></select></div>
     {query.error && <Message tone="warn">Jobs endpoint unavailable; any rows below are the last cached response. {query.error.message}</Message>}
-    {query.isLoading ? <Message>Loading operator jobs…</Message> : visible.length ? visible.map((job) => <article key={job.id} className="grid gap-2 rounded-lg border border-line bg-surface p-3"><div className="flex flex-wrap items-center gap-2"><span className="font-medium">{jobTitle(job)}</span><JobStatus job={job} /><span className="ident text-[11px] text-fg-3">{job.id.slice(0, 8)}</span><Stamp value={job.created_at} /></div>{job.current_label && <p className="text-[12px] text-fg-2">{job.current_label}</p>}{job.total > 0 && <span className="num text-[12px] text-fg-3">{job.current_index}/{job.total}</span>}{job.result?.reason && <p className="text-[12px] text-fg-3">{job.result.reason}</p>}</article>) : <Message>No jobs match this filter.</Message>}
+    {actionError && <Message tone="warn">{actionError}</Message>}
+    {query.isLoading ? <Message>Loading operator jobs…</Message> : visible.length ? visible.map((job) => {
+      const open = expanded === job.id;
+      const active = ["queued", "running", "stop_requested"].includes(job.status);
+      const readiness = job.result?.readiness;
+      return <article key={job.id} className="grid gap-2 rounded-lg border border-line bg-surface p-3">
+        <div className="flex flex-wrap items-center gap-2"><span className="font-medium">{jobTitle(job)}</span><JobStatus job={job} /><span className="ident text-[11px] text-fg-3">{job.id.slice(0, 8)}</span><Stamp value={job.created_at} /><button type="button" aria-expanded={open} onClick={() => setExpanded(open ? null : job.id)} className="ml-auto inline-flex h-7 items-center gap-1 rounded px-2 text-[12px] text-fg-2 hover:bg-surface-2">{open ? "Hide details" : "Details"}<ChevronDown className={clsx("size-3.5 transition-transform", open && "rotate-180")} /></button></div>
+        {job.current_label && <p className="text-[12px] text-fg-2">{job.current_label}</p>}
+        {job.total > 0 && <div className="grid gap-1"><span className="num text-[12px] text-fg-3">{job.current_index}/{job.total} {job.kind === "campaign" ? "attempts" : "checks"}</span><div className="h-1 overflow-hidden rounded bg-surface-3"><div className="h-full bg-accent" style={{ width: `${Math.min(100, job.current_index / job.total * 100)}%` }} /></div></div>}
+        {job.result?.reason && <p className="text-[12px] text-fg-3">{job.result.reason}</p>}
+        {open && <div className="grid gap-3 border-t border-line pt-3">
+          {job.campaign && <section className="grid gap-1 text-[12px]"><h3 className="label">Campaign plan</h3><p className="text-fg-2">{job.campaign.cases.length} cases · {job.campaign.techniques.join(", ")} · {job.campaign.debug_models.map((model) => model ?? "case default").join(", ")} · {job.campaign.repetitions} repetitions</p><p className="text-fg-3">API {job.campaign.api_model || "case default"} · Verification {job.campaign.verification_model || "case default"}</p></section>}
+          {job.attempts.length > 0 && <section className="grid gap-1"><h3 className="label">Recorded attempt outcomes</h3><div className="overflow-x-auto"><table className="w-full text-left text-[11.5px]"><thead className="text-fg-3"><tr><th className="py-1 pr-3">#</th><th className="py-1 pr-3">Case</th><th className="py-1 pr-3">Technique</th><th className="py-1 pr-3">Debug model</th><th className="py-1 pr-3">Runner</th><th className="py-1 pr-3">Ground Truth</th><th className="py-1">Verification</th></tr></thead><tbody>{job.attempts.map((attempt) => <tr key={attempt.sequence} className="border-t border-line"><td className="num py-1.5 pr-3">{attempt.sequence}</td><td className="py-1.5 pr-3">{humanize(attempt.case)}</td><td className="ident py-1.5 pr-3">{attempt.technique}</td><td className="ident py-1.5 pr-3">{attempt.debug_model ?? "Case default"}</td><td className="py-1.5 pr-3">{attempt.status}{attempt.outcome && attempt.outcome !== "recorded" ? ` · ${attempt.outcome}` : ""}</td><td className="py-1.5 pr-3">{attempt.ground_truth_passed === true ? "Pass" : attempt.ground_truth_passed === false ? "Fail" : "Unknown"}</td><td className="py-1.5">{attempt.verified == null ? "Unknown" : attempt.verified ? "Agrees" : "Disagrees"}</td></tr>)}</tbody></table></div></section>}
+          {readiness && <section className="grid gap-1"><h3 className="label">Readiness checks</h3><ul className="grid gap-1">{readiness.checks.map((check) => <li key={check.name} className="grid grid-cols-[minmax(0,1fr)_auto] gap-2 border-t border-line pt-1.5 text-[12px]"><span>{check.label}{check.detail && <span className="block text-[11.5px] text-fg-3">{check.detail}</span>}</span><Tag tone={check.status === "fail" && check.blocking ? "warn" : "neutral"}>{check.status}{check.blocking ? " · blocking" : ""}</Tag></li>)}</ul></section>}
+          {job.result?.preparation && <section className="grid gap-1"><h3 className="label">Preparation actions</h3><ul className="grid gap-1">{job.result.preparation.map((repair, index) => <li key={`${repair.name}-${index}`} className="flex flex-wrap items-center gap-2 border-t border-line pt-1.5 text-[12px]"><span>{repair.label}</span><Tag tone={repair.status === "fail" ? "warn" : "neutral"}>{repair.status}</Tag>{repair.message && <span className="text-fg-3">{repair.message}</span>}</li>)}</ul></section>}
+          {job.kind === "publish" && job.result && <section className="grid gap-1 text-[12px]"><h3 className="label">Publication receipt</h3>{job.result.branch && <p>Branch · <span className="ident">{job.result.branch}</span></p>}{job.result.remote && <p>Remote · <span className="ident">{job.result.remote}</span></p>}{job.result.commit && <p>Commit · <span className="ident">{job.result.commit}</span></p>}</section>}
+          {active && job.kind === "campaign" && <Button disabled={run.isPending || job.status === "stop_requested"} onClick={() => run.mutate(() => api.stopJob(job.id))}>Stop after current attempt</Button>}
+          <Link to={job.kind === "campaign" ? `/execution?job=${encodeURIComponent(job.id)}` : job.kind === "publish" ? "/publish" : "/environment"} className="inline-flex items-center gap-1 justify-self-start text-[12px] text-fg-2 hover:text-fg">Open {job.kind === "campaign" ? "execution" : job.kind === "publish" ? "publication" : "environment"}<ArrowUpRight className="size-3.5" /></Link>
+        </div>}
+      </article>;
+    }) : <Message>No jobs match this filter.</Message>}
   </div>;
 }
 

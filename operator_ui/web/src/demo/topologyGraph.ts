@@ -104,6 +104,8 @@ export interface TopologyGraph {
   /** Request paths for the current phase, in call order (caller first). */
   traffic: { label: string; paths: string[][] };
   lane: Rollup;
+  /** False when the source exposes inventory and containment, but no dependencies. */
+  relationshipsKnown?: boolean;
 }
 
 /** The lane's own pieces: its profile, its services, and the worker driving it. */

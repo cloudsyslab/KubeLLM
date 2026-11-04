@@ -51,7 +51,7 @@ const WORD: Record<CheckLevel, string> = { pass: "Healthy", warn: "Warning", blo
 export function Ring({ fresh }: { fresh: Freshness }) {
   const r = 34;
   const c = 2 * Math.PI * r;
-  const value = fresh.state === "fresh" ? fresh.left / TTL_MS : fresh.state === "checking" ? fresh.active.done.length / Math.max(1, fresh.active.total) : 0;
+  const value = fresh.state === "fresh" ? fresh.left / TTL_MS : fresh.state === "checking" && fresh.active.total > 0 ? fresh.active.done.length / fresh.active.total : 0;
   const tone = fresh.state === "checking" ? "var(--accent)" : fresh.state === "fresh" ? (value < 0.25 ? "var(--warn)" : "var(--fg)") : "var(--warn)";
   return (
     <div className="relative grid size-[92px] shrink-0 place-items-center">
@@ -61,9 +61,9 @@ export function Ring({ fresh }: { fresh: Freshness }) {
       </svg>
       <div className="grid text-center">
         <span className="num text-[17px] leading-none font-medium">
-          {fresh.state === "fresh" ? countdown(fresh.left) : fresh.state === "checking" ? `${fresh.active.done.length}/${fresh.active.total}` : "0:00"}
+          {fresh.state === "fresh" ? countdown(fresh.left) : fresh.state === "checking" ? fresh.active.total > 0 ? `${fresh.active.done.length}/${fresh.active.total}` : "…" : "0:00"}
         </span>
-        <span className="mt-1 text-[10.5px] text-fg-3">{fresh.state === "checking" ? "checks" : "fresh"}</span>
+        <span className="mt-1 text-[10.5px] text-fg-3">{fresh.state === "checking" ? fresh.active.total > 0 ? "checks" : "working" : "fresh"}</span>
       </div>
     </div>
   );

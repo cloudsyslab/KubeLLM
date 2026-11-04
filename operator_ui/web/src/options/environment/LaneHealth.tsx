@@ -1,8 +1,10 @@
 import clsx from "clsx";
 import { ChevronRight, Radio, TriangleAlert, Wrench } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
+import { ListChecks } from "lucide-react";
+import { api } from "@/api/client";
 import { Tag, Tip } from "@/components/ui";
-import { DEPS, DepCard, Ring, ZONES, depOfCheck, depState, type Dep } from "./board";
+import { DEPS, DepCard, Ring, ZONES, depState, type Dep } from "./board";
 import { HistoryList, RunSteps, rowIdOf, samePick, type Selected } from "./steps";
 import { Terminal, type TerminalSubject } from "./terminal";
 import {
@@ -18,6 +20,7 @@ import {
   StatusWord,
   ago,
   freshnessLine,
+  groupChecks,
   ms,
   repairsForRun,
   stamp,
@@ -141,8 +144,15 @@ export default function LaneHealth() {
   const terminal = resolve(shown);
   const following = Boolean(active && !pinned);
 
-  const selectedDepId = shown?.kind === "check" ? depOfCheck(shown.id)?.id : shown ? REPAIR_DEP[shown.name] : undefined;
-  const focus = new Set(DEPS.find((d) => d.id === selectedDepId)?.checks ?? []);
+  const liveGroups = api.isLive ? groupChecks(source).map((group) => ({
+    id: group.id,
+    label: group.label,
+    note: `${group.checks.length} reported check${group.checks.length === 1 ? "" : "s"}`,
+    deps: [{ id: group.id, name: group.label, identity: "Readiness checks", icon: ListChecks, checks: group.checks.map((check) => check.id), zone: "workspace" as const }],
+  })) : undefined;
+  const depList = liveGroups ? liveGroups.flatMap((group) => group.deps) : DEPS;
+  const selectedDepId = shown?.kind === "check" ? depList.find((dep) => dep.checks.includes(shown.id))?.id : shown ? REPAIR_DEP[shown.name] : undefined;
+  const focus = new Set(depList.find((dep) => dep.id === selectedDepId)?.checks ?? []);
 
   const choose = (pick: Selected, scroll = false) => {
     setPinned(samePick(pick, live) && active ? undefined : pick);
@@ -218,17 +228,17 @@ export default function LaneHealth() {
         </div>
       </section>
 
-      <div className="grid items-start gap-4 lg:grid-cols-[minmax(0,1fr)_300px]">
+        <div className="grid items-start gap-4 lg:grid-cols-[minmax(0,1fr)_300px]">
         {/* The board: one card per dependency, in three zones. */}
         <div className="order-1 grid gap-5">
-          {ZONES.map((zone) => (
+          {(liveGroups ?? ZONES.map((zone) => ({ ...zone, deps: DEPS.filter((dep) => dep.zone === zone.id) }))).map((zone) => (
             <section key={zone.id} aria-label={zone.label} className="grid gap-2">
               <div className="flex flex-wrap items-baseline justify-between gap-x-4">
                 <h3 className="text-[13.5px] font-medium">{zone.label}</h3>
                 <span className="text-[12px] text-fg-3">{zone.note}</span>
               </div>
               <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-3">
-                {DEPS.filter((d) => d.zone === zone.id).map((dep) => (
+                {zone.deps.map((dep) => (
                   <DepCard key={dep.id} dep={dep} state={depState(dep, source, done, active)} selected={selectedDepId === dep.id} onSelect={() => choose(pickForDep(dep, source, done, active), true)} />
                 ))}
               </div>
@@ -242,7 +252,7 @@ export default function LaneHealth() {
               <h3 className="text-[13.5px] font-medium">History</h3>
               <p className="mt-0.5 text-[12px] text-fg-3">Preflight and preparation on this lane.</p>
             </div>
-            <Tag tone="accent">Demo</Tag>
+            {!api.isLive && <Tag tone="accent">Demo</Tag>}
           </header>
           <HistoryList
             runs={runs}
@@ -266,7 +276,7 @@ export default function LaneHealth() {
               <h3 className="truncate text-[13.5px] font-medium">
                 {active ? `${KIND_WORD[active.kind]} · ${active.pass === "recheck" ? "recheck" : active.kind === "prepare" ? "repair-safe" : "check-only"}` : view ? `${KIND_WORD[view.kind]} · ${view.mode}` : "No preflight yet"}
               </h3>
-              <Tag tone="accent">Demo</Tag>
+              {!api.isLive && <Tag tone="accent">Demo</Tag>}
             </div>
             <div className="flex flex-wrap items-center gap-3">
               <span className="num text-[12px] text-fg-3">
@@ -290,6 +300,7 @@ export default function LaneHealth() {
             </div>
           </header>
           {active && <p className="border-b border-line px-4 py-2 font-mono text-[12px] text-fg-2">{active.label}</p>}
+          {api.isLive && active && <p className="border-b border-line px-4 py-2 text-[12px] text-fg-3">The worker publishes its check details when the readiness job completes; individual checks are not streamed.</p>}
           {disk && (
             <div className="flex items-start gap-2.5 border-b border-line bg-warn-soft px-4 py-2.5 text-[12.5px]">
               <TriangleAlert className="mt-0.5 size-3.5 shrink-0 text-warn" strokeWidth={2} />
