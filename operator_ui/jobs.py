@@ -20,6 +20,9 @@ DB_PATH = STATE / "operator.sqlite3"
 ACTIVE_STATES = ("queued", "running", "stop_requested")
 TERMINAL_STATES = ("completed", "blocked", "failed", "stopped", "interrupted")
 WORKER_START_GRACE_S = 30
+HEALTH_SAMPLE_LIMIT = 1_000
+HEALTH_HISTORY_BYTES = 8 * 1024 * 1024
+HEALTH_SAMPLE_BYTES = 32 * 1024
 
 
 def now() -> str:
@@ -75,6 +78,26 @@ def initialize() -> None:
             FOREIGN KEY (job_id) REFERENCES jobs(id) ON DELETE CASCADE
         )
         """)
+        db.execute("""
+        CREATE TABLE IF NOT EXISTS campaign_health_samples (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            campaign_id TEXT NOT NULL,
+            lane_fingerprint TEXT NOT NULL,
+            sampled_at TEXT NOT NULL,
+            payload_json TEXT NOT NULL,
+            payload_bytes INTEGER NOT NULL,
+            FOREIGN KEY (campaign_id) REFERENCES jobs(id) ON DELETE CASCADE
+        )
+        """)
+        db.execute("CREATE INDEX IF NOT EXISTS campaign_health_samples_campaign ON campaign_health_samples(campaign_id, id)")
+        db.execute("""
+        CREATE TABLE IF NOT EXISTS campaign_health_meta (
+            campaign_id TEXT PRIMARY KEY,
+            lane_fingerprint TEXT NOT NULL,
+            truncated INTEGER NOT NULL DEFAULT 0,
+            FOREIGN KEY (campaign_id) REFERENCES jobs(id) ON DELETE CASCADE
+        )
+        """)
 
 
 def create_job(kind: str, config: dict, total: int = 0) -> dict:
@@ -109,7 +132,7 @@ def get_job(job_id: str) -> dict | None:
 
 
 def _public(row: sqlite3.Row) -> dict:
-    return {
+    public = {
         "id": row["id"],
         "kind": row["kind"],
         "status": row["status"],
@@ -124,6 +147,24 @@ def _public(row: sqlite3.Row) -> dict:
         "result": json.loads(row["result_json"]) if row["result_json"] else None,
         "stop_requested": bool(row["stop_requested"]),
     }
+    # Expose only the non-secret campaign selectors needed to explain a job
+    # in the operator UI. In particular, never return input_json wholesale:
+    # publication jobs store a short-lived preview token there.
+    if row["kind"] == "campaign":
+        try:
+            config = json.loads(row["input_json"])
+        except (TypeError, ValueError):
+            config = {}
+        if isinstance(config, dict):
+            public["campaign"] = {
+                "cases": config.get("cases", []),
+                "techniques": config.get("techniques", []),
+                "debug_models": config.get("debug_models", []),
+                "repetitions": config.get("repetitions", 1),
+                "api_model": config.get("api_model"),
+                "verification_model": config.get("verification_model"),
+            }
+    return public
 
 
 def list_jobs(limit: int = 30) -> list[dict]:
@@ -267,6 +308,104 @@ def set_app_value(key: str, value: str) -> None:
             "INSERT INTO app_state(key, value) VALUES(?, ?) ON CONFLICT(key) DO UPDATE SET value=excluded.value",
             (key, value),
         )
+
+
+def set_app_values(values: dict[str, str]) -> None:
+    """Write a related application snapshot atomically."""
+    if not values:
+        return
+    with connect() as db:
+        db.execute("BEGIN IMMEDIATE")
+        db.executemany(
+            "INSERT INTO app_state(key, value) VALUES(?, ?) ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+            [(key, value) for key, value in values.items()],
+        )
+
+
+def record_campaign_health(campaign_id: str, lane_fingerprint: str, payload: dict) -> bool:
+    """Store one bounded, real health observation for a running campaign."""
+    initialize()
+    if not isinstance(lane_fingerprint, str) or not lane_fingerprint or not isinstance(payload, dict):
+        return False
+    stamp = payload.get("sampled_at")
+    if not isinstance(stamp, str):
+        return False
+    try:
+        encoded = json.dumps(payload, ensure_ascii=True, separators=(",", ":"))
+    except (TypeError, ValueError):
+        return False
+    size = len(encoded.encode("utf-8"))
+    oversized = size > HEALTH_SAMPLE_BYTES
+    pruned = False
+    with connect() as db:
+        db.execute("BEGIN IMMEDIATE")
+        job = db.execute("SELECT kind, status FROM jobs WHERE id=?", (campaign_id,)).fetchone()
+        if not job or job["kind"] != "campaign":
+            return False
+        if job["status"] not in ACTIVE_STATES:
+            return False
+        if oversized:
+            db.execute(
+                "INSERT INTO campaign_health_meta(campaign_id, lane_fingerprint, truncated) VALUES(?, ?, 1) "
+                "ON CONFLICT(campaign_id) DO UPDATE SET lane_fingerprint=excluded.lane_fingerprint, truncated=1",
+                (campaign_id, lane_fingerprint),
+            )
+            return False
+        db.execute(
+            "INSERT INTO campaign_health_meta(campaign_id, lane_fingerprint, truncated) VALUES(?, ?, 0) "
+            "ON CONFLICT(campaign_id) DO UPDATE SET lane_fingerprint=excluded.lane_fingerprint",
+            (campaign_id, lane_fingerprint),
+        )
+        db.execute(
+            "INSERT INTO campaign_health_samples(campaign_id, lane_fingerprint, sampled_at, payload_json, payload_bytes) VALUES(?, ?, ?, ?, ?)",
+            (campaign_id, lane_fingerprint, stamp, encoded, size),
+        )
+        while True:
+            totals = db.execute("SELECT COUNT(*), COALESCE(SUM(payload_bytes), 0) FROM campaign_health_samples").fetchone()
+            if totals[0] <= HEALTH_SAMPLE_LIMIT and totals[1] <= HEALTH_HISTORY_BYTES:
+                break
+            oldest = db.execute(
+                "SELECT s.id, s.campaign_id FROM campaign_health_samples s "
+                "JOIN jobs j ON j.id=s.campaign_id "
+                "ORDER BY CASE WHEN j.status IN (?, ?, ?) THEN 1 ELSE 0 END, s.id LIMIT 1",
+                ACTIVE_STATES,
+            ).fetchone()
+            if not oldest:
+                break
+            db.execute("DELETE FROM campaign_health_samples WHERE id=?", (oldest["id"],))
+            db.execute("UPDATE campaign_health_meta SET truncated=1 WHERE campaign_id=?", (oldest["campaign_id"],))
+            pruned = True
+    if pruned:
+        try:
+            with connect() as db:
+                db.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+        except sqlite3.OperationalError:
+            pass
+    return True
+
+
+def campaign_health_history(campaign_id: str, lane_fingerprint: str) -> dict:
+    """Return retained observations only while they still match this private lane."""
+    initialize()
+    with connect() as db:
+        job = db.execute("SELECT kind FROM jobs WHERE id=?", (campaign_id,)).fetchone()
+        meta = db.execute("SELECT lane_fingerprint, truncated FROM campaign_health_meta WHERE campaign_id=?", (campaign_id,)).fetchone()
+        if not job or job["kind"] != "campaign":
+            return {"campaign_id": campaign_id, "samples": [], "truncated": False, "reason": "campaign_not_found"}
+        if not meta:
+            return {"campaign_id": campaign_id, "samples": [], "truncated": False, "reason": "no_samples"}
+        if meta["lane_fingerprint"] != lane_fingerprint:
+            return {"campaign_id": campaign_id, "samples": [], "truncated": bool(meta["truncated"]), "reason": "lane_changed"}
+        rows = db.execute(
+            "SELECT sampled_at, payload_json FROM campaign_health_samples WHERE campaign_id=? AND lane_fingerprint=? ORDER BY id",
+            (campaign_id, lane_fingerprint),
+        ).fetchall()
+    return {
+        "campaign_id": campaign_id,
+        "samples": [{"sampled_at": row["sampled_at"], **json.loads(row["payload_json"])} for row in rows],
+        "truncated": bool(meta["truncated"]),
+        "reason": None,
+    }
 
 
 def request_stop(job_id: str) -> dict | None:
