@@ -133,6 +133,12 @@ export interface ReadinessCheckResult {
   blocking: boolean;
   hint?: string | null;
   detail?: string | null;
+  subchecks?: {
+    name: string;
+    label: string;
+    status: "fail";
+    detail?: string | null;
+  }[];
   duration_ms?: number | null;
   start_offset_ms?: number | null;
   commands?: {

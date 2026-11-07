@@ -199,6 +199,64 @@ def test_readiness_projection_includes_redacted_check_and_repair_messages():
     assert "private-key" not in serialized
 
 
+def test_readiness_projection_preserves_redacted_runner_preflight_failures():
+    projected = safe_readiness({
+        "status": "BLOCKED",
+        "checks": [{
+            "name": "runner_preflight", "status": "fail", "blocking": True,
+            "message": "runner.py --preflight failed.",
+            "details": {
+                "checks": [
+                    {"name": "lab_lane", "passed": True, "message": "Lane matched."},
+                    {
+                        "name": "minikube_status", "passed": False,
+                        "message": "Profile unhealthy: InsufficientStorage at http://10.2.3.4:8443; token=private-token",
+                        "raw": "OPENAI_API_KEY=private-key",
+                    },
+                    {"name": "unrecognized", "passed": False, "message": "Do not expose this detail."},
+                ],
+                "stdout": "OPENAI_API_KEY=private-key",
+            },
+        }],
+    })
+    check = projected["checks"][0]
+    serialized = json.dumps(projected)
+    assert check["subchecks"] == [{
+        "name": "minikube_status",
+        "label": "Minikube",
+        "status": "fail",
+        "detail": "Profile unhealthy: InsufficientStorage at <endpoint>; token=<redacted>",
+    }]
+    assert "private-token" not in serialized
+    assert "private-key" not in serialized
+    assert "10.2.3.4" not in serialized
+    assert "Do not expose this detail" not in serialized
+    assert "stdout" not in serialized
+
+
+def test_readiness_projection_bounds_runner_preflight_failures_and_messages():
+    nested = [
+        {"name": "minikube_status", "passed": False, "message": "x" * 1500},
+        {"name": "cluster_access", "passed": False, "message": "second"},
+    ]
+    nested.extend(
+        {"name": "config_validity", "passed": False, "message": "extra"}
+        for _ in range(20)
+    )
+    projected = safe_readiness({
+        "status": "BLOCKED",
+        "checks": [{
+            "name": "runner_preflight", "status": "fail", "blocking": True,
+            "details": {"checks": nested},
+        }],
+    })
+    failures = projected["checks"][0]["subchecks"]
+    assert len(failures) == 3
+    assert len(failures[0]["detail"]) == 1_000
+    assert failures[1]["name"] == "cluster_access"
+    assert failures[2]["name"] == "config_validity"
+
+
 def test_readiness_fingerprint_tracks_only_the_private_lane_file_version(monkeypatch, tmp_path):
     selector = tmp_path / "private-lane.json"
     selector.write_text('{"database_url":"postgres://private-pass@localhost/db"}\n', encoding="utf-8")
