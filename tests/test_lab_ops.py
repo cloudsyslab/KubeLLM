@@ -118,6 +118,24 @@ def test_backup_member_checksum_streams_archive_content(tmp_path):
     assert digest == hashlib.sha256(content).hexdigest()
 
 
+def test_recompress_archive_preserves_members_and_deflates_data(tmp_path):
+    source = tmp_path / "stored.zip"
+    compressed = tmp_path / "compressed.zip"
+    payload = (b"kubellm-lab-snapshot-data\n" * 250_000)
+    with zipfile.ZipFile(source, "w", compression=zipfile.ZIP_STORED) as archive:
+        archive.writestr("manifest.json", b'{"schema_version":1}\n')
+        archive.writestr("legacy/minikube/var-volume.tar", payload)
+
+    compressed_size = lab_ops_backup.recompress_archive(source, compressed)
+
+    with zipfile.ZipFile(compressed, "r") as archive:
+        assert archive.testzip() is None
+        assert archive.read("manifest.json") == b'{"schema_version":1}\n'
+        assert archive.read("legacy/minikube/var-volume.tar") == payload
+        assert all(item.compress_type == zipfile.ZIP_DEFLATED for item in archive.infolist())
+    assert compressed_size < source.stat().st_size // 10
+
+
 def test_remote_snapshot_requires_exact_approved_default_profile_id():
     container_id = "a" * 64
     args = SimpleNamespace(

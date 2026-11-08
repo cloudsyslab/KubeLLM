@@ -9,6 +9,7 @@ decrypted in a mode-0600 temporary directory, and checked before success.
 from __future__ import annotations
 
 import argparse
+import copy
 import datetime as dt
 import hashlib
 import json
@@ -21,6 +22,7 @@ import subprocess
 import sys
 import tempfile
 from pathlib import Path
+import zipfile
 
 
 DEFAULT_HOST = "minh@10.242.128.44"
@@ -584,6 +586,53 @@ def file_sha256(path: Path) -> str:
     return digest.hexdigest()
 
 
+def recompress_archive(source: Path, destination: Path, *, compression_level: int = 1) -> int:
+    """Copy a stored snapshot into a compressed ZIP while preserving every member."""
+    import zipfile
+
+    with zipfile.ZipFile(source, "r") as original, zipfile.ZipFile(
+        destination, "w", compression=zipfile.ZIP_DEFLATED, compresslevel=compression_level,
+        allowZip64=True,
+    ) as compact:
+        for original_info in original.infolist():
+            info = copy.copy(original_info)
+            info.compress_type = zipfile.ZIP_DEFLATED
+            with original.open(original_info, "r") as reader, compact.open(
+                info, "w", force_zip64=True
+            ) as writer:
+                shutil.copyfileobj(reader, writer, length=8 * 1024 * 1024)
+    return destination.stat().st_size
+
+
+def encrypt_recompressed_snapshot(source: Path, destination: Path, temp_dir: Path,
+                                  ssh_key: Path, public_key: Path) -> int:
+    """Repack an existing owner-only age snapshot and re-encrypt the compact archive."""
+    if source.is_symlink() or not source.is_file() or stat.S_IMODE(source.stat().st_mode) & 0o077:
+        raise BackupError("The reusable encrypted snapshot must be a regular owner-only file.")
+    plain = temp_dir / "source-snapshot.zip"
+    compact = temp_dir / "compact-snapshot.zip"
+    with plain.open("xb"):
+        os.chmod(plain, stat.S_IRUSR | stat.S_IWUSR)
+        decrypted = run(["age", "-d", "-i", str(ssh_key), "-o", str(plain), str(source)],
+                        timeout=RELEASE_TIMEOUT_SECONDS)
+    if decrypted.returncode:
+        raise BackupError("The reusable encrypted snapshot could not be decrypted locally.")
+    try:
+        with compact.open("xb"):
+            os.chmod(compact, stat.S_IRUSR | stat.S_IWUSR)
+        recompress_archive(plain, compact, compression_level=1)
+    except (OSError, ValueError, RuntimeError, zipfile.BadZipFile, EOFError) as exc:
+        raise BackupError("The reusable snapshot could not be repacked as a compressed ZIP.") from exc
+    with destination.open("xb"):
+        os.chmod(destination, stat.S_IRUSR | stat.S_IWUSR)
+        encrypted = run(["age", "-R", str(public_key), "-o", str(destination), str(compact)],
+                        timeout=RELEASE_TIMEOUT_SECONDS)
+    if encrypted.returncode:
+        destination.unlink(missing_ok=True)
+        raise BackupError("The compressed snapshot could not be encrypted for the configured recipient.")
+    return destination.stat().st_size
+
+
 def concatenate_assets(parts: list[Path], output: Path) -> str:
     digest = hashlib.sha256()
     with output.open("xb") as target:
@@ -996,37 +1045,57 @@ def create(args: argparse.Namespace) -> None:
     public_key = Path(str(args.ssh_key) + ".pub")
     if not args.ssh_key.is_file() or not public_key.is_file():
         raise BackupError("The configured SSH identity or matching public key is unavailable.")
-    if args.include_approved_default_minikube != bool(args.expected_default_minikube_container_id):
+    reuse_snapshot = args.reuse_encrypted_snapshot is not None
+    resume_tag = args.resume_existing_draft_tag
+    if reuse_snapshot != bool(resume_tag):
+        raise BackupError("Reusing a snapshot requires both its encrypted file and an existing draft release tag.")
+    if reuse_snapshot and (args.include_approved_default_minikube or args.expected_default_minikube_container_id):
+        raise BackupError("A reused snapshot cannot request another cold snapshot of the old default profile.")
+    if not reuse_snapshot and args.include_approved_default_minikube != bool(args.expected_default_minikube_container_id):
         raise BackupError("Including the old default profile requires both explicit opt-in and its full container ID.")
     require_isolated_restore_engine(args)
-    remote_check_idle(args)
+    if not reuse_snapshot:
+        remote_check_idle(args)
     assert_private_repo(args.repository)
 
     stamp = dt.datetime.now(dt.timezone.utc).strftime("%Y%m%dT%H%M%SZ")
     tag = "lab-backup-" + stamp
+    if resume_tag:
+        prefix = "lab-backup-"
+        try:
+            if not resume_tag.startswith(prefix):
+                raise ValueError("unexpected tag prefix")
+            stamp = dt.datetime.strptime(resume_tag[len(prefix):], "%Y%m%dT%H%M%SZ").strftime("%Y%m%dT%H%M%SZ")
+        except ValueError as exc:
+            raise BackupError("The existing draft tag is not a valid lab-backup timestamp.") from exc
+        tag = resume_tag
     snapshot_requested = False
     try:
         with tempfile.TemporaryDirectory(prefix="kubellm-lab-backup-") as tmp_name:
             tmp = Path(tmp_name)
             os.chmod(tmp, 0o700)
             encrypted = tmp / (tag + ".zip.age")
-            with encrypted.open("xb") as ciphertext:
-                os.chmod(encrypted, stat.S_IRUSR | stat.S_IWUSR)
-                snapshot_requested = True
-                ssh = subprocess.Popen(remote_command(args), stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
-                                       stderr=subprocess.DEVNULL)
-                age = subprocess.Popen(["age", "-R", str(public_key), "-o", str(encrypted)], stdin=ssh.stdout,
-                                       stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-                assert ssh.stdout is not None
-                ssh.stdout.close()
-                try:
-                    age.wait(timeout=SNAPSHOT_TIMEOUT_SECONDS)
-                    ssh.wait(timeout=30)
-                except subprocess.TimeoutExpired as exc:
-                    ssh.kill(); age.kill()
-                    raise BackupError("The snapshot stream timed out; no release was uploaded.") from exc
-            if ssh.returncode or age.returncode:
-                raise BackupError("Snapshot streaming or age encryption failed; no release was uploaded.")
+            if reuse_snapshot:
+                encrypt_recompressed_snapshot(args.reuse_encrypted_snapshot.expanduser(), encrypted, tmp,
+                                               args.ssh_key, public_key)
+            else:
+                with encrypted.open("xb") as ciphertext:
+                    os.chmod(encrypted, stat.S_IRUSR | stat.S_IWUSR)
+                    snapshot_requested = True
+                    ssh = subprocess.Popen(remote_command(args), stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
+                                           stderr=subprocess.DEVNULL)
+                    age = subprocess.Popen(["age", "-R", str(public_key), "-o", str(encrypted)], stdin=ssh.stdout,
+                                           stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                    assert ssh.stdout is not None
+                    ssh.stdout.close()
+                    try:
+                        age.wait(timeout=SNAPSHOT_TIMEOUT_SECONDS)
+                        ssh.wait(timeout=30)
+                    except subprocess.TimeoutExpired as exc:
+                        ssh.kill(); age.kill()
+                        raise BackupError("The snapshot stream timed out; no release was uploaded.") from exc
+                if ssh.returncode or age.returncode:
+                    raise BackupError("Snapshot streaming or age encryption failed; no release was uploaded.")
             parts = split_encrypted_asset(encrypted, tmp, tag)
 
             notes = (
@@ -1034,11 +1103,26 @@ def create(args: argparse.Namespace) -> None:
                 "OpenSSH Ed25519 recipient before upload. Keep the matching private identity offline. "
                 "The encrypted manifest contains checksums and recovery contents."
             )
-            created = run(["gh", "release", "create", tag, *(str(part) for part in parts), "--repo", args.repository,
-                           "--title", "Encrypted lab snapshot " + stamp, "--notes", notes, "--draft"],
-                          timeout=RELEASE_TIMEOUT_SECONDS)
-            if created.returncode:
-                raise BackupError("GitHub did not accept the encrypted snapshot release assets.")
+            if resume_tag:
+                existing = run(["gh", "release", "view", tag, "--repo", args.repository,
+                                "--json", "tagName,isDraft,assets"], timeout=60)
+                try:
+                    release = json.loads(existing.stdout) if existing.returncode == 0 else {}
+                except (ValueError, TypeError):
+                    release = {}
+                if (release.get("tagName") != tag or release.get("isDraft") is not True
+                        or release.get("assets") != []):
+                    raise BackupError("The requested draft is missing, published, or already has assets.")
+                uploaded = run(["gh", "release", "upload", tag, *(str(part) for part in parts),
+                                "--repo", args.repository], timeout=RELEASE_TIMEOUT_SECONDS)
+                if uploaded.returncode:
+                    raise BackupError("GitHub did not accept the compressed encrypted snapshot assets.")
+            else:
+                created = run(["gh", "release", "create", tag, *(str(part) for part in parts), "--repo", args.repository,
+                               "--title", "Encrypted lab snapshot " + stamp, "--notes", notes, "--draft"],
+                              timeout=RELEASE_TIMEOUT_SECONDS)
+                if created.returncode:
+                    raise BackupError("GitHub did not accept the encrypted snapshot release assets.")
 
             download_dir = tmp / "downloaded"
             download_dir.mkdir(mode=0o700)
@@ -1110,6 +1194,10 @@ def main() -> int:
                         help="Cold-snapshot only the explicitly approved old default Minikube profile.")
     parser.add_argument("--expected-default-minikube-container-id",
                         help="Full immutable container ID previously reviewed for the old default profile.")
+    parser.add_argument("--reuse-encrypted-snapshot", type=Path,
+                        help="Repack and reuse a retained owner-only age snapshot instead of taking a new remote snapshot.")
+    parser.add_argument("--resume-existing-draft-tag",
+                        help="Upload a reused snapshot to an existing empty draft release with this exact lab-backup tag.")
     args = parser.parse_args()
     try:
         create(args)
