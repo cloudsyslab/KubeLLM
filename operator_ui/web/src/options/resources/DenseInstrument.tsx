@@ -1,7 +1,10 @@
 import clsx from "clsx";
 import { Cpu, HardDrive, MemoryStick, Network, TriangleAlert } from "lucide-react";
-import type { ReactNode } from "react";
-import { Tip } from "@/components/ui";
+import { useEffect, useState, type ReactNode } from "react";
+import { useQuery } from "@tanstack/react-query";
+import { api } from "@/api/client";
+import type { TelemetrySample } from "@/api/types";
+import { Tag, Tip } from "@/components/ui";
 import { HOST } from "@/demo/lab";
 import { clock } from "@/demo/ReplayBar";
 import { StageFallback } from "../OptionsRoom";
@@ -32,7 +35,62 @@ function Big({ value, unit, sub }: { value: string; unit?: string; sub?: ReactNo
   );
 }
 
+function LiveDenseInstrument() {
+  const query = useQuery({ queryKey: ["telemetry"], queryFn: api.telemetry, refetchInterval: 2_000, staleTime: 0, retry: 0 });
+  const sample = query.data;
+  const [history, setHistory] = useState<TelemetrySample[]>([]);
+  useEffect(() => {
+    if (!sample) return;
+    setHistory((current) => current.at(-1)?.sampled_at === sample.sampled_at ? current : [...current.slice(-89), sample]);
+  }, [sample]);
+  const bytesGiB = (value?: number | null) => value == null ? "—" : `${(value / 1024 ** 3).toFixed(1)} GiB`;
+  const percent = (value?: number | null, digits = 0) => value == null || !Number.isFinite(value) ? "—" : `${value.toFixed(digits)}%`;
+  const tone = sample?.status === "unavailable" || sample?.stale || sample?.status === "stale" ? "warn" : "neutral";
+  const processes = sample?.processes ?? [];
+  if (query.isError) return <p className="rounded-lg border border-warn/40 bg-warn-soft px-4 py-3 text-[12.5px] text-warn">Host telemetry unavailable: {query.error.message}</p>;
+  if (!sample) return <div className="h-48 animate-pulse rounded-lg bg-surface" />;
+  return (
+    <div className="grid gap-4">
+      <div className="flex flex-wrap items-center gap-2"><Tag tone={tone}>{sample.status === "unavailable" ? "Unavailable" : sample.stale || sample.status === "stale" ? "Stale sample" : sample.status === "partial" ? "Partial sample" : "Live sample"}</Tag><span className="num text-[11.5px] text-fg-3">{new Date(sample.sampled_at).toLocaleString()}</span>{sample.reason && <span className="text-[12px] text-fg-3">{sample.reason}</span>}</div>
+      <div className="grid gap-4 xl:grid-cols-12">
+        <Tile icon={<Cpu className="size-4" strokeWidth={1.75} />} title="CPU" meta={`${sample.cpu.per_core.length} logical CPUs`} className="xl:col-span-7">
+          <div className="grid grid-cols-[auto_minmax(0,1fr)] items-end gap-5"><Big value={percent(sample.cpu.total_pct, 1)} sub="total utilization" /><Sparkline values={history.map((item) => item.cpu.total_pct).filter((value): value is number => value != null)} max={100} height={44} /></div>
+          <div className="grid grid-cols-8 gap-[3px] sm:grid-cols-16" role="img" aria-label={`Per-core CPU utilization for ${sample.cpu.per_core.length} logical CPUs`}>
+            {sample.cpu.per_core.map((load, index) => <Tip key={index} content={`CPU ${index} · ${percent(load, 1)}`}><span className="relative block h-5 overflow-hidden rounded-[2px] bg-surface-3"><span className="absolute inset-x-0 bottom-0 transition-[height] duration-500" style={{ height: `${Math.max(0, Math.min(100, load ?? 0))}%`, background: `color-mix(in oklab, var(--fg) ${Math.round(25 + (load ?? 0) * 0.7)}%, transparent)` }} /></span></Tip>)}
+          </div>
+        </Tile>
+        <div className="grid gap-4 xl:col-span-5">
+          <Tile icon={<MemoryStick className="size-4" strokeWidth={1.75} />} title="Memory" meta={bytesGiB(sample.memory?.total_bytes)}>
+            <div className="grid grid-cols-[auto_minmax(0,1fr)] items-end gap-5"><Big value={bytesGiB(sample.memory?.used_bytes)} sub={`${percent(sample.memory?.percent)} used`} /><Sparkline values={history.map((item) => item.memory?.used_bytes).filter((value): value is number => value != null).map((value) => value / 1024 ** 3)} max={Math.max(1, (sample.memory?.total_bytes ?? 1) / 1024 ** 3)} height={36} /></div>
+            <Meter value={sample.memory?.percent ?? 0} max={100} />
+            <p className="text-[12px] text-fg-3">Page cache {bytesGiB(sample.memory?.cache_bytes)} · available {bytesGiB(sample.memory?.available_bytes)}</p>
+          </Tile>
+          <Tile icon={<HardDrive className="size-4" strokeWidth={1.75} />} title="Disk" meta={sample.disk?.path ?? "Unavailable"}>
+            <div className="flex items-end justify-between gap-4"><Big value={percent(sample.disk?.percent)} sub={`${bytesGiB(sample.disk?.used_bytes)} used · ${bytesGiB(sample.disk?.free_bytes)} free`} />{sample.disk?.percent != null && sample.disk.percent >= 90 && <span className="inline-flex items-center gap-1.5 text-[12.5px] font-medium text-warn"><TriangleAlert className="size-3.5" strokeWidth={2} /> Low space</span>}</div>
+            <Meter value={sample.disk?.percent ?? 0} max={100} tone={sample.disk?.percent != null && sample.disk.percent >= 90 ? "warn" : "neutral"} />
+            <p className="text-[12px] text-fg-3">Measured filesystem: {sample.disk?.path ?? "unavailable"}</p>
+          </Tile>
+        </div>
+      </div>
+      <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+        {(sample.gpus.length ? sample.gpus : [{ index: -1, name: "GPU inventory", utilization_pct: null, memory_total_bytes: null, memory_used_bytes: null, temperature_c: null, power_w: null, status: "unavailable" }]).map((gpu) => <Tile key={gpu.index} icon={<span className="font-mono text-[11px]">GPU</span>} title={gpu.index < 0 ? "Unavailable" : `${gpu.index} · ${gpu.name}`} meta={gpu.temperature_c == null ? gpu.status ?? "Unavailable" : `${gpu.temperature_c.toFixed(0)}°C`}>
+          <div className="grid grid-cols-[auto_minmax(0,1fr)] items-end gap-5"><Big value={percent(gpu.utilization_pct, 1)} sub="utilization" /><Sparkline values={history.map((item) => item.gpus.find((entry) => entry.index === gpu.index)?.utilization_pct).filter((value): value is number => value != null)} max={100} height={40} /></div>
+          <div className="grid gap-1.5"><div className="flex justify-between text-[12px]"><span className="text-fg-3">VRAM</span><span className="num text-fg-2">{bytesGiB(gpu.memory_used_bytes)} / {bytesGiB(gpu.memory_total_bytes)}</span></div><Meter value={gpu.memory_total_bytes ? (gpu.memory_used_bytes ?? 0) / gpu.memory_total_bytes * 100 : 0} max={100} /></div>
+          <p className="mt-auto border-t border-line pt-3 text-[12px] text-fg-3">GPU process attribution is not available in this sample.</p>
+        </Tile>)}
+        <Tile icon={<Network className="size-4" strokeWidth={1.75} />} title="Network" meta="Not sampled"><p className="text-[12.5px] text-fg-3">The current telemetry source does not report network throughput.</p></Tile>
+      </div>
+      <section className="overflow-hidden rounded-lg border border-line bg-surface">
+        <header className="flex flex-wrap items-center gap-2 border-b border-line px-4 py-3"><h3 className="text-[13px] font-medium">Processes</h3><span className="text-[12px] text-fg-3">Names and resource use only; arguments and environment are not collected</span><span className="num ml-auto text-[12px] text-fg-3">{processes.length} processes</span></header>
+        <div className="overflow-x-auto"><table className="w-full min-w-[640px] text-[12.5px]"><thead><tr className="label text-left !text-[10.5px] [&>th]:h-8 [&>th]:border-b [&>th]:border-line [&>th]:px-3 [&>th]:font-medium"><th className="!pl-4">PID</th><th>User</th><th>Process</th><th className="text-right">CPU</th><th className="text-right">Memory</th><th className="!pr-4">Relation</th></tr></thead><tbody>{processes.map((process) => <tr key={process.pid} className="border-b border-line last:border-b-0 hover:bg-surface-2/60"><td className="num py-1.5 pr-3 pl-4 text-fg-3">{process.pid}</td><td className="px-3 text-fg-2">{process.user ?? "—"}</td><td className="px-3 font-mono text-[12px] text-fg">{process.name}</td><td className="num px-3 text-right text-fg">{percent(process.cpu_pct, 1)}</td><td className="num px-3 text-right text-fg-2">{bytesGiB(process.memory_bytes)}</td><td className="pr-4 pl-3"><Tag tone={process.attribution === "lane" ? "accent" : "neutral"}>{process.attribution === "unconfirmed" ? "Unconfirmed" : process.attribution === "other" ? "Other account" : process.attribution === "shared" ? "Shared" : "Lane"}</Tag></td></tr>)}</tbody></table></div>
+      </section>
+      <SourceNote>Host and GPU values come from the operator's live telemetry endpoint. Trend lines begin when this page is open; only point-in-time values are persisted with active campaigns.</SourceNote>
+    </div>
+  );
+}
+
 export default function DenseInstrument() {
+  if (api.isLive) return <LiveDenseInstrument />;
   const lab = useLab();
   if (!lab) return <StageFallback />;
   const { now, history, threads, processes } = lab;

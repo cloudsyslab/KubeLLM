@@ -6,7 +6,6 @@ import {
   Database,
   Layers,
   ListChecks,
-  LayoutGrid,
   LogOut,
   Menu,
   Moon,
@@ -16,6 +15,7 @@ import {
   ShieldCheck,
   SquareTerminal,
   Sun,
+  Upload,
   X,
   type LucideIcon,
 } from "lucide-react";
@@ -55,6 +55,7 @@ const NAV: { group: string; items: NavItem[] }[] = [
       { to: "/jobs", label: "Jobs", icon: ListChecks },
       { to: "/launch", label: "New campaign", icon: Rocket },
       { to: "/environment", label: "Environment", icon: ShieldCheck },
+      { to: "/publish", label: "Publish results", icon: Upload },
     ],
   },
   {
@@ -63,10 +64,6 @@ const NAV: { group: string; items: NavItem[] }[] = [
       { to: "/lab", label: "Resources", icon: Cpu },
       { to: "/lab/topology", label: "Topology", icon: Network },
     ],
-  },
-  {
-    group: "Design review",
-    items: [{ to: "/options", label: "Options room", icon: LayoutGrid }],
   },
 ];
 
@@ -202,7 +199,7 @@ const CRUMBS: Record<string, [string, string]> = {
   "/publish": ["Operate", "Publish results"],
   "/lab": ["Lab", "Resources"],
   "/lab/topology": ["Lab", "Topology"],
-  "/options": ["Design review", "Options room"],
+  "/options": ["KubeLLM", "Options room"],
 };
 
 function SearchButton({ onClick, compact }: { onClick: () => void; compact?: boolean }) {

@@ -370,27 +370,27 @@ const toggle = <T,>(list: T[], value: T, on: boolean) => (on ? (list.includes(va
 export { toggle };
 
 /** Cases grouped by scenario family, with tri-state family boxes. */
-export function CasePicker({ value, onChange, dense, className }: { value: string[]; onChange: (next: string[]) => void; dense?: boolean; className?: string }) {
+export function CasePicker({ value, onChange, dense, className, catalog = CATALOG, disabled = false }: { value: string[]; onChange: (next: string[]) => void; dense?: boolean; className?: string; catalog?: string[]; disabled?: boolean }) {
   const [query, setQuery] = useState("");
   const q = query.trim().toLowerCase().replaceAll(" ", "_");
-  const families = FAMILIES.map((f) => ({ ...f, cases: f.cases.filter((c) => !q || c.id.includes(q)) })).filter((f) => f.cases.length);
+  const families = groupCases(catalog).map((f) => ({ ...f, cases: f.cases.filter((c) => !q || c.id.includes(q)) })).filter((f) => f.cases.length);
   return (
     <div className={clsx("grid gap-3", className)}>
       <div className="flex flex-wrap items-center gap-2">
         <label className="flex h-8 min-w-0 flex-1 items-center gap-2 rounded-md border border-line bg-surface px-2.5 text-[12.5px] text-fg-3 focus-within:outline-2 focus-within:outline-accent sm:max-w-64">
           <Search className="size-3.5 shrink-0" strokeWidth={1.75} />
-          <input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Filter cases" aria-label="Filter cases" className="w-full min-w-0 bg-transparent text-fg outline-none placeholder:text-fg-3" />
+          <input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Filter cases" aria-label="Filter cases" disabled={disabled} className="w-full min-w-0 bg-transparent text-fg outline-none placeholder:text-fg-3 disabled:opacity-50" />
         </label>
         <div className="flex flex-wrap items-center gap-1" role="group" aria-label="Quick case sets">
-          <Button size="sm" variant="ghost" onClick={() => onChange(CATALOG)} aria-pressed={value.length === CATALOG.length}>
-            All {CATALOG.length}
+          <Button size="sm" variant="ghost" onClick={() => onChange(catalog)} disabled={disabled} aria-pressed={value.length === catalog.length}>
+            All {catalog.length}
           </Button>
-          <Tip content="One case per scenario family: the case without a variant suffix. Resource limits has no base case.">
-            <Button size="sm" variant="ghost" onClick={() => onChange(BASE_CASES)}>
-              Base cases {BASE_CASES.length}
+          <Tip content="One case per scenario family: the case without a variant suffix.">
+            <Button size="sm" variant="ghost" onClick={() => onChange(catalog.filter((id) => caseFamily(id).variant === "base"))} disabled={disabled}>
+              Base cases {catalog.filter((id) => caseFamily(id).variant === "base").length}
             </Button>
           </Tip>
-          <Button size="sm" variant="ghost" onClick={() => onChange([])} disabled={!value.length}>
+          <Button size="sm" variant="ghost" onClick={() => onChange([])} disabled={disabled || !value.length}>
             Clear
           </Button>
         </div>
@@ -398,16 +398,17 @@ export function CasePicker({ value, onChange, dense, className }: { value: strin
       <div className={clsx("grid gap-x-6", dense ? "gap-y-2 sm:grid-cols-2 xl:grid-cols-3" : "gap-y-3 sm:grid-cols-2")}>
         {families.map((family) => {
           const ids = family.cases.map((c) => c.id);
-          const allIds = FAMILIES.find((f) => f.family === family.family)!.cases.map((c) => c.id);
+          const allIds = family.cases.map((c) => c.id);
           const on = ids.filter((id) => value.includes(id)).length;
           return (
             <fieldset key={family.family} className="min-w-0 border-t border-line pt-2">
               <legend className="sr-only">{humanize(family.family)}</legend>
               <div className="flex items-center gap-2 py-0.5">
-                <Checkbox
+                  <Checkbox
                   label={`All ${humanize(family.family)} cases`}
                   checked={on === ids.length}
                   indeterminate={on > 0}
+                    disabled={disabled}
                   onChange={(next) => onChange(next ? [...new Set([...value, ...ids])] : value.filter((id) => !ids.includes(id)))}
                 />
                 <FamilyName family={family.family} ids={allIds} className="text-[13px] font-medium text-fg" />
@@ -418,7 +419,7 @@ export function CasePicker({ value, onChange, dense, className }: { value: strin
               <ul className="mt-0.5 grid gap-0.5 pl-[22px]">
                 {family.cases.map((c) => (
                   <li key={c.id} className="flex min-w-0 items-center gap-2 py-0.5 text-[12.5px]">
-                    <Checkbox label={c.id} checked={value.includes(c.id)} onChange={(next) => onChange(toggle(value, c.id, next))} />
+                    <Checkbox label={c.id} checked={value.includes(c.id)} disabled={disabled} onChange={(next) => onChange(toggle(value, c.id, next))} />
                     <VariantCard id={c.id} side="right">
                       <span tabIndex={0} className={clsx(HINT, "ident min-w-0 truncate text-fg-2")}>
                         {c.variant === "base" ? "base" : c.variant}

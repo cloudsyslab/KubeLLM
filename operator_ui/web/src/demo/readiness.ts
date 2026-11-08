@@ -28,6 +28,7 @@ export interface ReadinessCheck {
   ms: number;
   /** Preparation (repair-safe mode) may fix this check. */
   repairable?: boolean;
+  commands?: { command?: string; parent_command?: string; stdout?: string; stderr?: string; exit_code?: number | null; note?: string }[];
 }
 
 export const GROUPS = [

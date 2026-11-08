@@ -276,6 +276,8 @@ def test_serial_campaign_stop_waits_for_active_runner_then_preserves_unknown_out
     job = jobs.create_job("campaign", {"cases": ["wrong_port"]}, total=3)
     monkeypatch.setattr(worker, "_readiness_fresh", lambda: True)
     monkeypatch.setattr(worker, "private_lab_config", lambda: tmp_path / "private-lane-selector.json")
+    monkeypatch.setattr(worker, "_start_health_sampler", lambda *_args: None)
+    monkeypatch.setattr(worker, "_stop_health_sampler", lambda *_args, **_kwargs: None)
     monkeypatch.setattr(worker, "_report_attempt", lambda *args: None)
     monkeypatch.setattr(worker, "safe_campaign_attempts", lambda paths: [])
     observed_commands = []
@@ -310,6 +312,43 @@ def test_serial_campaign_stop_waits_for_active_runner_then_preserves_unknown_out
     manifest = json.loads((jobs.JOBS_DIR / job["id"] / "campaign.json").read_text(encoding="utf-8"))
     assert manifest["status"] == "stopped"
     assert manifest["attempts_completed"] == 1
+
+
+def test_public_jobs_expose_campaign_selectors_but_never_publish_tokens(monkeypatch, tmp_path):
+    _isolated_paths(monkeypatch, tmp_path)
+    campaign = jobs.create_job("campaign", {
+        "cases": ["wrong_port"], "techniques": ["allStepsAtOnce"],
+        "debug_models": ["model-a"], "repetitions": 2,
+        "api_model": "api-model", "verification_model": None,
+    }, total=2)
+    assert campaign["campaign"] == {
+        "cases": ["wrong_port"], "techniques": ["allStepsAtOnce"],
+        "debug_models": ["model-a"], "repetitions": 2,
+        "api_model": "api-model", "verification_model": None,
+    }
+
+    # The operator needs the token to run publication, but a public job
+    # response must never serialize the private worker input.
+    jobs.update_job(campaign["id"], status="completed", finished_at=jobs.now())
+    private_token = "a" * 32
+    publication = jobs.create_job("publish", {"campaign_job_id": campaign["id"], "preview_token": private_token})
+    public = jobs.get_job(publication["id"])
+    assert "campaign" not in public
+    assert private_token not in json.dumps(public)
+
+
+def test_campaign_health_history_is_bound_to_active_campaign_and_lane(monkeypatch, tmp_path):
+    _isolated_paths(monkeypatch, tmp_path)
+    campaign = jobs.create_job("campaign", {"cases": ["wrong_port"]}, total=1)
+    sample = {"sampled_at": jobs.now(), "telemetry": {"cpu": {"total_pct": 12.5}}, "topology": {"status": "partial"}}
+    assert jobs.record_campaign_health(campaign["id"], "lane-a", sample)
+    history = jobs.campaign_health_history(campaign["id"], "lane-a")
+    assert history["reason"] is None
+    assert history["samples"] == [sample]
+    assert jobs.campaign_health_history(campaign["id"], "lane-b")["reason"] == "lane_changed"
+
+    jobs.update_job(campaign["id"], status="completed", finished_at=jobs.now())
+    assert not jobs.record_campaign_health(campaign["id"], "lane-a", sample)
 
 
 def test_history_lists_campaign_attempts_under_the_ref_the_worker_records(monkeypatch, tmp_path):

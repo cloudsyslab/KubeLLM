@@ -1,5 +1,6 @@
 import clsx from "clsx";
 import { useEffect, useRef } from "react";
+import { api } from "@/api/client";
 import { Tag, Tip } from "@/components/ui";
 import type { DemoEvent } from "@/demo/campaign";
 import { executionOf, type CheckExecution } from "@/demo/readiness";
@@ -15,6 +16,24 @@ import { CheckMark, LANE, LEVEL_WORD, REPAIRS, ms, repairsFor, type CheckLevel, 
 type Line = Pick<DemoEvent, "source" | "level" | "text">;
 
 const PY = ".venv/bin/python";
+
+function observedExecution(commands?: ReadinessCheck["commands"]): CheckExecution {
+  if (!commands?.length) return { note: "The readiness check did not return command output.", commands: [] };
+  const output: CheckExecution["commands"] = [];
+  for (const item of commands) {
+    if (item.parent_command) output.push({ cmd: item.parent_command });
+    if (item.command || item.stdout || item.stderr || item.exit_code != null) {
+      output.push({
+        cmd: item.command ?? item.note ?? "In-process check",
+        stdout: item.stdout ? item.stdout.split("\n") : undefined,
+        stderr: item.stderr ? item.stderr.split("\n") : undefined,
+        exit: item.exit_code ?? undefined,
+      });
+    }
+  }
+  const notes = commands.map((item) => item.note).filter((value): value is string => Boolean(value));
+  return { note: notes.join(" · ") || undefined, commands: output };
+}
 
 /** Representative commands for preparation's repairs, after check_readiness.py --repair-safe. */
 function repairExecution(repair: RepairResult): CheckExecution {
@@ -82,7 +101,9 @@ export type TerminalSubject = { kind: "check"; check: ReadinessCheck } | { kind:
  */
 export function Terminal({ subject, offset, progress, pending, className }: { subject: TerminalSubject; offset: number; progress?: number; pending?: boolean; className?: string }) {
   const isCheck = subject.kind === "check";
-  const exec = isCheck ? executionOf(subject.check) : repairExecution(subject.repair);
+  const exec = isCheck
+    ? api.isLive ? observedExecution(subject.check.commands) : executionOf(subject.check)
+    : api.isLive ? observedExecution(subject.repair.commands) : repairExecution(subject.repair);
   const duration = isCheck ? subject.check.ms : subject.repair.ms;
   const level: CheckLevel = isCheck ? subject.check.level : subject.repair.ok ? "pass" : "block";
   const verdict: Line = isCheck
@@ -133,16 +154,14 @@ export function Terminal({ subject, offset, progress, pending, className }: { su
             {pending ? "Waiting" : running ? "Running" : isCheck ? LEVEL_WORD[level] : subject.repair.ok ? "Repaired" : "Not repaired"}
           </span>
           {!pending && !running && <span className="num shrink-0 text-[11.5px] text-fg-3">{ms(duration)}</span>}
-          <span className="ml-auto shrink-0">
-            <Tag tone="accent">Demo</Tag>
-          </span>
+          {!api.isLive && <span className="ml-auto shrink-0"><Tag tone="accent">Demo</Tag></span>}
         </div>
         {dep && (
           <p className="truncate text-[12px] text-fg-3">
             {dep.name} · <span className="ident">{dep.identity}</span>
           </p>
         )}
-        {exec.via && (
+        {!api.isLive && exec.via && (
           <Tip content={exec.via}>
             <p tabIndex={0} className="truncate text-[11.5px] text-fg-3">
               Inside <span className="ident text-fg-2">runner.py --preflight</span>, run with the lane's <span className="ident">--lab-config</span>
@@ -151,9 +170,7 @@ export function Terminal({ subject, offset, progress, pending, className }: { su
         )}
       </header>
       <div className="flex flex-wrap items-center gap-x-3 gap-y-1 border-b border-line px-3 py-1.5 text-[11.5px] text-fg-3" aria-hidden>
-        <span>
-          <span className="font-mono">$</span> stdin
-        </span>
+        <span><span className="font-mono">$</span> command</span>
         <span>stdout</span>
         <span className="text-warn">stderr</span>
         <span>times are elapsed in the run</span>
