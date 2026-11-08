@@ -197,9 +197,9 @@ if expected_legacy_id:
     mounts = item.get("Mounts") or []
     volume_mount = any(mount.get("Name") == "minikube" and mount.get("Destination") == "/var"
                        and mount.get("Type") == "volume" for mount in mounts)
-    modules_mount = any(mount.get("Type") == "bind" and mount.get("Source") == "/lib/modules"
-                        and mount.get("Destination") == "/lib/modules" and mount.get("RW") is False
-                        for mount in mounts)
+    modules_mount = next((mount for mount in mounts if mount.get("Type") == "bind"
+                          and mount.get("Source") == "/lib/modules"
+                          and mount.get("Destination") == "/lib/modules" and mount.get("RW") is False), None)
     if len(mounts) != 2 or not volume_mount or not modules_mount:
         raise SystemExit("approved default profile mounts changed or include unreviewed paths")
     if modules_mount.get("Propagation") not in (None, "", "rprivate", "rshared", "rslave"):

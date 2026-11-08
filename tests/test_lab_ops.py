@@ -138,6 +138,7 @@ def test_remote_snapshot_requires_exact_approved_default_profile_id():
 def test_backup_stream_program_and_systemd_units_keep_scope_explicit():
     compile(lab_ops_backup.REMOTE_SNAPSHOT, "remote_snapshot.py", "exec")
     compile(lab_ops_backup.REMOTE_IDLE_CHECK, "remote_idle_check.py", "exec")
+    assert "modules_mount = next((mount for mount in mounts" in lab_ops_backup.REMOTE_SNAPSHOT
     unit = install_lab_user_services.unit_text(
         "KubeLLM operator UI", Path("/home/minh/KubeLLM"), Path("/home/minh/KubeLLM/.venv/bin/python"),
         Path("/home/minh/.config/kubellm/lanes/minh.json"), Path("/home/minh/KubeLLM/.local/operator_ui"),
