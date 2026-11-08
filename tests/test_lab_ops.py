@@ -136,6 +136,53 @@ def test_recompress_archive_preserves_members_and_deflates_data(tmp_path):
     assert compressed_size < source.stat().st_size // 10
 
 
+def test_release_part_upload_is_individually_resumable(monkeypatch, tmp_path):
+    part = tmp_path / "snapshot-part-001.age"
+    part.write_bytes(b"ciphertext-part")
+    release_assets = []
+    calls = []
+
+    def fake_run(argv, **_kwargs):
+        calls.append(argv)
+        if argv[:3] == ["gh", "release", "view"]:
+            payload = {"tagName": "lab-backup-20261108T000000Z", "isDraft": True,
+                       "assets": release_assets.copy()}
+            return subprocess.CompletedProcess(argv, 0, json.dumps(payload).encode(), b"")
+        if argv[:3] == ["gh", "release", "upload"]:
+            uploaded = Path(argv[4])
+            release_assets.append({"name": uploaded.name, "size": uploaded.stat().st_size})
+            return subprocess.CompletedProcess(argv, 0, b"", b"")
+        if argv[:3] == ["gh", "release", "download"]:
+            name = argv[argv.index("--pattern") + 1]
+            destination = Path(argv[argv.index("--dir") + 1]) / name
+            destination.write_bytes(part.read_bytes())
+            return subprocess.CompletedProcess(argv, 0, b"", b"")
+        raise AssertionError(argv)
+
+    monkeypatch.setattr(lab_ops_backup, "run", fake_run)
+    lab_ops_backup.upload_release_parts("owner/repo", "lab-backup-20261108T000000Z", [part], tmp_path)
+    lab_ops_backup.upload_release_parts("owner/repo", "lab-backup-20261108T000000Z", [part], tmp_path)
+
+    assert sum(call[:3] == ["gh", "release", "upload"] for call in calls) == 1
+    assert len(release_assets) == 1
+
+
+def test_release_part_upload_refuses_unexpected_existing_assets(monkeypatch, tmp_path):
+    part = tmp_path / "snapshot-part-001.age"
+    part.write_bytes(b"ciphertext-part")
+    payload = {"tagName": "lab-backup-20261108T000000Z", "isDraft": True,
+               "assets": [{"name": "other.age", "size": 1}]}
+    monkeypatch.setattr(lab_ops_backup, "run", lambda argv, **_kwargs: subprocess.CompletedProcess(
+        argv, 0, json.dumps(payload).encode(), b""))
+
+    try:
+        lab_ops_backup.upload_release_parts("owner/repo", "lab-backup-20261108T000000Z", [part], tmp_path)
+    except lab_ops_backup.BackupError as exc:
+        assert "unexpected assets" in str(exc)
+    else:
+        raise AssertionError("unexpected draft assets must not be replaced")
+
+
 def test_remote_snapshot_requires_exact_approved_default_profile_id():
     container_id = "a" * 64
     args = SimpleNamespace(

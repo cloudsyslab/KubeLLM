@@ -32,7 +32,7 @@ DEFAULT_STATE = "/home/minh/KubeLLM/.local/operator_ui"
 DEFAULT_REPO = "/home/minh/KubeLLM"
 DEFAULT_GITHUB_REPO = "minh-mhl-le/kubellm-lab-backups"
 MAX_ASSET_BYTES = 2 * 1024**3 - 1
-ASSET_PART_BYTES = 1800 * 1024**2
+ASSET_PART_BYTES = 800 * 1024**2
 SNAPSHOT_TIMEOUT_SECONDS = 6 * 60 * 60
 RELEASE_TIMEOUT_SECONDS = 4 * 60 * 60
 DEFAULT_LOCAL_COPY_DIR = Path.home() / ".codex" / "lab-backups" / "snapshots"
@@ -674,6 +674,70 @@ def retain_encrypted_copy(source: Path, directory: Path, tag: str) -> Path:
     return destination
 
 
+def retain_or_verify_encrypted_copy(source: Path, directory: Path, tag: str) -> Path:
+    destination = directory.expanduser() / f"{tag}.zip.age"
+    if source.expanduser().resolve() == destination.resolve():
+        if (destination.is_symlink() or not destination.is_file()
+                or stat.S_IMODE(destination.stat().st_mode) & 0o077):
+            raise BackupError("The retained local encrypted snapshot is not an owner-only regular file.")
+        return destination
+    if destination.exists() or destination.is_symlink():
+        if (destination.is_symlink() or not destination.is_file()
+                or stat.S_IMODE(destination.stat().st_mode) & 0o077
+                or file_sha256(destination) != file_sha256(source)):
+            raise BackupError("A different encrypted snapshot already uses this release tag.")
+        return destination
+    return retain_encrypted_copy(source, directory, tag)
+
+
+def release_view(repository: str, tag: str) -> dict:
+    result = run(["gh", "release", "view", tag, "--repo", repository,
+                  "--json", "tagName,isDraft,assets"], timeout=60)
+    if result.returncode:
+        raise BackupError("The requested private GitHub draft could not be inspected.")
+    try:
+        value = json.loads(result.stdout)
+    except (ValueError, TypeError) as exc:
+        raise BackupError("GitHub returned invalid release metadata.") from exc
+    if not isinstance(value, dict) or value.get("tagName") != tag or value.get("isDraft") is not True:
+        raise BackupError("The requested backup release is missing or is no longer a draft.")
+    assets = value.get("assets")
+    if not isinstance(assets, list) or not all(isinstance(asset, dict) for asset in assets):
+        raise BackupError("GitHub returned incomplete release asset metadata.")
+    return value
+
+
+def upload_release_parts(repository: str, tag: str, parts: list[Path], temp_dir: Path) -> None:
+    """Upload one part at a time and resume only after verifying existing assets."""
+    expected = {part.name: part for part in parts}
+    current = release_view(repository, tag)
+    remote_assets = {asset.get("name"): asset for asset in current["assets"]}
+    if set(remote_assets) - set(expected):
+        raise BackupError("The draft release contains unexpected assets; refusing to overwrite them.")
+    for name, asset in remote_assets.items():
+        part = expected[name]
+        if asset.get("size") != part.stat().st_size:
+            raise BackupError("An existing release part has a different size from the retained snapshot.")
+        verify_dir = temp_dir / ("verify-" + name)
+        verify_dir.mkdir(mode=0o700, exist_ok=True)
+        download = run(["gh", "release", "download", tag, "--repo", repository,
+                        "--pattern", name, "--dir", str(verify_dir)], timeout=RELEASE_TIMEOUT_SECONDS)
+        downloaded = verify_dir / name
+        if download.returncode or not downloaded.is_file() or file_sha256(downloaded) != file_sha256(part):
+            raise BackupError("An existing release part does not match the retained encrypted snapshot.")
+    for part in parts:
+        if part.name in remote_assets:
+            continue
+        uploaded = run(["gh", "release", "upload", tag, str(part), "--repo", repository],
+                       timeout=RELEASE_TIMEOUT_SECONDS)
+        if uploaded.returncode:
+            raise BackupError(f"GitHub did not accept encrypted snapshot part {part.name}.")
+        current = release_view(repository, tag)
+        remote_assets = {asset.get("name"): asset for asset in current["assets"]}
+        if part.name not in remote_assets or remote_assets[part.name].get("size") != part.stat().st_size:
+            raise BackupError(f"GitHub did not retain encrypted snapshot part {part.name}.")
+
+
 def local_docker(args: argparse.Namespace, *argv: str, timeout: int = 60) -> subprocess.CompletedProcess:
     return run(["docker", "--host", args.restore_docker_host, *argv], timeout=timeout)
 
@@ -1080,8 +1144,13 @@ def create(args: argparse.Namespace) -> None:
             os.chmod(tmp, 0o700)
             encrypted = tmp / (tag + ".zip.age")
             if reuse_snapshot:
-                encrypt_recompressed_snapshot(args.reuse_encrypted_snapshot.expanduser(), encrypted, tmp,
-                                               args.ssh_key, public_key)
+                reusable = args.reuse_encrypted_snapshot.expanduser()
+                if reusable.name == f"{tag}.zip.age":
+                    with reusable.open("rb") as source, encrypted.open("xb") as destination:
+                        os.chmod(encrypted, stat.S_IRUSR | stat.S_IWUSR)
+                        shutil.copyfileobj(source, destination, length=8 * 1024 * 1024)
+                else:
+                    encrypt_recompressed_snapshot(reusable, encrypted, tmp, args.ssh_key, public_key)
             else:
                 with encrypted.open("xb") as ciphertext:
                     os.chmod(encrypted, stat.S_IRUSR | stat.S_IWUSR)
@@ -1105,7 +1174,7 @@ def create(args: argparse.Namespace) -> None:
                 encrypted.unlink()
                 compacted.replace(encrypted)
             parts = split_encrypted_asset(encrypted, tmp, tag)
-            local_copy = retain_encrypted_copy(encrypted, args.local_copy_dir.expanduser(), tag)
+            local_copy = retain_or_verify_encrypted_copy(encrypted, args.local_copy_dir, tag)
             if file_sha256(local_copy) != file_sha256(encrypted):
                 local_copy.unlink(missing_ok=True)
                 raise BackupError("The retained local encrypted copy failed its hash check.")
@@ -1116,25 +1185,14 @@ def create(args: argparse.Namespace) -> None:
                 "The encrypted manifest contains checksums and recovery contents."
             )
             if resume_tag:
-                existing = run(["gh", "release", "view", tag, "--repo", args.repository,
-                                "--json", "tagName,isDraft,assets"], timeout=60)
-                try:
-                    release = json.loads(existing.stdout) if existing.returncode == 0 else {}
-                except (ValueError, TypeError):
-                    release = {}
-                if (release.get("tagName") != tag or release.get("isDraft") is not True
-                        or release.get("assets") != []):
-                    raise BackupError("The requested draft is missing, published, or already has assets.")
-                uploaded = run(["gh", "release", "upload", tag, *(str(part) for part in parts),
-                                "--repo", args.repository], timeout=RELEASE_TIMEOUT_SECONDS)
-                if uploaded.returncode:
-                    raise BackupError("GitHub did not accept the compressed encrypted snapshot assets.")
+                release_view(args.repository, tag)
             else:
-                created = run(["gh", "release", "create", tag, *(str(part) for part in parts), "--repo", args.repository,
+                created = run(["gh", "release", "create", tag, "--repo", args.repository,
                                "--title", "Encrypted lab snapshot " + stamp, "--notes", notes, "--draft"],
-                              timeout=RELEASE_TIMEOUT_SECONDS)
+                              timeout=120)
                 if created.returncode:
-                    raise BackupError("GitHub did not accept the encrypted snapshot release assets.")
+                    raise BackupError("GitHub did not create the private draft for the encrypted snapshot.")
+            upload_release_parts(args.repository, tag, parts, tmp)
 
             download_dir = tmp / "downloaded"
             download_dir.mkdir(mode=0o700)
