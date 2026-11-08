@@ -611,26 +611,30 @@ def encrypt_recompressed_snapshot(source: Path, destination: Path, temp_dir: Pat
         raise BackupError("The reusable encrypted snapshot must be a regular owner-only file.")
     plain = temp_dir / "source-snapshot.zip"
     compact = temp_dir / "compact-snapshot.zip"
-    with plain.open("xb"):
-        os.chmod(plain, stat.S_IRUSR | stat.S_IWUSR)
-        decrypted = run(["age", "-d", "-i", str(ssh_key), "-o", str(plain), str(source)],
-                        timeout=RELEASE_TIMEOUT_SECONDS)
-    if decrypted.returncode:
-        raise BackupError("The reusable encrypted snapshot could not be decrypted locally.")
     try:
+        with plain.open("xb"):
+            os.chmod(plain, stat.S_IRUSR | stat.S_IWUSR)
+            decrypted = run(["age", "-d", "-i", str(ssh_key), "-o", str(plain), str(source)],
+                            timeout=RELEASE_TIMEOUT_SECONDS)
+        if decrypted.returncode:
+            raise BackupError("The reusable encrypted snapshot could not be decrypted locally.")
         with compact.open("xb"):
             os.chmod(compact, stat.S_IRUSR | stat.S_IWUSR)
         recompress_archive(plain, compact, compression_level=1)
     except (OSError, ValueError, RuntimeError, zipfile.BadZipFile, EOFError) as exc:
         raise BackupError("The reusable snapshot could not be repacked as a compressed ZIP.") from exc
-    with destination.open("xb"):
-        os.chmod(destination, stat.S_IRUSR | stat.S_IWUSR)
-        encrypted = run(["age", "-R", str(public_key), "-o", str(destination), str(compact)],
-                        timeout=RELEASE_TIMEOUT_SECONDS)
-    if encrypted.returncode:
-        destination.unlink(missing_ok=True)
-        raise BackupError("The compressed snapshot could not be encrypted for the configured recipient.")
-    return destination.stat().st_size
+    try:
+        with destination.open("xb"):
+            os.chmod(destination, stat.S_IRUSR | stat.S_IWUSR)
+            encrypted = run(["age", "-R", str(public_key), "-o", str(destination), str(compact)],
+                            timeout=RELEASE_TIMEOUT_SECONDS)
+        if encrypted.returncode:
+            destination.unlink(missing_ok=True)
+            raise BackupError("The compressed snapshot could not be encrypted for the configured recipient.")
+        return destination.stat().st_size
+    finally:
+        plain.unlink(missing_ok=True)
+        compact.unlink(missing_ok=True)
 
 
 def concatenate_assets(parts: list[Path], output: Path) -> str:
@@ -1096,7 +1100,15 @@ def create(args: argparse.Namespace) -> None:
                         raise BackupError("The snapshot stream timed out; no release was uploaded.") from exc
                 if ssh.returncode or age.returncode:
                     raise BackupError("Snapshot streaming or age encryption failed; no release was uploaded.")
+                compacted = tmp / (tag + ".compressed.zip.age")
+                encrypt_recompressed_snapshot(encrypted, compacted, tmp, args.ssh_key, public_key)
+                encrypted.unlink()
+                compacted.replace(encrypted)
             parts = split_encrypted_asset(encrypted, tmp, tag)
+            local_copy = retain_encrypted_copy(encrypted, args.local_copy_dir.expanduser(), tag)
+            if file_sha256(local_copy) != file_sha256(encrypted):
+                local_copy.unlink(missing_ok=True)
+                raise BackupError("The retained local encrypted copy failed its hash check.")
 
             notes = (
                 "Client-encrypted KubeLLM lab recovery snapshot. The asset was encrypted to the configured "
@@ -1158,7 +1170,6 @@ def create(args: argparse.Namespace) -> None:
                     restore_checks = verify_isolated_restore(args, archive, manifest)
             except (OSError, ValueError, zipfile.BadZipFile, KeyError) as exc:
                 raise BackupError("Downloaded snapshot could not be verified.") from exc
-            local_copy = retain_encrypted_copy(encrypted, args.local_copy_dir.expanduser(), tag)
             if file_sha256(local_copy) != file_sha256(encrypted):
                 local_copy.unlink(missing_ok=True)
                 raise BackupError("The retained local encrypted copy failed its hash check.")

@@ -55,7 +55,11 @@ the explicit default-profile option below, it also cold-snapshots only the exact
 configuration, profile certificates, and the `minikube`-only kubeconfig
 context. The snapshot is encrypted to the configured OpenSSH Ed25519 key
 before it leaves the Mac and uploaded in sub-2 GiB assets to a private GitHub
-Release. A second encrypted copy stays on the Mac.
+Release. To keep large assets manageable, the helper locally repacks the ZIP
+with fast DEFLATE compression in an owner-only temporary directory, encrypts
+the compact archive, and uploads only ciphertext. A second encrypted copy stays
+on the Mac. The durable local ciphertext is written and hash-checked before
+upload, so a failed upload can resume without taking another server snapshot.
 
 The helper refuses to start when an operator job or selected-lane runner is
 active. It downloads the release into a separate directory, reassembles the
@@ -77,12 +81,25 @@ python3 scripts/lab_ops_backup.py \
   --expected-default-minikube-container-id <full-id-from-the-reviewed-audit>
 ```
 
+If an interrupted upload left a retained encrypted snapshot and an empty draft
+release, resume it without taking another server snapshot:
+
+```bash
+python3 scripts/lab_ops_backup.py \
+  --reuse-encrypted-snapshot ~/.codex/lab-backups/snapshots/<snapshot>.zip.age \
+  --resume-existing-draft-tag lab-backup-<timestamp>
+```
+
+The helper verifies that the named draft exists and has no assets before it
+uploads the repacked, re-encrypted snapshot.
+
 The asset is encrypted to `~/.ssh/codex_kubellm_operator_ui`; retain that
 private identity offline with access to the recovery machine. GitHub and the
 Mac snapshot directory receive ciphertext only. Plaintext exists briefly in a
-mode-0700 local temporary directory during verification and is removed when
-the command exits. Large snapshots are split into numbered assets below the
-2 GiB per-asset limit, then their concatenated hash is checked after download.
+mode-0700 local temporary directory during compression and verification and is
+removed when the command exits. Large snapshots are split into numbered assets
+below the 2 GiB per-asset limit, then their concatenated hash is checked after
+download.
 
 To manually recover an asset, download all numbered parts from the private
 [`kubellm-lab-backups` repository](https://github.com/minh-mhl-le/kubellm-lab-backups),
