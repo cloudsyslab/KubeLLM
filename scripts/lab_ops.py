@@ -49,17 +49,42 @@ def command(argv: list[str], *, timeout: int = 15) -> subprocess.CompletedProces
 def json_lines(text: str) -> list[dict[str, Any]]:
     rows = []
     for line in text.splitlines():
+        if not line.strip():
+            continue
         try:
             value = json.loads(line)
-        except ValueError:
-            continue
-        if isinstance(value, dict):
-            rows.append(value)
+        except ValueError as exc:
+            raise OpsError("Docker returned malformed inventory; cleanup eligibility is unknown.") from exc
+        if not isinstance(value, dict):
+            raise OpsError("Docker returned an invalid inventory row; cleanup eligibility is unknown.")
+        rows.append(value)
     return rows
 
 
-def require_lane(path: str) -> dict[str, Any]:
-    sys.path.insert(0, str(REPO))
+def _normalized_id(value: Any) -> str:
+    result = str(value or "")
+    return result.removeprefix("sha256:")
+
+
+def _inspect_payload(result: subprocess.CompletedProcess[str], expected_count: int,
+                     expected_ids: set[str], *, id_field: str, kind: str) -> list[dict[str, Any]]:
+    if result.returncode:
+        raise OpsError(f"Docker could not inspect all {kind}; cleanup eligibility is unknown.")
+    try:
+        payload = json.loads(result.stdout)
+    except ValueError as exc:
+        raise OpsError(f"Docker returned malformed {kind} details; cleanup eligibility is unknown.") from exc
+    if not isinstance(payload, list) or len(payload) != expected_count or not all(isinstance(row, dict) for row in payload):
+        raise OpsError(f"Docker returned incomplete {kind} details; cleanup eligibility is unknown.")
+    actual_ids = {_normalized_id(row.get(id_field)) for row in payload}
+    wanted_ids = {_normalized_id(value) for value in expected_ids}
+    if not all(actual_ids) or actual_ids != wanted_ids:
+        raise OpsError(f"Docker detail IDs do not match the {kind} inventory; cleanup eligibility is unknown.")
+    return payload
+
+
+def require_lane(path: str, repo: Path = REPO) -> dict[str, Any]:
+    sys.path.insert(0, str(repo))
     from debug_assistant_latest.lab_context import load_lane_config
 
     try:
@@ -80,68 +105,57 @@ def docker_inventory() -> dict[str, Any]:
     container_rows = json_lines(containers_result.stdout)
     volume_rows = json_lines(volumes_result.stdout)
 
-    image_ids = list(dict.fromkeys(row.get("ID", "") for row in image_rows if row.get("ID")))
+    if any(not row.get("ID") for row in image_rows):
+        raise OpsError("Docker image inventory omitted an ID; cleanup eligibility is unknown.")
+    image_ids = list(dict.fromkeys(str(row["ID"]) for row in image_rows))
     image_details: dict[str, dict[str, Any]] = {}
     if image_ids:
         result = command(["docker", "image", "inspect", *image_ids])
-        if result.returncode == 0:
-            try:
-                payload = json.loads(result.stdout)
-            except ValueError:
-                payload = []
-            for image in payload if isinstance(payload, list) else []:
-                if not isinstance(image, dict):
-                    continue
-                image_id = str(image.get("Id", ""))
-                image_details[image_id] = {
-                    "id": image_id,
-                    "created": image.get("Created"),
-                    "size_bytes": image.get("Size"),
-                    "tags": image.get("RepoTags") or [],
-                    "owner_lane": ((image.get("Config") or {}).get("Labels") or {}).get("io.kubellm.lane"),
-                }
+        payload = _inspect_payload(result, len(image_ids), set(image_ids), id_field="Id", kind="image")
+        for image in payload:
+            image_id = str(image.get("Id", ""))
+            image_details[image_id] = {
+                "id": image_id,
+                "created": image.get("Created"),
+                "size_bytes": image.get("Size"),
+                "tags": image.get("RepoTags") or [],
+                "owner_lane": ((image.get("Config") or {}).get("Labels") or {}).get("io.kubellm.lane"),
+            }
 
-    container_ids = list(dict.fromkeys(row.get("ID", "") for row in container_rows if row.get("ID")))
+    if any(not row.get("ID") for row in container_rows):
+        raise OpsError("Docker container inventory omitted an ID; cleanup eligibility is unknown.")
+    container_ids = list(dict.fromkeys(str(row["ID"]) for row in container_rows))
     container_details: list[dict[str, Any]] = []
     if container_ids:
         result = command(["docker", "container", "inspect", *container_ids])
-        if result.returncode == 0:
-            try:
-                payload = json.loads(result.stdout)
-            except ValueError:
-                payload = []
-            for item in payload if isinstance(payload, list) else []:
-                if not isinstance(item, dict):
-                    continue
-                state = item.get("State") or {}
-                container_details.append({
-                    "id": item.get("Id"),
-                    "name": str(item.get("Name", "")).lstrip("/"),
-                    "image_id": item.get("Image"),
-                    "running": state.get("Running") is True,
-                    "status": state.get("Status"),
-                    "owner_lane": ((item.get("Config") or {}).get("Labels") or {}).get("io.kubellm.lane"),
-                    "minikube_profile": ((item.get("Config") or {}).get("Labels") or {}).get("name.minikube.sigs.k8s.io"),
-                    "mount_names": [mount.get("Name") for mount in item.get("Mounts", []) if mount.get("Name")],
-                    "restart_policy": ((item.get("HostConfig") or {}).get("RestartPolicy") or {}).get("Name"),
-                })
+        payload = _inspect_payload(result, len(container_ids), set(container_ids), id_field="Id", kind="container")
+        for item in payload:
+            state = item.get("State") or {}
+            container_details.append({
+                "id": item.get("Id"),
+                "name": str(item.get("Name", "")).lstrip("/"),
+                "image_id": item.get("Image"),
+                "running": state.get("Running") is True,
+                "status": state.get("Status"),
+                "owner_lane": ((item.get("Config") or {}).get("Labels") or {}).get("io.kubellm.lane"),
+                "minikube_profile": ((item.get("Config") or {}).get("Labels") or {}).get("name.minikube.sigs.k8s.io"),
+                "mount_names": [mount.get("Name") for mount in item.get("Mounts", []) if mount.get("Name")],
+                "restart_policy": ((item.get("HostConfig") or {}).get("RestartPolicy") or {}).get("Name"),
+            })
 
-    volume_names = list(dict.fromkeys(row.get("Name", "") for row in volume_rows if row.get("Name")))
+    if any(not row.get("Name") for row in volume_rows):
+        raise OpsError("Docker volume inventory omitted a name; cleanup eligibility is unknown.")
+    volume_names = list(dict.fromkeys(str(row["Name"]) for row in volume_rows))
     volume_details: list[dict[str, Any]] = []
     if volume_names:
         result = command(["docker", "volume", "inspect", *volume_names])
-        if result.returncode == 0:
-            try:
-                payload = json.loads(result.stdout)
-            except ValueError:
-                payload = []
-            for item in payload if isinstance(payload, list) else []:
-                if isinstance(item, dict):
-                    volume_details.append({
-                        "name": item.get("Name"),
-                        "owner_lane": (item.get("Labels") or {}).get("io.kubellm.lane"),
-                        "mountpoint": item.get("Mountpoint"),
-                    })
+        payload = _inspect_payload(result, len(volume_names), set(volume_names), id_field="Name", kind="volume")
+        for item in payload:
+            volume_details.append({
+                "name": item.get("Name"),
+                "owner_lane": (item.get("Labels") or {}).get("io.kubellm.lane"),
+                "mountpoint": item.get("Mountpoint"),
+            })
 
     for image in image_details.values():
         image["container_ids"] = sorted(
@@ -159,6 +173,7 @@ def docker_inventory() -> dict[str, Any]:
         "containers": sorted(container_details, key=lambda item: item["id"]),
         "volumes": sorted(volume_details, key=lambda item: item["name"]),
         "reported": {"image_rows": len(image_rows), "container_rows": len(container_rows), "volume_rows": len(volume_rows)},
+        "inventory_complete": True,
     }
 
 
@@ -258,8 +273,8 @@ def lane_inventory(lane: dict[str, Any], docker: dict[str, Any], *, ui_port: int
     }
 
 
-def build_audit(lane_path: str, *, ui_port: int) -> dict[str, Any]:
-    lane = require_lane(lane_path)
+def build_audit(lane_path: str, *, ui_port: int, repo: Path = REPO) -> dict[str, Any]:
+    lane = require_lane(lane_path, repo)
     docker = docker_inventory()
     host = host_inventory()
     return {
@@ -272,6 +287,8 @@ def build_audit(lane_path: str, *, ui_port: int) -> dict[str, Any]:
 
 def lane_cleanup_targets(audit: dict[str, Any], lane_id: str) -> list[dict[str, Any]]:
     docker = audit["docker"]
+    if docker.get("inventory_complete") is not True:
+        raise OpsError("Docker inventory is incomplete; cleanup targets cannot be determined.")
     targets: list[dict[str, Any]] = []
     for container in docker["containers"]:
         if container.get("owner_lane") == lane_id and not container.get("running"):
@@ -350,6 +367,8 @@ def apply_target(plan_path: Path, resource_id: str, lane_id: str, *, yes: bool) 
         raise OpsError("Apply requires --yes after you review the exact target in the cleanup plan.")
 
     current = docker_inventory()
+    if current.get("inventory_complete") is not True:
+        raise OpsError("Docker inventory is incomplete; nothing was removed.")
     if target["kind"] == "unused_image":
         image = next((item for item in current["images"] if item["id"] == resource_id), None)
         if not image or image.get("owner_lane") != lane_id or image.get("container_ids"):
@@ -367,6 +386,7 @@ def apply_target(plan_path: Path, resource_id: str, lane_id: str, *, yes: bool) 
 def main() -> int:
     parser = argparse.ArgumentParser(description="Audit and safely plan KubeLLM lab hygiene actions.")
     parser.add_argument("--lab-config", required=True, help="Explicit owner-only private lane selector JSON.")
+    parser.add_argument("--repo", type=Path, default=REPO, help="Checkout used to validate the lane selector.")
     parser.add_argument("--ui-port", type=int, default=8787)
     sub = parser.add_subparsers(dest="action", required=True)
     sub.add_parser("audit", aliases=["status", "doctor"], help="Read-only host, Docker, and selected-lane inventory.")
@@ -378,11 +398,12 @@ def main() -> int:
     apply_parser.add_argument("--yes", action="store_true", help="Confirm the exact selected-lane target.")
     args = parser.parse_args()
     try:
-        lane = require_lane(args.lab_config)
+        lane = require_lane(args.lab_config, args.repo.expanduser().resolve())
         if args.action in {"audit", "status", "doctor"}:
-            print(json.dumps(build_audit(args.lab_config, ui_port=args.ui_port), indent=2, sort_keys=True))
+            print(json.dumps(build_audit(args.lab_config, ui_port=args.ui_port,
+                                         repo=args.repo.expanduser().resolve()), indent=2, sort_keys=True))
         elif args.action == "plan":
-            audit = build_audit(args.lab_config, ui_port=args.ui_port)
+            audit = build_audit(args.lab_config, ui_port=args.ui_port, repo=args.repo.expanduser().resolve())
             payload = {
                 "schema_version": PLAN_SCHEMA,
                 "created_at": dt.datetime.now(dt.timezone.utc).isoformat(),
