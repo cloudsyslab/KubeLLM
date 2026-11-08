@@ -150,6 +150,9 @@ function ReadinessPage() {
             <div className="flex flex-wrap items-center gap-2"><span className="font-medium">{check.label}</span><Tag tone={check.status === "fail" && check.blocking ? "warn" : "neutral"}>{check.status}{check.blocking ? " · blocking" : ""}</Tag>{check.duration_ms != null && <span className="num text-[11.5px] text-fg-3">{duration(check.duration_ms / 1000)}</span>}</div>
             {check.detail && <p className="text-[12px] text-fg-2">{check.detail}</p>}
             {check.hint && <p className="text-[12px] text-warn">{check.hint}</p>}
+            {check.subchecks?.map((subcheck) => <p className="pl-3 text-[12px] text-warn" key={subcheck.name}>
+              {subcheck.label} · {subcheck.status}{subcheck.detail ? ` — ${subcheck.detail}` : ""}
+            </p>)}
             {check.commands?.map((command, index) => <div className="grid gap-1 rounded-md bg-bg p-2 font-mono text-[11.5px]" key={index}>
               <div className="break-all text-fg-2">{command.parent_command ?? command.command ?? "Check command"}</div>
               {command.command && command.parent_command && <div className="break-all text-fg-3">$ {command.command}</div>}
