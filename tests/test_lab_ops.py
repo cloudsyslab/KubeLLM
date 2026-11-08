@@ -226,6 +226,18 @@ def test_local_restore_engine_requires_isolated_x86_linux(monkeypatch):
         raise AssertionError("arm64 Docker engine was accepted for an x86_64 recovery test")
 
 
+def test_default_minikube_restore_accepts_only_reviewed_dynamic_loopback_ports():
+    valid = {port: [{"HostIp": "127.0.0.1", "HostPort": ""}]
+             for port in lab_ops_backup.DEFAULT_MINIKUBE_LOOPBACK_PORTS}
+
+    assert lab_ops_backup.has_reviewed_dynamic_loopback_ports(valid)
+    public = {**valid, "8443/tcp": [{"HostIp": "0.0.0.0", "HostPort": ""}]}
+    assert not lab_ops_backup.has_reviewed_dynamic_loopback_ports(public)
+    fixed_port = {**valid, "8443/tcp": [{"HostIp": "127.0.0.1", "HostPort": "8443"}]}
+    assert not lab_ops_backup.has_reviewed_dynamic_loopback_ports(fixed_port)
+    assert not lab_ops_backup.has_reviewed_dynamic_loopback_ports({"8443/tcp": valid["8443/tcp"]})
+
+
 def test_cron_fallback_preserves_unrelated_entries_and_is_idempotent():
     existing = "MAILTO=minh@example.test\n@reboot /home/minh/other-job\n"
     entry = "@reboot sleep 30; /home/minh/KubeLLM/supervisor # KUBELLM_LAB_SELECTED_SERVICES"

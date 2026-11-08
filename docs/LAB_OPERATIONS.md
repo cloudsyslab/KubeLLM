@@ -63,6 +63,10 @@ encrypted stream, decrypts it in a temporary owner-only directory, and checks
 archive CRCs and every manifest checksum. It restores PostgreSQL in the
 separate x86_64 Colima profile and restores the default Minikube node, volume,
 and network there; success requires the clone's Kubernetes API readiness probe.
+The isolated clone uses the restore VM's memory limit and does not publish
+ports back to the Mac; saved container metadata retains the original limits and
+loopback mappings for manual recovery. The drill verifies node data and API
+startup, not the original host port exposure or resource envelope.
 If any snapshot or restore check fails, it starts the original default Minikube
 container again. A passing drill leaves that original container stopped for
 the separately reviewed retirement step.

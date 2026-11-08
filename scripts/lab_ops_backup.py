@@ -34,6 +34,19 @@ ASSET_PART_BYTES = 1800 * 1024**2
 SNAPSHOT_TIMEOUT_SECONDS = 6 * 60 * 60
 RELEASE_TIMEOUT_SECONDS = 4 * 60 * 60
 DEFAULT_LOCAL_COPY_DIR = Path.home() / ".codex" / "lab-backups" / "snapshots"
+DEFAULT_MINIKUBE_LOOPBACK_PORTS = frozenset({"22/tcp", "2376/tcp", "32443/tcp", "5000/tcp", "8443/tcp"})
+
+
+def has_reviewed_dynamic_loopback_ports(bindings: object) -> bool:
+    if not isinstance(bindings, dict) or set(bindings) != DEFAULT_MINIKUBE_LOOPBACK_PORTS:
+        return False
+    for values in bindings.values():
+        if (not isinstance(values, list) or len(values) != 1 or not isinstance(values[0], dict)
+                or values[0].get("HostIp") != "127.0.0.1" or values[0].get("HostPort") != ""):
+            return False
+    return True
+
+
 REMOTE_IDLE_CHECK = r'''import pathlib, sqlite3, sys
 selector = str(pathlib.Path(sys.argv[1]).expanduser().resolve()).encode()
 db_path = pathlib.Path(sys.argv[2]) / "operator.sqlite3"
@@ -192,7 +205,15 @@ if expected_legacy_id:
     if modules_mount.get("Propagation") not in (None, "", "rprivate", "rshared", "rslave"):
         raise SystemExit("approved default profile bind propagation cannot be restored safely")
     host_config = item.get("HostConfig") or {}
-    unsupported = [key for key in ("Devices", "DeviceRequests", "PortBindings") if host_config.get(key)]
+    expected_ports = {"22/tcp", "2376/tcp", "32443/tcp", "5000/tcp", "8443/tcp"}
+    port_bindings = host_config.get("PortBindings") or {}
+    if set(port_bindings) != expected_ports:
+        raise SystemExit("approved default profile port publications changed from the reviewed loopback mappings")
+    for values in port_bindings.values():
+        if (not isinstance(values, list) or len(values) != 1 or not isinstance(values[0], dict)
+                or values[0].get("HostIp") != "127.0.0.1" or values[0].get("HostPort") != ""):
+            raise SystemExit("approved default profile port publications are not isolated dynamic loopback mappings")
+    unsupported = [key for key in ("Devices", "DeviceRequests") if host_config.get(key)]
     unsupported.extend(key for key in ("PidMode", "IpcMode", "UTSMode", "UsernsMode")
                        if host_config.get(key) not in (None, "", "private"))
     if host_config.get("Runtime") not in (None, "", "runc"):
@@ -752,7 +773,7 @@ def verify_default_minikube_restore(args: argparse.Namespace, archive, manifest:
     if modules_mount.get("Propagation") not in (None, "", "rprivate", "rshared", "rslave"):
         raise BackupError("Default profile bind propagation cannot be recreated; original cluster must remain intact.")
     unsupported = []
-    for key in ("Devices", "DeviceRequests", "PortBindings"):
+    for key in ("Devices", "DeviceRequests"):
         if host_config.get(key):
             unsupported.append(key)
     for key in ("PidMode", "IpcMode", "UTSMode", "UsernsMode"):
@@ -763,6 +784,9 @@ def verify_default_minikube_restore(args: argparse.Namespace, archive, manifest:
     if unsupported:
         raise BackupError("Default profile uses unsupported Docker host settings (" + ", ".join(unsupported)
                           + "); original cluster must remain intact.")
+    port_bindings = host_config.get("PortBindings") or {}
+    if not has_reviewed_dynamic_loopback_ports(port_bindings):
+        raise BackupError("Default profile port publications differ from the reviewed isolated mappings; original cluster must remain intact.")
 
     with archive.open(volume_tar_name) as member:
         try:
@@ -889,7 +913,7 @@ def verify_default_minikube_restore(args: argparse.Namespace, archive, manifest:
             for value in host_config.get("DnsSearch") or []:
                 create_command.extend(["--dns-search", str(value)])
             for path, options in (host_config.get("Tmpfs") or {}).items():
-                create_command.extend(["--tmpfs", f"{path}:{options}"])
+                create_command.extend(["--tmpfs", f"{path}:{options}" if options else str(path)])
             for option in host_config.get("SecurityOpt") or []:
                 create_command.extend(["--security-opt", str(option)])
             for key, value in (container_config.get("Labels") or {}).items():
@@ -960,6 +984,8 @@ def verify_isolated_restore(args: argparse.Namespace, archive, manifest: dict) -
     if manifest.get("legacy_minikube"):
         verify_default_minikube_restore(args, archive, manifest)
         checks["default_minikube_api_restore"] = "passed"
+        checks["default_minikube_host_ports"] = "omitted-from-isolated-clone"
+        checks["default_minikube_memory_limits"] = "omitted-from-isolated-clone"
     return checks
 
 
