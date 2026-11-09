@@ -429,8 +429,8 @@ def prepare_vm(args, work: Path, status_path: Path):
         (work / "openclaw-verified-digest.txt").write_text(verified_digest + "\n", encoding="ascii")
         # The clean pull proved registry reachability; release those temporary guest-disk blocks
         # so the later restore fits the RAM-backed staging cap.
-        vm.docker(["image", "rm", IMAGE_ID], timeout=120)
-        if vm.docker(["image", "inspect", IMAGE_ID], timeout=30, check=False).returncode == 0:
+        vm.docker(["image", "rm", IMAGE_DIGEST], timeout=120)
+        if vm.docker(["image", "inspect", IMAGE_DIGEST], timeout=30, check=False).returncode == 0:
             raise JobError("The verified temporary OpenClaw image could not be cleared from the restore VM.")
         vm.ssh("sudo -n poweroff", timeout=60, check=False)
         deadline = time.monotonic() + 60
@@ -747,9 +747,9 @@ def resume_job(args, identity: str):
             verified_vm_digest = (work / "openclaw-verified-digest.txt").read_text(encoding="ascii").strip()
             if verified_vm_digest != IMAGE_DIGEST:
                 raise JobError("The prepared VM's pull-verified image identity changed.")
-            if vm.docker(["image", "inspect", IMAGE_ID], timeout=30, check=False).returncode == 0:
-                vm.docker(["image", "rm", IMAGE_ID], timeout=120)
-                if vm.docker(["image", "inspect", IMAGE_ID], timeout=30, check=False).returncode == 0:
+            if vm.docker(["image", "inspect", IMAGE_DIGEST], timeout=30, check=False).returncode == 0:
+                vm.docker(["image", "rm", IMAGE_DIGEST], timeout=120)
+                if vm.docker(["image", "inspect", IMAGE_DIGEST], timeout=30, check=False).returncode == 0:
                     raise JobError("The temporary verified image could not be cleared before restore data.")
             age = install_age(work)
             token = read_scoped_token(TOKEN_PATH, expected_uid=os.getuid())
