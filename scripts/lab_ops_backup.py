@@ -821,6 +821,18 @@ def _read_database_image_config(source_path: Path, image_id: str) -> dict:
         raise BackupError("Selected database image archive could not be validated for restore.") from None
 
 
+_DOCKER_CONFIG_FALSE_DEFAULTS = frozenset({
+    "AttachStderr", "AttachStdin", "AttachStdout", "OpenStdin", "StdinOnce", "Tty",
+})
+
+
+def _omit_docker_config_false_defaults(value):
+    if not isinstance(value, dict):
+        return value
+    return {key: item for key, item in value.items()
+            if not (key in _DOCKER_CONFIG_FALSE_DEFAULTS and item is False)}
+
+
 def _normalize_image_config(value):
     if isinstance(value, dict):
         normalized = {key: item for key, value in value.items()
@@ -835,6 +847,11 @@ def _normalize_image_config(value):
 
 
 def _image_config_mismatches(expected: dict, actual: dict, path: str = "Config") -> list[str]:
+    # Docker 29's containerd image store fills these legacy stream flags with false
+    # even when the classic-store image config omitted them. True remains significant.
+    if path == "Config":
+        expected = _omit_docker_config_false_defaults(expected)
+        actual = _omit_docker_config_false_defaults(actual)
     expected_value = _normalize_image_config(expected)
     actual_value = _normalize_image_config(actual)
     if expected_value == actual_value:

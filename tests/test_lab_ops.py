@@ -799,11 +799,17 @@ def test_database_image_archive_config_digest_is_verified(tmp_path):
 def test_database_image_verification_rejects_config_and_layer_mismatches():
     source = {"architecture": "amd64", "os": "linux", "config": {"User": "postgres"},
               "rootfs": {"type": "layers", "diff_ids": ["sha256:" + "a" * 64]}}
-    restored = {"Architecture": "amd64", "Os": "linux", "Config": {"User": "root"},
+    restored = {"Architecture": "amd64", "Os": "linux", "Config": {
+                    "User": "root", "AttachStderr": False, "AttachStdin": False,
+                    "AttachStdout": False, "OpenStdin": False, "StdinOnce": False, "Tty": False,
+                },
                 "RootFS": {"Type": "layers", "Layers": ["sha256:" + "b" * 64]}}
 
     assert lab_ops_backup._database_image_mismatches(source, restored) == ["Config.User", "RootFS"]
     assert lab_ops_backup._image_config_mismatches({"Volumes": {}}, {"Volumes": None}) == []
+    assert lab_ops_backup._image_config_mismatches(
+        {"User": "postgres"}, {"User": "postgres", "Tty": True}
+    ) == ["Config.Tty"]
 
 
 def test_postgres_restore_uses_destination_store_id_and_verifies_image_contents(monkeypatch, tmp_path):
