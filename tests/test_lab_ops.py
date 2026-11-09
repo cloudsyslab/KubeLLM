@@ -1030,6 +1030,27 @@ def test_default_minikube_restore_accepts_only_reviewed_dynamic_loopback_ports()
     assert not lab_ops_backup.has_reviewed_dynamic_loopback_ports({"8443/tcp": valid["8443/tcp"]})
 
 
+def test_saved_default_minikube_node_ip_falls_back_to_pre_stop_network_inspection():
+    original_id = "a" * 64
+    container_data = {"NetworkSettings": {"Networks": {"minikube": {"IPAddress": ""}}}}
+    network_data = {"Containers": {original_id: {"IPv4Address": "192.168.94.2/24"}}}
+
+    container_data["NetworkSettings"]["Networks"]["minikube"]["IPAddress"] = "192.168.94.3"
+    assert lab_ops_backup._saved_default_minikube_node_ip(
+        container_data, network_data, "minikube", original_id
+    ) == "192.168.94.3"
+
+    container_data["NetworkSettings"]["Networks"]["minikube"]["IPAddress"] = ""
+    assert lab_ops_backup._saved_default_minikube_node_ip(
+        container_data, network_data, "minikube", original_id
+    ) == "192.168.94.2"
+
+    network_data["Containers"][original_id]["IPv4Address"] = ""
+    assert lab_ops_backup._saved_default_minikube_node_ip(
+        container_data, network_data, "minikube", original_id
+    ) == ""
+
+
 def test_default_minikube_volume_tar_reads_first_stream_entry(tmp_path):
     tar_data = io.BytesIO()
     with tarfile.open(fileobj=tar_data, mode="w") as volume:

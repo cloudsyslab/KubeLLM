@@ -54,6 +54,23 @@ def has_reviewed_dynamic_loopback_ports(bindings: object) -> bool:
     return True
 
 
+def _saved_default_minikube_node_ip(container_data: dict, network_data: dict,
+                                    network_name: str, original_id: str) -> str:
+    networks = (container_data.get("NetworkSettings") or {}).get("Networks") or {}
+    stopped_ip = str((networks.get(network_name) or {}).get("IPAddress") or "").strip()
+    if stopped_ip:
+        return stopped_ip
+
+    # Docker clears a stopped container's endpoint IP. The network inspection was
+    # captured before the cold stop and retains the exact approved attachment.
+    attachments = network_data.get("Containers") or {}
+    matching = [details for container_id, details in attachments.items()
+                if str(container_id).removeprefix("sha256:") == original_id]
+    if len(attachments) != 1 or len(matching) != 1 or not isinstance(matching[0], dict):
+        return ""
+    return str(matching[0].get("IPv4Address") or "").split("/", 1)[0].strip()
+
+
 def default_minikube_volume_strip_components(archive, member_name: str) -> int:
     with archive.open(member_name) as member:
         try:
@@ -1222,9 +1239,10 @@ def verify_default_minikube_restore(args: argparse.Namespace, archive, manifest:
                 raise BackupError("Could not recreate the default profile's isolated Docker network.")
             network_created = True
 
-            source_ip = str(saved_networks[network_name].get("IPAddress") or "")
+            source_ip = _saved_default_minikube_node_ip(
+                container_data, network_data, network_name, original_id)
             if not source_ip:
-                raise BackupError("Default Minikube node IP is missing from its archive.")
+                raise BackupError("Default Minikube node IP is missing from its container and saved network attachment.")
             subnets = [entry.get("Subnet") for entry in ipam.get("Config") or [] if entry.get("Subnet")]
             if not subnets or not any(ipaddress.ip_address(source_ip) in ipaddress.ip_network(subnet)
                                       for subnet in subnets):
