@@ -348,7 +348,7 @@ def test_lab_native_snapshot_pipeline_executes_the_age_binary(monkeypatch, tmp_p
         return FakeProcess(argv)
 
     monkeypatch.setattr(lab_ops_native_remote.subprocess, "Popen", fake_popen)
-    monkeypatch.setattr(lab_ops_native_remote, "assert_capacity", lambda _work: None)
+    monkeypatch.setattr(lab_ops_native_remote, "assert_capacity", lambda _work, **_kwargs: None)
     args = SimpleNamespace(
         job_id="job-20261109T000000Z-1234abcd",
         release_tag="lab-backup-20261109T000000Z",
@@ -363,6 +363,34 @@ def test_lab_native_snapshot_pipeline_executes_the_age_binary(monkeypatch, tmp_p
     assert commands[2][0] == str(age_binary)
     assert encrypted == work / "snapshot.zip.zst.age"
     assert encrypted.read_bytes() == b"ciphertext"
+
+
+def test_lab_native_capacity_guard_skips_container_stats_during_cold_snapshot(monkeypatch, tmp_path):
+    commands = []
+    original_read_text = Path.read_text
+
+    def fake_read_text(path, *args, **kwargs):
+        if str(path) == "/proc/meminfo":
+            return "MemAvailable: 16777216 kB\n"
+        return original_read_text(path, *args, **kwargs)
+
+    def fake_run(argv, **_kwargs):
+        commands.append(argv)
+        output = b"78MiB / 32GiB\n" if argv[:2] == ["docker", "stats"] else b"1 1\n"
+        return SimpleNamespace(returncode=0, stdout=output)
+
+    monkeypatch.setattr(Path, "read_text", fake_read_text)
+    monkeypatch.setattr(lab_ops_native_remote, "run", fake_run)
+    monkeypatch.setattr(lab_ops_native_remote, "TRACKED_CONTAINER", "approved-minikube")
+    monkeypatch.setattr(lab_ops_native_remote, "LAST_CONTAINER_MEMORY_CHECK", 99.9)
+    monkeypatch.setattr(lab_ops_native_remote.time, "monotonic", lambda: 100.0)
+
+    lab_ops_native_remote.assert_capacity(tmp_path, check_container_memory=False)
+    assert [command[0] for command in commands] == ["du"]
+
+    commands.clear()
+    lab_ops_native_remote.assert_capacity(tmp_path, force_container_memory=True)
+    assert [command[0] for command in commands] == ["du", "docker"]
 
 
 def test_lab_native_preflight_requires_kubectl(monkeypatch):

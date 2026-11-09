@@ -106,7 +106,7 @@ def sha256_file(path: Path):
     return digest.hexdigest()
 
 
-def assert_capacity(work: Path):
+def assert_capacity(work: Path, *, check_container_memory=True, force_container_memory=False):
     global LAST_CONTAINER_MEMORY_CHECK
     usage = run(["du", "-s", "-B1", str(work)], timeout=30)
     if usage.returncode:
@@ -121,7 +121,8 @@ def assert_capacity(work: Path):
                       if line.startswith("MemAvailable:")), 0)
     if available < 8 * 1024**3:
         raise JobError("Lab memory headroom fell below 8 GiB; the job stopped safely.")
-    if TRACKED_CONTAINER and time.monotonic() - LAST_CONTAINER_MEMORY_CHECK >= 30:
+    if (check_container_memory and TRACKED_CONTAINER
+            and (force_container_memory or time.monotonic() - LAST_CONTAINER_MEMORY_CHECK >= 30)):
         LAST_CONTAINER_MEMORY_CHECK = time.monotonic()
         stats = run(["docker", "stats", "--no-stream", "--format", "{{.MemUsage}}", TRACKED_CONTAINER],
                     timeout=20)
@@ -542,6 +543,10 @@ def verify_archive(path: Path, lane_id: str):
 def start_snapshot(args, work: Path, status_path: Path):
     status(status_path, args.job_id, "snapshot-source", "Preparing the selected-lane archive stream.",
            release_tag=args.release_tag)
+    # The cold snapshot deliberately stops the exact Minikube container. Check its
+    # memory limit once before that operation, then avoid competing docker-stats
+    # requests while the daemon is stopping and archiving the container.
+    assert_capacity(work, force_container_memory=True)
     source = Path(__file__).with_name("lab_ops_backup.py").read_text(encoding="utf-8")
     marker = "REMOTE_SNAPSHOT = r'''"
     start = source.index(marker) + len(marker)
@@ -575,7 +580,7 @@ def start_snapshot(args, work: Path, status_path: Path):
         while time.monotonic() < deadline:
             if all(proc.poll() is not None for proc in (snapshot, compressed, encrypted)):
                 break
-            assert_capacity(work)
+            assert_capacity(work, check_container_memory=False)
             if time.monotonic() - last_report >= 30:
                 last_report = time.monotonic()
                 status(status_path, args.job_id, "snapshot",
@@ -600,7 +605,7 @@ def start_snapshot(args, work: Path, status_path: Path):
     if not archive.is_file() or archive.stat().st_size == 0:
         raise JobError("The encrypted lab snapshot is empty.")
     os.chmod(archive, 0o600)
-    assert_capacity(work)
+    assert_capacity(work, check_container_memory=False)
     return archive
 
 
