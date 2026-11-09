@@ -74,9 +74,10 @@ Preparation creates a dedicated recovery identity at
 ~/.codex/lab-backups/recovery.agekey. Make a second offline copy before
 resuming; the private key cannot be recovered from GitHub.
 
-Use the existing empty draft tag lab-backup-20261108T133252Z if it is still an
-empty draft; otherwise omit --release-tag to create a fresh tag. The worker
-rejects unexpected or mismatching assets and never deletes or replaces them.
+For a new backup, omit --release-tag to create a fresh tag. To resume an
+interrupted transfer, pass its exact tag: the worker reuses a complete private
+draft after checking every numbered part and digest. Incomplete, unexpected, or
+mismatching assets fail closed; they are never deleted or replaced.
 Wait for status awaiting-recovery-key. Then install the token from a prompt
 that does not echo input:
 
@@ -99,14 +100,15 @@ restarted with user networking restrict=on and an egress probe fails. QEMU
 exposes SSH only on a loopback port for control. The guest has no external
 network route while restore data is present. The worker then:
 
-1. Takes a consistent selected-lane snapshot and cold snapshot of only the
+1. Reuses a complete private draft for the requested tag, or takes a consistent
+   selected-lane snapshot and cold snapshot of only the
    exact reviewed default Minikube container, /var volume, image, network,
    profile files, and Minikube kubeconfig context.
-2. Compresses with zstd, encrypts with the dedicated age recipient, and
+2. Compresses the ZIP stream with zstd, encrypts with the dedicated age recipient, and
    uploads numbered 128 MiB ciphertext assets directly from lab RAM.
 3. Downloads every release asset into lab RAM and checks GitHub's SHA-256
-   digest against the exact uploaded chunk, then decrypts and checks archive
-   CRCs and all manifest checksums.
+   digest against the exact uploaded chunk, then decrypts, decompresses zstd
+   within the RAM staging limit, and checks ZIP CRCs and all manifest checksums.
 4. Restores PostgreSQL, SQLite, and the old Minikube profile into the
    network-restricted QEMU VM, capped at 32 GiB memory, four vCPUs, and a
    48 GiB sparse disk. RAM-backed staging is capped at 28 GiB with an 8 GiB

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import io
 import json
 import stat
 import subprocess
@@ -258,6 +259,80 @@ def test_lab_github_token_must_be_owner_only_and_release_tag_is_scoped(tmp_path)
         raise AssertionError("release API paths must only accept lab-backup timestamp tags")
 
 
+def test_lab_github_finds_existing_draft_by_release_inventory(monkeypatch):
+    tag = "lab-backup-20261109T075044Z"
+    draft = {"id": 438926539, "tag_name": tag, "draft": True, "prerelease": False,
+             "upload_url": "https://uploads.github.com/repos/owner/repo/releases/1/assets{?name,label}",
+             "assets": []}
+    calls = []
+
+    def listed(endpoint, _token):
+        calls.append(endpoint)
+        if endpoint.endswith("page=1"):
+            return [{"tag_name": "unrelated-" + str(index)} for index in range(10)]
+        return [draft]
+
+    def unexpected_create(*_args, **_kwargs):
+        raise AssertionError("an existing draft must not be duplicated")
+
+    monkeypatch.setattr(lab_ops_github, "api_array", listed)
+    monkeypatch.setattr(lab_ops_github, "api_json", unexpected_create)
+
+    found = lab_ops_github.get_or_create_draft("owner", "repo", tag, "token", title="backup", notes="")
+
+    assert found is draft
+    assert calls == [
+        "/repos/owner/repo/releases?per_page=10&page=1",
+        "/repos/owner/repo/releases?per_page=10&page=2",
+    ]
+
+
+def test_lab_github_api_array_accepts_release_inventory(monkeypatch):
+    monkeypatch.setattr(lab_ops_github, "_api_request",
+                        lambda *_args, **_kwargs: (200, {}, b'[{"id":7,"tag_name":"lab-backup-20261109T075044Z"}]'))
+
+    assert lab_ops_github.api_array("/repos/owner/repo/releases?per_page=10&page=1", "token") == [
+        {"id": 7, "tag_name": "lab-backup-20261109T075044Z"}
+    ]
+
+
+def test_lab_github_release_chunks_require_a_complete_ordered_set():
+    tag = "lab-backup-20261109T075044Z"
+    release = {"tag_name": tag, "draft": True, "assets": [
+        {"id": 2, "name": tag + "-part-002-of-002.age", "size": 4, "digest": "sha256:" + "b" * 64},
+        {"id": 1, "name": tag + "-part-001-of-002.age", "size": 3, "digest": "sha256:" + "a" * 64},
+    ]}
+
+    chunks = lab_ops_github.chunks_from_release(release, tag)
+
+    assert [item["name"] for item in chunks] == [
+        tag + "-part-001-of-002.age", tag + "-part-002-of-002.age"
+    ]
+    release["assets"].pop()
+    try:
+        lab_ops_github.chunks_from_release(release, tag)
+    except lab_ops_github.GitHubReleaseError as exc:
+        assert "missing encrypted snapshot chunks" in str(exc)
+    else:
+        raise AssertionError("an incomplete draft must not be reused")
+
+
+def test_lab_github_release_inventory_rejects_published_or_duplicate_tag(monkeypatch):
+    tag = "lab-backup-20261109T075044Z"
+
+    for releases, message in [
+        ([{"tag_name": tag, "draft": False}], "already has a published release"),
+        ([{"tag_name": tag, "draft": True}, {"tag_name": tag, "draft": True}], "multiple releases"),
+    ]:
+        monkeypatch.setattr(lab_ops_github, "api_array", lambda _endpoint, _token, value=releases: value)
+        try:
+            lab_ops_github.find_release_by_tag("owner", "repo", tag, "token")
+        except lab_ops_github.GitHubReleaseError as exc:
+            assert message in str(exc)
+        else:
+            raise AssertionError("ambiguous or already published backup tags must be rejected")
+
+
 def test_lab_github_upload_url_template_is_removed_before_querying_asset_name():
     host, path = lab_ops_github._asset_upload_path(
         "https://uploads.github.com/repos/owner/repo/releases/1/assets{?name,label}",
@@ -276,16 +351,16 @@ def test_lab_github_upload_recovers_lost_success_only_for_matching_asset(monkeyp
     chunk = chunks[0]
     exact_asset = {"id": 1, "name": chunk["name"], "size": chunk["size"],
                    "digest": "sha256:" + chunk["digest"]}
-    release = {"tag_name": tag, "upload_url": "https://uploads.github.com/repos/owner/repo/releases/1/assets{?name,label}",
+    release = {"id": 42, "tag_name": tag, "upload_url": "https://uploads.github.com/repos/owner/repo/releases/42/assets{?name,label}",
                "assets": []}
     calls = []
 
     def fail_after_server_acceptance(*_args, **_kwargs):
         raise lab_ops_github.GitHubReleaseError("GitHub rejected encrypted asset upload (HTTP 422).")
 
-    def refreshed(*_args, **_kwargs):
-        calls.append("refresh")
-        return 200, {"assets": [exact_asset], "tag_name": tag}
+    def refreshed(method, endpoint, *_args, **_kwargs):
+        calls.append((method, endpoint))
+        return 200, {"id": 42, "assets": [exact_asset], "tag_name": tag}
 
     monkeypatch.setattr(lab_ops_github, "_post_asset_stream", fail_after_server_acceptance)
     monkeypatch.setattr(lab_ops_github, "api_json", refreshed)
@@ -293,7 +368,90 @@ def test_lab_github_upload_recovers_lost_success_only_for_matching_asset(monkeyp
     result = lab_ops_github.upload_missing_chunks("owner", "repo", release, chunks, source, "github_pat_test")
 
     assert result == [exact_asset]
-    assert calls == ["refresh"]
+    assert calls == [("GET", "/repos/owner/repo/releases/42")]
+
+
+def test_lab_native_zstd_restore_decompression_is_bounded_and_private(monkeypatch, tmp_path):
+    work = tmp_path / "job"
+    work.mkdir(mode=0o700)
+    compressed = work / "snapshot.zip.zst"
+    compressed.write_bytes(b"compressed")
+    output_bytes = b"restored zip bytes"
+    commands = []
+
+    class FakeProcess:
+        def __init__(self):
+            self.stdout = io.BytesIO(output_bytes)
+            self.returncode = 0
+
+        def poll(self):
+            return self.returncode
+
+        def wait(self, timeout):
+            return self.returncode
+
+        def kill(self):
+            self.returncode = -9
+
+    def fake_popen(argv, **kwargs):
+        commands.append((argv, kwargs))
+        return FakeProcess()
+
+    monkeypatch.setattr(lab_ops_native_remote.subprocess, "Popen", fake_popen)
+    monkeypatch.setattr(lab_ops_native_remote, "assert_capacity", lambda *_args, **_kwargs: 0)
+
+    archive = work / "snapshot.zip"
+    count = lab_ops_native_remote.decompress_snapshot(
+        compressed, archive, work, tmp_path / "status.json", "job-20261109T000000Z-1234abcd",
+        "lab-backup-20261109T075044Z",
+    )
+
+    assert count == len(output_bytes)
+    assert archive.read_bytes() == output_bytes
+    assert stat.S_IMODE(archive.stat().st_mode) == 0o600
+    assert commands[0][0] == ["zstd", "-d", "-c", str(compressed)]
+    assert commands[0][1]["stdin"] == subprocess.DEVNULL
+
+
+def test_lab_native_zstd_restore_decompression_stops_at_staging_limit(monkeypatch, tmp_path):
+    work = tmp_path / "job"
+    work.mkdir(mode=0o700)
+    compressed = work / "snapshot.zip.zst"
+    compressed.write_bytes(b"compressed")
+
+    class FakeProcess:
+        def __init__(self):
+            self.stdout = io.BytesIO(b"four")
+            self.returncode = None
+            self.killed = False
+
+        def poll(self):
+            return self.returncode
+
+        def wait(self, timeout):
+            return self.returncode
+
+        def kill(self):
+            self.killed = True
+            self.returncode = -9
+
+    process = FakeProcess()
+    monkeypatch.setattr(lab_ops_native_remote.subprocess, "Popen", lambda *_args, **_kwargs: process)
+    monkeypatch.setattr(lab_ops_native_remote, "assert_capacity", lambda *_args, **_kwargs: 0)
+    monkeypatch.setattr(lab_ops_native_remote, "MAX_STAGING", 3)
+
+    try:
+        lab_ops_native_remote.decompress_snapshot(
+            compressed, work / "snapshot.zip", work, tmp_path / "status.json",
+            "job-20261109T000000Z-1234abcd", "lab-backup-20261109T075044Z",
+        )
+    except lab_ops_native_remote.JobError as exc:
+        assert "28 GiB RAM staging limit" in str(exc)
+    else:
+        raise AssertionError("decompression must stop before writing past the staging cap")
+
+    assert process.killed is True
+    assert not (work / "snapshot.zip").exists()
 
 
 def test_lab_native_qemu_is_egress_restricted_and_loopback_only(tmp_path):

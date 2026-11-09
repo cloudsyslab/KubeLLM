@@ -74,7 +74,7 @@ def _api_request(method: str, endpoint: str, token: str, *, payload: dict | None
         parsed = json.loads(body) if body else {}
     except (UnicodeDecodeError, json.JSONDecodeError):
         raise GitHubReleaseError("GitHub returned malformed API metadata.") from None
-    if not isinstance(parsed, dict):
+    if not isinstance(parsed, (dict, list)):
         raise GitHubReleaseError("GitHub returned an unexpected API response.")
     return status, headers, (json.dumps(parsed, separators=(",", ":")).encode())
 
@@ -88,6 +88,19 @@ def api_json(method: str, endpoint: str, token: str, *, payload: dict | None = N
     if not isinstance(parsed, dict):
         raise GitHubReleaseError("GitHub returned an unexpected API response.")
     return status, parsed
+
+
+def api_array(endpoint: str, token: str) -> list[dict]:
+    status, _headers, body = _api_request("GET", endpoint, token)
+    if status != 200:
+        raise GitHubReleaseError(f"GitHub API returned HTTP {status}.")
+    try:
+        parsed = json.loads(body)
+    except json.JSONDecodeError:
+        raise GitHubReleaseError("GitHub returned malformed API metadata.") from None
+    if not isinstance(parsed, list) or not all(isinstance(item, dict) for item in parsed):
+        raise GitHubReleaseError("GitHub returned an unexpected API response.")
+    return parsed
 
 
 def ensure_private_repository(owner: str, repo: str, token: str) -> None:
@@ -104,14 +117,45 @@ def release_endpoint(owner: str, repo: str, tag: str) -> str:
     return f"/repos/{quote(owner)}/{quote(repo)}/releases/tags/{quote(tag)}"
 
 
+def release_by_id(owner: str, repo: str, identifier: int, token: str) -> dict:
+    if not isinstance(identifier, int) or identifier <= 0:
+        raise GitHubReleaseError("The private release identifier is invalid.")
+    _, release = api_json("GET", f"/repos/{quote(owner)}/{quote(repo)}/releases/{identifier}", token)
+    if release.get("id") != identifier:
+        raise GitHubReleaseError("GitHub returned a different private release than requested.")
+    return release
+
+
+def find_release_by_tag(owner: str, repo: str, tag: str, token: str) -> dict | None:
+    """Find an exact release, including drafts that GitHub hides from tag lookup."""
+    release_endpoint(owner, repo, tag)  # Validate the timestamp-scoped tag first.
+    matches = []
+    for page in range(1, 101):
+        endpoint = f"/repos/{quote(owner)}/{quote(repo)}/releases?per_page=10&page={page}"
+        releases = api_array(endpoint, token)
+        matches.extend(item for item in releases if item.get("tag_name") == tag)
+        if len(releases) < 10:
+            break
+    else:
+        raise GitHubReleaseError("The private release inventory exceeded the safe pagination limit.")
+    if len(matches) > 1:
+        raise GitHubReleaseError("The private repository contains multiple releases for this backup tag.")
+    if not matches:
+        return None
+    release = matches[0]
+    if release.get("draft") is not True:
+        raise GitHubReleaseError("The backup tag already has a published release; refusing to replace it.")
+    if (not isinstance(release.get("id"), int) or release["id"] <= 0
+            or not isinstance(release.get("assets"), list)):
+        raise GitHubReleaseError("GitHub returned an incomplete private draft release.")
+    return release
+
+
 def get_or_create_draft(owner: str, repo: str, tag: str, token: str, *, title: str,
                         notes: str, target_commitish: str = "") -> dict:
-    endpoint = release_endpoint(owner, repo, tag)
-    try:
-        _, release = api_json("GET", endpoint, token)
-    except GitHubReleaseError as exc:
-        if "HTTP 404" not in str(exc):
-            raise
+    release_endpoint(owner, repo, tag)
+    release = find_release_by_tag(owner, repo, tag, token)
+    if release is None:
         status, release = api_json("POST", f"/repos/{quote(owner)}/{quote(repo)}/releases", token,
                                    payload={"tag_name": tag, "target_commitish": target_commitish,
                                             "name": title, "body": notes, "draft": True})
@@ -310,7 +354,7 @@ def upload_missing_chunks(owner: str, repo: str, release: dict, chunks: list[dic
             # Accept it only after the exact draft asset digest and size match this chunk.
             if "HTTP 422" not in str(exc):
                 raise
-            _, refreshed = api_json("GET", release_endpoint(owner, repo, release["tag_name"]), token)
+            refreshed = release_by_id(owner, repo, release["id"], token)
             validate_existing_assets(refreshed, chunks)
             asset = asset_map(refreshed).get(chunk["name"])
             if asset is None:

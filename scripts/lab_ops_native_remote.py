@@ -25,15 +25,15 @@ import zipfile
 
 try:
     from .lab_ops_github import (
-        GitHubReleaseError, api_json, chunk_manifest, download_assets, ensure_private_repository,
-        get_or_create_draft, publish_draft, read_scoped_token, upload_missing_chunks,
-        validate_existing_assets,
+        GitHubReleaseError, chunk_manifest, chunks_from_release, download_assets,
+        ensure_private_repository, find_release_by_tag, get_or_create_draft, publish_draft,
+        read_scoped_token, release_by_id, upload_missing_chunks, validate_existing_assets,
     )
 except ImportError:
     from lab_ops_github import (
-        GitHubReleaseError, api_json, chunk_manifest, download_assets, ensure_private_repository,
-        get_or_create_draft, publish_draft, read_scoped_token, upload_missing_chunks,
-        validate_existing_assets,
+        GitHubReleaseError, chunk_manifest, chunks_from_release, download_assets,
+        ensure_private_repository, find_release_by_tag, get_or_create_draft, publish_draft,
+        read_scoped_token, release_by_id, upload_missing_chunks, validate_existing_assets,
     )
 
 
@@ -134,6 +134,7 @@ def assert_capacity(work: Path, *, check_container_memory=True, force_container_
                          "KiB": 1024, "MiB": 1024**2, "GiB": 1024**3, "TiB": 1024**4}
                 if amount * scale[unit] > 2 * 1024**3:
                     raise JobError("The existing Minikube profile exceeded its 2 GiB active-memory guard.")
+    return size
 
 
 def check_tools():
@@ -540,6 +541,59 @@ def verify_archive(path: Path, lane_id: str):
         raise JobError("The decrypted lab backup archive is invalid.") from None
 
 
+def decompress_snapshot(compressed_path: Path, archive_path: Path, work: Path,
+                        status_path: Path, job_id: str, release_tag: str) -> int:
+    """Decompress zstd to RAM while enforcing staging and host-memory limits."""
+    if (compressed_path.is_symlink() or not compressed_path.is_file()
+            or archive_path.exists() or archive_path.is_symlink()):
+        raise JobError("The decrypted compressed snapshot paths are invalid or already exist.")
+    initial_usage = assert_capacity(work, check_container_memory=False)
+    remaining_capacity = MAX_STAGING - initial_usage
+    if remaining_capacity <= 0:
+        raise JobError("No RAM-backed staging capacity remains for snapshot decompression.")
+    process = subprocess.Popen(["zstd", "-d", "-c", str(compressed_path)],
+                               stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
+                               stderr=subprocess.DEVNULL, start_new_session=True)
+    written = 0
+    next_capacity_check = 64 * 1024**2
+    next_status = 1024**3
+    try:
+        with archive_path.open("xb") as output:
+            os.chmod(archive_path, 0o600)
+            assert process.stdout is not None
+            while True:
+                block = process.stdout.read(1024 * 1024)
+                if not block:
+                    break
+                if written + len(block) > remaining_capacity:
+                    raise JobError("The decompressed snapshot would exceed the 28 GiB RAM staging limit.")
+                output.write(block)
+                written += len(block)
+                if written >= next_capacity_check:
+                    assert_capacity(work, check_container_memory=False)
+                    next_capacity_check = written + 64 * 1024**2
+                if written >= next_status:
+                    status(status_path, job_id, "snapshot-decompress",
+                           "Decompressing the downloaded snapshot within the RAM staging limit.",
+                           release_tag=release_tag, decompressed_bytes=written)
+                    next_status = written + 1024**3
+            output.flush()
+            os.fsync(output.fileno())
+        if process.wait(timeout=60) != 0:
+            raise JobError("The age-decrypted snapshot is not a valid zstd stream.")
+        assert_capacity(work, check_container_memory=False)
+    except BaseException:
+        if process.poll() is None:
+            process.kill()
+        try:
+            process.wait(timeout=15)
+        except subprocess.TimeoutExpired:
+            pass
+        archive_path.unlink(missing_ok=True)
+        raise
+    return written
+
+
 def start_snapshot(args, work: Path, status_path: Path):
     status(status_path, args.job_id, "snapshot-source", "Preparing the selected-lane archive stream.",
            release_tag=args.release_tag)
@@ -629,7 +683,7 @@ def upload_roundtrip(tag: str, encrypted: Path, work: Path, token: str, progress
                                          "a complete isolated restore are required before release publication."))
     validate_existing_assets(release, chunks)
     upload_missing_chunks(OWNER, REPOSITORY, release, chunks, encrypted, token, progress=progress)
-    _status, release = api_json("GET", f"/repos/{OWNER}/{REPOSITORY}/releases/tags/{tag}", token)
+    release = release_by_id(OWNER, REPOSITORY, release["id"], token)
     validate_existing_assets(release, chunks)
     encrypted.unlink()
     downloaded = work / "downloaded-snapshot.age"
@@ -797,32 +851,49 @@ def resume_job(args, identity: str):
             identity_path = work / "recovery.agekey"
             identity_path.write_text(identity.rstrip() + "\n", encoding="ascii")
             os.chmod(identity_path, 0o600)
-            status(status_path, args.job_id, "snapshot", "Guest egress is blocked; taking the selected-lane snapshot.",
-                   release_tag=args.release_tag)
-            encrypted = start_snapshot(args, work, status_path)
-            running = run(["docker", "inspect", "-f", "{{.State.Running}}", expected], timeout=15)
-            if running.returncode or running.stdout.decode().strip() != "true":
-                start = run(["docker", "start", expected], timeout=120)
-                if start.returncode:
-                    raise JobError("The reviewed Minikube profile could not be restarted after snapshot.")
-            status(status_path, args.job_id, "snapshot-created",
-                   "The encrypted snapshot is complete and the reviewed Minikube profile is running.",
-                   encrypted_bytes=encrypted.stat().st_size)
             def transfer_progress(value):
                 status(status_path, args.job_id, "release-transfer",
                        value.get("status", "Transferring encrypted assets."),
                        asset_index=value.get("asset_index"), asset_count=value.get("asset_count"),
                        asset_name=value.get("asset"))
-            release, downloaded, count = upload_roundtrip(args.release_tag, encrypted, work, token,
-                                                          progress=transfer_progress)
+
+            release = find_release_by_tag(OWNER, REPOSITORY, args.release_tag, token)
+            if release is not None and release.get("assets"):
+                chunks = chunks_from_release(release, args.release_tag)
+                status(status_path, args.job_id, "release-resume",
+                       "Reusing the complete private draft; verifying every encrypted part before restore.",
+                       release_tag=args.release_tag, asset_parts=len(chunks))
+                downloaded = work / "downloaded-snapshot.age"
+                download_assets(OWNER, REPOSITORY, release, chunks, downloaded, token,
+                                progress=transfer_progress)
+                count = len(chunks)
+            else:
+                status(status_path, args.job_id, "snapshot",
+                       "Guest egress is blocked; taking the selected-lane snapshot.",
+                       release_tag=args.release_tag)
+                encrypted = start_snapshot(args, work, status_path)
+                running = run(["docker", "inspect", "-f", "{{.State.Running}}", expected], timeout=15)
+                if running.returncode or running.stdout.decode().strip() != "true":
+                    start = run(["docker", "start", expected], timeout=120)
+                    if start.returncode:
+                        raise JobError("The reviewed Minikube profile could not be restarted after snapshot.")
+                status(status_path, args.job_id, "snapshot-created",
+                       "The encrypted snapshot is complete and the reviewed Minikube profile is running.",
+                       encrypted_bytes=encrypted.stat().st_size)
+                release, downloaded, count = upload_roundtrip(args.release_tag, encrypted, work, token,
+                                                              progress=transfer_progress)
+
+            compressed = work / "snapshot.zip.zst"
             plain = work / "snapshot.zip"
-            decrypted = run([str(age), "-d", "-i", str(identity_path), "-o", str(plain), str(downloaded)],
+            decrypted = run([str(age), "-d", "-i", str(identity_path), "-o", str(compressed), str(downloaded)],
                             timeout=8 * 60 * 60)
             if decrypted.returncode:
                 raise JobError("The downloaded GitHub assets failed age decryption.")
             downloaded.unlink(missing_ok=True)
-            os.chmod(plain, 0o600)
-            assert_capacity(work)
+            os.chmod(compressed, 0o600)
+            decompress_snapshot(compressed, plain, work, status_path, args.job_id, args.release_tag)
+            compressed.unlink(missing_ok=True)
+            assert_capacity(work, check_container_memory=False)
             lane = json.loads(Path(args.selector).read_text(encoding="utf-8")).get("lane_id")
             manifest, entries = verify_archive(plain, lane)
             status(status_path, args.job_id, "asset-and-integrity-verified",
