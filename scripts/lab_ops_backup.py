@@ -873,6 +873,7 @@ def _read_database_image_config(source_path: Path, image_id: str) -> dict:
 _DOCKER_CONFIG_FALSE_DEFAULTS = frozenset({
     "AttachStderr", "AttachStdin", "AttachStdout", "OpenStdin", "StdinOnce", "Tty",
 })
+_DOCKER_CONFIG_NON_IMAGE_FIELDS = frozenset({"Hostname", "Image", "Tty"})
 
 
 def _omit_docker_config_false_defaults(value):
@@ -899,6 +900,13 @@ def _image_config_mismatches(expected: dict, actual: dict, path: str = "Config")
     # Docker 29's containerd image store fills these legacy stream flags with false
     # even when the classic-store image config omitted them. True remains significant.
     if path == "Config":
+        # These Docker inspect fields describe container creation, not OCI image content.
+        # Image load can rewrite them; the restore separately uses archived container
+        # settings, verifies the remaining image config and rootfs layers, then tests startup.
+        expected = {key: value for key, value in expected.items()
+                    if key not in _DOCKER_CONFIG_NON_IMAGE_FIELDS}
+        actual = {key: value for key, value in actual.items()
+                  if key not in _DOCKER_CONFIG_NON_IMAGE_FIELDS}
         expected = _omit_docker_config_false_defaults(expected)
         actual = _omit_docker_config_false_defaults(actual)
     expected_value = _normalize_image_config(expected)

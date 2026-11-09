@@ -841,9 +841,39 @@ def test_database_image_verification_rejects_config_and_layer_mismatches():
 
     assert lab_ops_backup._database_image_mismatches(source, restored) == ["Config.User", "RootFS"]
     assert lab_ops_backup._image_config_mismatches({"Volumes": {}}, {"Volumes": None}) == []
-    assert lab_ops_backup._image_config_mismatches(
-        {"User": "postgres"}, {"User": "postgres", "Tty": True}
-    ) == ["Config.Tty"]
+
+
+def test_database_image_verification_ignores_docker_container_only_fields():
+    diff_id = "sha256:" + "a" * 64
+    source = {
+        "architecture": "amd64",
+        "os": "linux",
+        "config": {
+            "User": "root",
+            "Cmd": ["kubelet"],
+            "Hostname": "",
+            "Image": "",
+            "Tty": False,
+        },
+        "rootfs": {"type": "layers", "diff_ids": [diff_id]},
+    }
+    restored = {
+        "Architecture": "amd64",
+        "Os": "linux",
+        "Config": {
+            "User": "root",
+            "Cmd": ["kubelet"],
+            "Hostname": "generated-by-image-store",
+            "Image": "loaded-image-reference",
+            "Tty": True,
+        },
+        "RootFS": {"Type": "layers", "Layers": [diff_id]},
+    }
+
+    assert lab_ops_backup._database_image_mismatches(source, restored) == []
+
+    restored["Config"]["Cmd"] = ["different-command"]
+    assert lab_ops_backup._database_image_mismatches(source, restored) == ["Config.Cmd"]
 
 
 def test_minikube_image_restore_accepts_verified_destination_store_id(monkeypatch, tmp_path):
