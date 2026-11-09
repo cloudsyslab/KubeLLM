@@ -54,6 +54,19 @@ def has_reviewed_dynamic_loopback_ports(bindings: object) -> bool:
     return True
 
 
+def default_minikube_volume_strip_components(archive, member_name: str) -> int:
+    with archive.open(member_name) as member:
+        try:
+            with tarfile.open(fileobj=member, mode="r|*") as volume_tar:
+                first = volume_tar.next()
+                if first is None:
+                    raise BackupError("Default profile volume archive is empty.")
+                cleaned = [part for part in first.name.split("/") if part not in {"", "."}]
+                return 1 if first.name in {".", "./"} or cleaned[:1] == ["var"] else 0
+        except (tarfile.TarError, OSError) as exc:
+            raise BackupError("Default profile volume archive could not be read.") from exc
+
+
 REMOTE_IDLE_CHECK = r'''import pathlib, sqlite3, sys
 selector = str(pathlib.Path(sys.argv[1]).expanduser().resolve()).encode()
 db_path = pathlib.Path(sys.argv[2]) / "operator.sqlite3"
@@ -1097,16 +1110,7 @@ def verify_default_minikube_restore(args: argparse.Namespace, archive, manifest:
     if not has_reviewed_dynamic_loopback_ports(port_bindings):
         raise BackupError("Default profile port publications differ from the reviewed isolated mappings; original cluster must remain intact.")
 
-    with archive.open(volume_tar_name) as member:
-        try:
-            with tarfile.open(fileobj=member, mode="r|*") as volume_tar:
-                first = next(volume_tar, None)
-                if first is None:
-                    raise BackupError("Default profile volume archive is empty.")
-                cleaned = [part for part in first.name.split("/") if part not in {"", "."}]
-                strip_components = 1 if first.name in {".", "./"} or cleaned[:1] == ["var"] else 0
-        except (tarfile.TarError, OSError) as exc:
-            raise BackupError("Default profile volume archive could not be read.") from exc
+    strip_components = default_minikube_volume_strip_components(archive, volume_tar_name)
 
     tag = secrets.token_hex(4)
     clone_container = "minikube"

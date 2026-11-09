@@ -941,6 +941,22 @@ def test_default_minikube_restore_accepts_only_reviewed_dynamic_loopback_ports()
     assert not lab_ops_backup.has_reviewed_dynamic_loopback_ports({"8443/tcp": valid["8443/tcp"]})
 
 
+def test_default_minikube_volume_tar_reads_first_stream_entry(tmp_path):
+    tar_data = io.BytesIO()
+    with tarfile.open(fileobj=tar_data, mode="w") as volume:
+        entry = tarfile.TarInfo("var")
+        entry.type = tarfile.DIRTYPE
+        volume.addfile(entry)
+
+    backup_path = tmp_path / "backup.zip"
+    with zipfile.ZipFile(backup_path, "w") as backup:
+        backup.writestr("legacy/minikube/var-volume.tar", tar_data.getvalue())
+
+    with zipfile.ZipFile(backup_path) as backup:
+        assert lab_ops_backup.default_minikube_volume_strip_components(
+            backup, "legacy/minikube/var-volume.tar") == 1
+
+
 def test_cron_fallback_preserves_unrelated_entries_and_is_idempotent():
     existing = "MAILTO=minh@example.test\n@reboot /home/minh/other-job\n"
     entry = "@reboot sleep 30; /home/minh/KubeLLM/supervisor # KUBELLM_LAB_SELECTED_SERVICES"
