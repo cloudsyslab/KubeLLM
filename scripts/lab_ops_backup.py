@@ -12,7 +12,6 @@ import argparse
 import copy
 import datetime as dt
 import hashlib
-import io
 import json
 import os
 import re
@@ -373,7 +372,16 @@ add_stream("database/selected-lane.pgcustom", dump.stdout)
 if dump.wait(timeout=900) != 0:
     raise SystemExit("selected lane database export failed")
 thread.join(timeout=2)
-image_save = subprocess.Popen(["docker", "image", "save", container["Image"]], stdin=subprocess.DEVNULL,
+image_source = container["Image"]
+image_ref = str(manifest.get("database_image_ref") or "")
+if image_ref:
+    reference_inspection = subprocess.run(["docker", "image", "inspect", "--format", "{{.Id}}", image_ref],
+                                          stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
+                                          stderr=subprocess.DEVNULL, timeout=15, check=False)
+    if reference_inspection.returncode == 0 and reference_inspection.stdout.decode().strip() == container["Image"]:
+        # Saving by the exact reference preserves its tag in Docker's archive; saving by ID does not.
+        image_source = image_ref
+image_save = subprocess.Popen(["docker", "image", "save", image_source], stdin=subprocess.DEVNULL,
                               stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
 add_stream("database/selected-lane-image.tar", image_save.stdout)
 if image_save.wait(timeout=SNAPSHOT_TIMEOUT_SECONDS) != 0:
@@ -759,7 +767,7 @@ def _copy_zip_member(archive, member_name: str, destination: Path) -> None:
         os.fsync(target.fileno())
 
 
-def _tag_database_image_archive(source_path: Path, destination_path: Path, image_id: str, restore_ref: str) -> None:
+def _read_database_image_config(source_path: Path, image_id: str) -> dict:
     expected = image_id.removeprefix("sha256:")
     if not re.fullmatch(r"[0-9a-f]{64}", expected):
         raise BackupError("Snapshot has an invalid selected database image ID.")
@@ -783,25 +791,82 @@ def _tag_database_image_archive(source_path: Path, destination_path: Path, image
             if len(configs) != 1 or not configs[0].isfile() or configs[0].size > 16 * 1024 * 1024:
                 raise BackupError("Selected database image archive is missing its image config.")
             config_file = source.extractfile(configs[0])
-            if config_file is None or hashlib.sha256(config_file.read(16 * 1024 * 1024 + 1)).hexdigest() != expected:
+            if config_file is None:
+                raise BackupError("Selected database image config could not be read.")
+            config_bytes = config_file.read(16 * 1024 * 1024 + 1)
+            if hashlib.sha256(config_bytes).hexdigest() != expected:
                 raise BackupError("Selected database image config does not match the saved image ID.")
-            record["RepoTags"] = [restore_ref]
-            replacement = json.dumps(docker_manifest, separators=(",", ":")).encode("utf-8")
-            with tarfile.open(destination_path, "w", format=tarfile.PAX_FORMAT) as tagged:
-                for member in members:
-                    metadata = copy.copy(member)
-                    if member.name == "manifest.json":
-                        metadata.size = len(replacement)
-                        tagged.addfile(metadata, io.BytesIO(replacement))
-                    elif member.isfile():
-                        content = source.extractfile(member)
-                        if content is None:
-                            raise BackupError("Selected database image archive contains an unreadable file.")
-                        tagged.addfile(metadata, content)
-                    else:
-                        tagged.addfile(metadata)
+            image_config = json.loads(config_bytes)
+            if not isinstance(image_config, dict):
+                raise BackupError("Selected database image config is invalid.")
+            rootfs = image_config.get("rootfs") or {}
+            diff_ids = rootfs.get("diff_ids") if isinstance(rootfs, dict) else None
+            layers = record.get("Layers")
+            if (not isinstance(diff_ids, list) or not isinstance(layers, list) or len(diff_ids) != len(layers)
+                    or any(not isinstance(item, str) or not re.fullmatch(r"sha256:[0-9a-f]{64}", item)
+                           for item in diff_ids)):
+                raise BackupError("Selected database image archive has invalid root filesystem metadata.")
+            for layer_name in layers:
+                if (not isinstance(layer_name, str) or layer_name.startswith("/")
+                        or ".." in Path(layer_name).parts):
+                    raise BackupError("Selected database image archive has an invalid layer path.")
+                layer_members = [member for member in members if member.name == layer_name]
+                if len(layer_members) != 1 or not layer_members[0].isfile():
+                    raise BackupError("Selected database image archive is missing a filesystem layer.")
+            return image_config
     except (OSError, tarfile.TarError, ValueError, TypeError, KeyError, json.JSONDecodeError):
         raise BackupError("Selected database image archive could not be validated for restore.") from None
+
+
+def _normalize_image_config(value):
+    if isinstance(value, dict):
+        return {key: normalized for key, item in value.items()
+                if (normalized := _normalize_image_config(item)) is not None}
+    if isinstance(value, list):
+        normalized = [_normalize_image_config(item) for item in value]
+        return normalized or None
+    if value is None or value == "":
+        return None
+    return value
+
+
+def _database_image_mismatches(source_config: dict, restored: dict) -> list[str]:
+    # Classic and containerd image stores expose different IDs; compare the saved config and layers.
+    mismatches = []
+    for source_key, inspect_key in (("architecture", "Architecture"), ("os", "Os"), ("variant", "Variant"),
+                                    ("os.version", "OsVersion"), ("os.features", "OsFeatures")):
+        expected = source_config.get(source_key)
+        if (expected is not None and _normalize_image_config(expected)
+                != _normalize_image_config(restored.get(inspect_key))):
+            mismatches.append(inspect_key)
+    expected_config = source_config.get("config") or {}
+    if _normalize_image_config(expected_config) != _normalize_image_config(restored.get("Config") or {}):
+        mismatches.append("Config")
+    expected_rootfs = source_config.get("rootfs") or {}
+    restored_rootfs = restored.get("RootFS") or {}
+    if (not isinstance(expected_rootfs, dict) or not isinstance(restored_rootfs, dict)
+            or expected_rootfs.get("type") != restored_rootfs.get("Type")
+            or expected_rootfs.get("diff_ids") != restored_rootfs.get("Layers")):
+        mismatches.append("RootFS")
+    return mismatches
+
+
+def _loaded_image_reference(load_result: subprocess.CompletedProcess) -> str:
+    output = load_result.stdout.decode("utf-8", "replace") if load_result.stdout else ""
+    references = []
+    for line in output.splitlines():
+        id_match = re.fullmatch(r"Loaded image ID:\s*(sha256:[0-9a-f]{64})\s*", line.strip())
+        tag_match = re.fullmatch(r"Loaded image:\s*(\S{1,255})\s*", line.strip())
+        if id_match:
+            references.append(id_match.group(1))
+        elif tag_match:
+            references.append(tag_match.group(1))
+    if len(references) != 1:
+        report = "; ".join(line.strip()[:160] for line in output.splitlines()
+                            if line.startswith(("Loaded image:", "Loaded image ID:")))
+        raise BackupError("Docker did not identify exactly one loaded PostgreSQL image "
+                          f"(load report={report or 'none'}).")
+    return references[0]
 
 
 def verify_postgres_restore(args: argparse.Namespace, archive, manifest: dict) -> None:
@@ -818,58 +883,45 @@ def verify_postgres_restore(args: argparse.Namespace, archive, manifest: dict) -
         temp = Path(temp_name)
         os.chmod(temp, 0o700)
         image_tar = temp / "database-image.tar"
-        tagged_image_tar = temp / "database-image-tagged.tar"
-        restore_ref = "kubellm-selected-database-restore:" + image_id.removeprefix("sha256:")[:12]
         _copy_zip_member(archive, image_member, image_tar)
-        _tag_database_image_archive(image_tar, tagged_image_tar, image_id, restore_ref)
+        image_config = _read_database_image_config(image_tar, image_id)
         exists = local_docker(args, "image", "inspect", image_id)
-        loaded = exists.returncode != 0
         image_loaded = False
-        run_image = image_id
-        image_cleanup_ref = restore_ref
-        if loaded:
-            existing_ref = local_docker(args, "image", "inspect", "--format", "{{.Id}}", restore_ref)
-            if existing_ref.returncode == 0:
-                if existing_ref.stdout.decode("utf-8", "replace").strip() != image_id:
-                    raise BackupError("Temporary PostgreSQL restore image tag is already owned by another image.")
-                loaded = False
-                run_image = restore_ref
-            else:
-                result = local_docker(args, "image", "load", "--input", str(tagged_image_tar),
-                                      timeout=RELEASE_TIMEOUT_SECONDS)
-                if result.returncode:
-                    raise BackupError("Selected database image could not be restored into the isolated engine.")
-                image_loaded = True
-                restored = local_docker(args, "image", "inspect", "--format", "{{.Id}}", restore_ref)
-                if restored.returncode or restored.stdout.decode("utf-8", "replace").strip() != image_id:
-                    by_id = local_docker(args, "image", "inspect", "--format", "{{.Id}}", image_id)
-                    if not by_id.returncode and by_id.stdout.decode("utf-8", "replace").strip() == image_id:
-                        if not restored.returncode and local_docker(
-                                args, "image", "rm", restore_ref, timeout=120).returncode:
-                            raise BackupError("Mismatched temporary PostgreSQL image tag could not be removed.")
-                        run_image = image_id
-                        image_cleanup_ref = image_id
-                    else:
-                        inventory = local_docker(args, "image", "ls", "--no-trunc", "--format",
-                                                 "{{.ID}} {{.Repository}}:{{.Tag}}", timeout=30)
-                        images = [line[:180] for line in inventory.stdout.decode("utf-8", "replace").splitlines()
-                                  if re.fullmatch(r"sha256:[0-9a-f]{64}\s+\S{1,100}", line)]
-                        load_lines = [line.strip()[:160] for line in
-                                      result.stdout.decode("utf-8", "replace").splitlines()
-                                      if line.startswith(("Loaded image:", "Loaded image ID:"))]
-                        inspect_detail = next((line.strip()[:180] for line in
-                                               restored.stderr.decode("utf-8", "replace").splitlines()
-                                               if line.startswith("Error response from daemon:")), "none")
-                        removed = local_docker(args, "image", "rm", restore_ref, timeout=120)
-                        cleanup_detail = "ok" if removed.returncode == 0 else "failed"
-                        raise BackupError(
-                            "Loaded PostgreSQL image was not addressable safely "
-                            f"(tag inspect rc={restored.returncode}; image-ID inspect rc={by_id.returncode}; "
-                            f"load report={'; '.join(load_lines) if load_lines else 'none'}; "
-                            f"available images={'; '.join(images[:2]) if images else 'none'}; "
-                            f"detail={inspect_detail}; temporary-tag cleanup={cleanup_detail}).")
-                else:
-                    run_image = restore_ref
+        if exists.returncode == 0:
+            candidate = image_id
+        else:
+            result = local_docker(args, "image", "load", "--input", str(image_tar),
+                                  timeout=RELEASE_TIMEOUT_SECONDS)
+            if result.returncode:
+                raise BackupError("Selected database image could not be restored into the isolated engine.")
+            candidate = _loaded_image_reference(result)
+            image_loaded = True
+        inspect = local_docker(args, "image", "inspect", "--format", "{{json .}}", candidate)
+        if inspect.returncode:
+            inventory = local_docker(args, "image", "ls", "--no-trunc", "--format",
+                                     "{{.ID}} {{.Repository}}:{{.Tag}}", timeout=30)
+            images = [line[:180] for line in inventory.stdout.decode("utf-8", "replace").splitlines()
+                      if re.fullmatch(r"sha256:[0-9a-f]{64}\s+\S{1,100}", line)]
+            raise BackupError("Loaded PostgreSQL image could not be inspected "
+                              f"(reported={candidate}; inspect rc={inspect.returncode}; "
+                              f"available images={'; '.join(images[:2]) if images else 'none'}).")
+        try:
+            restored_image = json.loads(inspect.stdout)
+        except (ValueError, TypeError):
+            raise BackupError("Loaded PostgreSQL image inspection returned invalid data.") from None
+        if not isinstance(restored_image, dict):
+            raise BackupError("Loaded PostgreSQL image inspection returned an invalid object.")
+        restored_image_id = str(restored_image.get("Id", ""))
+        if not re.fullmatch(r"sha256:[0-9a-f]{64}", restored_image_id):
+            raise BackupError("Loaded PostgreSQL image has an invalid destination image ID.")
+        if candidate.startswith("sha256:") and restored_image_id != candidate:
+            raise BackupError("Docker inspected a different image than the load report identified.")
+        mismatches = _database_image_mismatches(image_config, restored_image)
+        if mismatches:
+            raise BackupError("Loaded PostgreSQL image does not match the verified archive "
+                              f"(mismatched fields={', '.join(mismatches)}).")
+        run_image = restored_image_id
+        image_cleanup_ref = restored_image_id
 
         container = "kubellm-pg-restore-" + secrets.token_hex(4)
         database = "kubellm_restore_" + secrets.token_hex(4)

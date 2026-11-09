@@ -664,6 +664,8 @@ def test_remote_snapshot_requires_exact_approved_default_profile_id():
 
     assert container_id in command[-1]
     assert "approved default profile identity, volume, or running state changed" in lab_ops_backup.REMOTE_SNAPSHOT
+    assert 'image_source = container["Image"]' in lab_ops_backup.REMOTE_SNAPSHOT
+    assert "image_source = image_ref" in lab_ops_backup.REMOTE_SNAPSHOT
 
 
 def test_backup_stream_program_and_systemd_units_keep_scope_explicit():
@@ -758,13 +760,13 @@ def test_local_restore_engine_requires_isolated_x86_linux(monkeypatch):
         raise AssertionError("arm64 Docker engine was accepted for an x86_64 recovery test")
 
 
-def test_database_image_restore_adds_a_verified_temporary_tag(tmp_path):
-    config = b'{"architecture":"amd64","config":{}}'
+def test_database_image_archive_config_digest_is_verified(tmp_path):
+    config = json.dumps({"architecture": "amd64", "os": "linux", "config": {},
+                         "rootfs": {"type": "layers", "diff_ids": ["sha256:" + "a" * 64]}}).encode()
     image_id = "sha256:" + hashlib.sha256(config).hexdigest()
     config_name = "blobs/sha256/" + image_id.removeprefix("sha256:")
     layer_name = "blobs/sha256/" + "a" * 64
     source_path = tmp_path / "image.tar"
-    tagged_path = tmp_path / "tagged-image.tar"
     with tarfile.open(source_path, "w") as archive:
         for name, content in [
             ("manifest.json", json.dumps([{"Config": config_name, "RepoTags": None,
@@ -776,28 +778,39 @@ def test_database_image_restore_adds_a_verified_temporary_tag(tmp_path):
             member.size = len(content)
             archive.addfile(member, io.BytesIO(content))
 
-    lab_ops_backup._tag_database_image_archive(
-        source_path, tagged_path, image_id, "kubellm-selected-database-restore:123456789abc")
+    image_config = lab_ops_backup._read_database_image_config(source_path, image_id)
 
-    with tarfile.open(tagged_path, "r:") as archive:
+    with tarfile.open(source_path, "r:") as archive:
         manifest = json.load(archive.extractfile("manifest.json"))
         assert manifest[0]["Config"] == config_name
-        assert manifest[0]["RepoTags"] == ["kubellm-selected-database-restore:123456789abc"]
+        assert manifest[0]["RepoTags"] is None
         assert archive.extractfile(config_name).read() == config
         assert archive.extractfile(layer_name).read() == b"layer bytes"
+    assert image_config["rootfs"]["diff_ids"] == ["sha256:" + "a" * 64]
 
     try:
-        lab_ops_backup._tag_database_image_archive(source_path, tagged_path, "sha256:" + "b" * 64,
-                                                   "kubellm-selected-database-restore:123456789abc")
+        lab_ops_backup._read_database_image_config(source_path, "sha256:" + "b" * 64)
     except lab_ops_backup.BackupError as exc:
         assert "does not match the saved image ID" in str(exc)
     else:
         raise AssertionError("an image archive with the wrong config digest was accepted")
 
 
-def test_postgres_restore_falls_back_to_verified_image_id(monkeypatch, tmp_path):
-    config = b'{"architecture":"amd64","config":{}}'
+def test_database_image_verification_rejects_config_and_layer_mismatches():
+    source = {"architecture": "amd64", "os": "linux", "config": {"User": "postgres"},
+              "rootfs": {"type": "layers", "diff_ids": ["sha256:" + "a" * 64]}}
+    restored = {"Architecture": "amd64", "Os": "linux", "Config": {"User": "root"},
+                "RootFS": {"Type": "layers", "Layers": ["sha256:" + "b" * 64]}}
+
+    assert lab_ops_backup._database_image_mismatches(source, restored) == ["Config", "RootFS"]
+
+
+def test_postgres_restore_uses_destination_store_id_and_verifies_image_contents(monkeypatch, tmp_path):
+    diff_id = "sha256:" + "a" * 64
+    config = json.dumps({"architecture": "amd64", "os": "linux", "config": {},
+                         "rootfs": {"type": "layers", "diff_ids": [diff_id]}}).encode()
     image_id = "sha256:" + hashlib.sha256(config).hexdigest()
+    loaded_id = "sha256:" + "c" * 64
     config_name = "blobs/sha256/" + image_id.removeprefix("sha256:")
     image_tar = io.BytesIO()
     with tarfile.open(fileobj=image_tar, mode="w") as archive:
@@ -817,29 +830,22 @@ def test_postgres_restore_falls_back_to_verified_image_id(monkeypatch, tmp_path)
         archive.writestr("database/selected-lane.pgcustom", b"database dump")
 
     calls = []
-    ref_inspections = 0
-    id_inspections = 0
+    inspected_image = {"Id": loaded_id, "Architecture": "amd64", "Os": "linux", "Config": {},
+                       "RootFS": {"Type": "layers", "Layers": [diff_id]}}
 
     def docker(_args, *argv, **_kwargs):
-        nonlocal ref_inspections, id_inspections
         calls.append(argv)
         if argv[:2] == ("image", "inspect") and argv[-1] == image_id:
-            id_inspections += 1
-            if id_inspections == 1:
-                return subprocess.CompletedProcess(argv, 1, b"", b"not found")
-            return subprocess.CompletedProcess(argv, 0, image_id.encode(), b"")
-        if argv[:2] == ("image", "inspect") and argv[-1].startswith("kubellm-selected-database-restore:"):
-            ref_inspections += 1
             return subprocess.CompletedProcess(argv, 1, b"", b"not found")
+        if argv[:2] == ("image", "inspect") and argv[-1] == loaded_id:
+            return subprocess.CompletedProcess(argv, 0, json.dumps(inspected_image).encode(), b"")
         if argv[:2] == ("image", "load"):
             with tarfile.open(argv[-1], "r:") as loaded:
                 record = json.load(loaded.extractfile("manifest.json"))[0]
-                assert record["RepoTags"] == [
-                    "kubellm-selected-database-restore:" + image_id.removeprefix("sha256:")[:12]
-                ]
-            return subprocess.CompletedProcess(argv, 0, b"Loaded image ID: " + image_id.encode(), b"")
+                assert record["RepoTags"] is None
+            return subprocess.CompletedProcess(argv, 0, b"Loaded image ID: " + loaded_id.encode(), b"")
         if argv[0] == "run":
-            assert argv[-1] == image_id
+            assert argv[-1] == loaded_id
             return subprocess.CompletedProcess(argv, 0, b"container-id", b"")
         if argv[0] == "exec" and "pg_isready" in argv:
             return subprocess.CompletedProcess(argv, 0, b"", b"")
@@ -872,10 +878,9 @@ def test_postgres_restore_falls_back_to_verified_image_id(monkeypatch, tmp_path)
             SimpleNamespace(restore_docker_host="unix:///isolated/docker.sock"), archive,
             {"database_image_id": image_id, "database_user": "postgres"})
 
-    assert ref_inspections == 2
     run_call = next(call for call in calls if call[0] == "run")
-    assert run_call[-1] == image_id
-    assert ("image", "rm", image_id) in calls
+    assert run_call[-1] == loaded_id
+    assert ("image", "rm", loaded_id) in calls
 
 
 def test_default_minikube_restore_accepts_only_reviewed_dynamic_loopback_ports():
