@@ -474,6 +474,19 @@ def test_lab_native_unexpected_failures_record_only_safe_type_and_phase():
     assert "sensitive-value" not in detail
 
 
+def test_lab_native_surfaces_safe_backup_restore_failure_details():
+    class BackupError(RuntimeError):
+        pass
+
+    BackupError.__module__ = "scripts.lab_ops_backup"
+    detail = lab_ops_native_remote.safe_failure_detail(
+        BackupError("Selected PostgreSQL backup did not restore in the isolated engine."),
+        "isolated-restore",
+    )
+
+    assert detail == "Selected PostgreSQL backup did not restore in the isolated engine."
+
+
 def test_lab_native_snapshot_pipeline_executes_the_age_binary(monkeypatch, tmp_path):
     work = tmp_path / "work"
     age_binary = work / "age" / "age"

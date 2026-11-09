@@ -94,6 +94,9 @@ def status(status_path: Path, job_id: str, phase: str, detail: str, **fields):
 def safe_failure_detail(exc: Exception, last_phase: object) -> str:
     if isinstance(exc, (JobError, GitHubReleaseError)):
         return str(exc)
+    if (type(exc).__name__ == "BackupError"
+            and type(exc).__module__.rsplit(".", 1)[-1] == "lab_ops_backup"):
+        return str(exc)[:500]
     phase = last_phase if isinstance(last_phase, str) and re.fullmatch(r"[a-z-]{1,40}", last_phase) else "unknown"
     return f"Unexpected {type(exc).__name__} during {phase}; sensitive RAM staging was removed."
 
