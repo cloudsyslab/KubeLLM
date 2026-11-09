@@ -44,77 +44,99 @@ current ownership/use will fail closed. Cross-lane candidates stay in the
 report; review their exact IDs, current owner, use, and expected recovery with
 that lane's owner before any removal.
 
-## Encrypted recovery copies
+## Lab-native encrypted recovery
 
-Run the backup client from your Mac. It streams selected-lane configuration,
-the owner-verified PostgreSQL custom dump and image, a consistent SQLite
-backup, and the selected operator state's history and logs over SSH. Other
-ignored files are excluded because they may belong to a different lane. With
-the explicit default-profile option below, it also cold-snapshots only the exact reviewed
-`minikube` container, its `/var` volume, the committed container image, network
-configuration, profile certificates, and the `minikube`-only kubeconfig
-context. The snapshot is encrypted to the configured OpenSSH Ed25519 key
-before it leaves the Mac and uploaded in sub-2 GiB assets to a private GitHub
-Release. To keep large assets manageable, the helper locally repacks the ZIP
-with fast DEFLATE compression in an owner-only temporary directory, encrypts
-the compact archive, and uploads only ciphertext. A second encrypted copy stays
-on the Mac. The durable local ciphertext is written and hash-checked before
-upload, so a failed upload can resume without taking another server snapshot.
+The Mac is a command and status terminal only. The lab creates, compresses,
+encrypts, uploads, downloads, and verifies the snapshot on the server. Snapshot
+and restore disk data stay in RAM-backed /dev/shm; snapshot bytes do not transit
+the Mac. Only small control scripts and, after the restore VM is sealed, the
+dedicated age recovery identity cross SSH.
 
-The helper refuses to start when an operator job or selected-lane runner is
-active. It downloads the release into a separate directory, reassembles the
-encrypted stream, decrypts it in a temporary owner-only directory, and checks
-archive CRCs and every manifest checksum. It restores PostgreSQL in the
-separate x86_64 Colima profile and restores the default Minikube node, volume,
-and network there; success requires the clone's Kubernetes API readiness probe.
-The isolated clone uses the restore VM's memory limit and does not publish
-ports back to the Mac; saved container metadata retains the original limits and
-loopback mappings for manual recovery. The drill verifies node data and API
-startup, not the original host port exposure or resource envelope.
-If any snapshot or restore check fails, it starts the original default Minikube
-container again. A passing drill leaves that original container stopped for
-the separately reviewed retirement step.
+A fine-grained GitHub token is needed only when resuming to upload the backup.
+Create one for only the private
+[minh-mhl-le/kubellm-lab-backups](https://github.com/minh-mhl-le/kubellm-lab-backups)
+repository with **Contents: read and write**. Do not reuse the Mac's broad
+GitHub login token. Wait until VM preparation finishes before installing it.
 
-```bash
-python3 scripts/lab_ops_backup.py \
-  --include-approved-default-minikube \
-  --expected-default-minikube-container-id <full-id-from-the-reviewed-audit>
-```
+Prepare the disposable x86_64 restore VM and verify the reviewed OpenClaw image
+by immutable digest in a fresh Docker engine. This first boot has network
+access only for Ubuntu package setup and the digest pull; no backup, age
+identity, or GitHub token is mounted into the guest. QEMU shuts the VM down
+before the helper asks for the recovery identity.
 
-If an interrupted upload left a retained encrypted snapshot and an empty draft
-release, resume it without taking another server snapshot:
+~~~bash
+python3 scripts/lab_ops_native.py prepare \
+  --release-tag lab-backup-<UTC-timestamp>
+python3 scripts/lab_ops_native.py status --job-id <job-id>
+~~~
 
-```bash
-python3 scripts/lab_ops_backup.py \
-  --reuse-encrypted-snapshot ~/.codex/lab-backups/snapshots/<snapshot>.zip.age \
-  --resume-existing-draft-tag lab-backup-<timestamp>
-```
+Preparation creates a dedicated recovery identity at
+~/.codex/lab-backups/recovery.agekey. Make a second offline copy before
+resuming; the private key cannot be recovered from GitHub.
 
-The helper verifies that the named draft exists and has no assets before it
-uploads the repacked, re-encrypted snapshot.
+Use the existing empty draft tag lab-backup-20261108T133252Z if it is still an
+empty draft; otherwise omit --release-tag to create a fresh tag. The worker
+rejects unexpected or mismatching assets and never deletes or replaces them.
+Wait for status awaiting-recovery-key. Then install the token from a prompt
+that does not echo input:
 
-The asset is encrypted to `~/.ssh/codex_kubellm_operator_ui`; retain that
-private identity offline with access to the recovery machine. GitHub and the
-Mac snapshot directory receive ciphertext only. Plaintext exists briefly in a
-mode-0700 local temporary directory during compression and verification and is
-removed when the command exits. Large snapshots are split into numbered assets
-below the 2 GiB per-asset limit, then their concatenated hash is checked after
-download.
+~~~bash
+python3 scripts/lab_ops_native.py configure-token
+~~~
 
-To manually recover an asset, download all numbered parts from the private
-[`kubellm-lab-backups` repository](https://github.com/minh-mhl-le/kubellm-lab-backups),
-concatenate the parts in numeric order, and decrypt with
-`age -d -i ~/.ssh/codex_kubellm_operator_ui`. Inspect `manifest.json` and verify
-all listed checksums before restoring into an isolated path. Restore
-PostgreSQL into a fresh database first; load the SQLite SQL snapshot into a
-fresh SQLite file; restore the volume archive into a new Docker volume; and
-recreate the node from the saved image and container metadata. Never overlay a
-live database or operator state before an isolated restore passes.
+The helper writes it to /home/minh/.config/kubellm/lab-ops/github.token on the
+lab with mode 0600. It refuses to overwrite an existing token, checks the
+private repository identity, and never writes the token to status or logs.
+Then resume:
 
-The release repository and local encrypted snapshot directory are independent
-recovery copies. Keep the matching private age identity offline and backed up.
-Delete older releases only after a newer asset has passed download, decrypt,
-checksum, and isolated restore verification.
+~~~bash
+python3 scripts/lab_ops_native.py resume --job-id <job-id>
+python3 scripts/lab_ops_native.py status --job-id <job-id>
+~~~
+
+The resume command sends the dedicated recovery identity only after QEMU has
+restarted with user networking restrict=on and an egress probe fails. QEMU
+exposes SSH only on a loopback port for control. The guest has no external
+network route while restore data is present. The worker then:
+
+1. Takes a consistent selected-lane snapshot and cold snapshot of only the
+   exact reviewed default Minikube container, /var volume, image, network,
+   profile files, and Minikube kubeconfig context.
+2. Compresses with zstd, encrypts with the dedicated age recipient, and
+   uploads numbered 128 MiB ciphertext assets directly from lab RAM.
+3. Downloads every release asset into lab RAM and checks GitHub's SHA-256
+   digest against the exact uploaded chunk, then decrypts and checks archive
+   CRCs and all manifest checksums.
+4. Restores PostgreSQL, SQLite, and the old Minikube profile into the
+   network-restricted QEMU VM, capped at 32 GiB memory, four vCPUs, and a
+   48 GiB sparse disk. RAM-backed staging is capped at 28 GiB with an 8 GiB
+   host-memory safety floor.
+5. Publishes the private release only after isolated restore passes. It then
+   rechecks and retires the previously reviewed Minikube profile and removes
+   only the approved, digest-verified, unused OpenClaw image. It never runs
+   Docker prune or touches other images, volumes, containers, or lanes.
+
+The age identity is created once at
+~/.codex/lab-backups/recovery.agekey with mode 0600. Keep a second offline
+copy: GitHub assets cannot be recovered without this key. The key remains on
+the Mac; its temporary lab copy is RAM-only and removed at job completion.
+GitHub stores ciphertext only. Status records under
+/home/minh/KubeLLM/.local/lab-ops/jobs/ contain phases, counts, and safe
+resource summaries, not credentials or backup contents.
+
+If the process reports a failure, inspect status before retrying. The worker
+restarts the reviewed Minikube container after snapshot or restore errors; a
+host power loss during the brief cold snapshot can still leave it stopped, so
+check its exact ID before starting anything. A partial draft stays private and
+is never overwritten. Use a fresh release tag for a new snapshot. If status
+reports cleanup-complete-preflight-failing, the exact authorized cleanup
+finished but Docker still needs more space; review new candidate IDs and get
+approval before removing anything else.
+
+To restore elsewhere, download and concatenate numbered encrypted assets in
+order, then decrypt with the matching age identity and verify manifest.json
+before restoring into isolated database, volume, and cluster resources. Never
+overlay a live database or operator state before isolated restore checks pass.
 
 ## Reboot and service ownership
 

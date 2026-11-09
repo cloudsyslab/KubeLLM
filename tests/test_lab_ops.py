@@ -10,6 +10,8 @@ from pathlib import Path
 
 from scripts import lab_ops
 from scripts import lab_ops_backup
+from scripts import lab_ops_github
+from scripts import lab_ops_native_remote
 from scripts import install_lab_user_services
 from scripts import supervise_lab_user_services
 
@@ -181,6 +183,186 @@ def test_release_part_upload_refuses_unexpected_existing_assets(monkeypatch, tmp
         assert "unexpected assets" in str(exc)
     else:
         raise AssertionError("unexpected draft assets must not be replaced")
+
+
+def test_lab_github_asset_manifest_and_download_verify_order_and_hashes(monkeypatch, tmp_path):
+    source = tmp_path / "ciphertext.age"
+    source.write_bytes(b"the encrypted snapshot")
+    tag = "lab-backup-20261108T000000Z"
+    chunks = lab_ops_github.chunk_manifest(source, tag, chunk_bytes=7)
+    assets = []
+    pieces = {}
+    with source.open("rb") as stream:
+        for chunk in chunks:
+            stream.seek(chunk["offset"])
+            piece = stream.read(chunk["size"])
+            pieces[chunk["name"]] = piece
+            assets.append({"id": len(assets) + 1, "name": chunk["name"], "size": len(piece),
+                           "digest": "sha256:" + hashlib.sha256(piece).hexdigest()})
+    release = {"assets": assets}
+
+    class FakeResponse:
+        status = 200
+
+        def __init__(self, payload):
+            self.payload = payload
+            self.url = "https://api.github.com/download"
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return False
+
+        def read(self, size=-1):
+            if size < 0:
+                value, self.payload = self.payload, b""
+                return value
+            value, self.payload = self.payload[:size], self.payload[size:]
+            return value
+
+        def geturl(self):
+            return self.url
+
+    def fake_urlopen(request, timeout):
+        assert timeout == 120
+        asset_id = int(request.full_url.rsplit("/", 1)[1])
+        return FakeResponse(pieces[chunks[asset_id - 1]["name"]])
+
+    monkeypatch.setattr(lab_ops_github, "urlopen", fake_urlopen)
+    restored = tmp_path / "restore" / "snapshot.age"
+    lab_ops_github.download_assets("owner", "private-backups", release, chunks, restored, "scoped-token")
+
+    assert restored.read_bytes() == source.read_bytes()
+
+
+def test_lab_github_token_must_be_owner_only_and_release_tag_is_scoped(tmp_path):
+    token = tmp_path / "token"
+    token.write_text("github_pat_test-token\n", encoding="ascii")
+    token.chmod(0o600)
+    assert lab_ops_github.read_scoped_token(token) == "github_pat_test-token"
+    token.chmod(0o640)
+    try:
+        lab_ops_github.read_scoped_token(token)
+    except lab_ops_github.GitHubReleaseError as exc:
+        assert "owner-only" in str(exc)
+    else:
+        raise AssertionError("group-readable GitHub token files must be rejected")
+    assert lab_ops_github.release_endpoint("owner", "repo", "lab-backup-20261108T000000Z").endswith(
+        "/releases/tags/lab-backup-20261108T000000Z")
+    try:
+        lab_ops_github.release_endpoint("owner", "repo", "latest")
+    except lab_ops_github.GitHubReleaseError:
+        pass
+    else:
+        raise AssertionError("release API paths must only accept lab-backup timestamp tags")
+
+
+def test_lab_github_upload_url_template_is_removed_before_querying_asset_name():
+    host, path = lab_ops_github._asset_upload_path(
+        "https://uploads.github.com/repos/owner/repo/releases/1/assets{?name,label}",
+        "backup-part-001.age",
+    )
+
+    assert host == "uploads.github.com"
+    assert path == "/repos/owner/repo/releases/1/assets?name=backup-part-001.age"
+
+
+def test_lab_github_upload_recovers_lost_success_only_for_matching_asset(monkeypatch, tmp_path):
+    source = tmp_path / "snapshot.age"
+    source.write_bytes(b"encrypted bytes")
+    tag = "lab-backup-20261108T000000Z"
+    chunks = lab_ops_github.chunk_manifest(source, tag)
+    chunk = chunks[0]
+    exact_asset = {"id": 1, "name": chunk["name"], "size": chunk["size"],
+                   "digest": "sha256:" + chunk["digest"]}
+    release = {"tag_name": tag, "upload_url": "https://uploads.github.com/repos/owner/repo/releases/1/assets{?name,label}",
+               "assets": []}
+    calls = []
+
+    def fail_after_server_acceptance(*_args, **_kwargs):
+        raise lab_ops_github.GitHubReleaseError("GitHub rejected encrypted asset upload (HTTP 422).")
+
+    def refreshed(*_args, **_kwargs):
+        calls.append("refresh")
+        return 200, {"assets": [exact_asset], "tag_name": tag}
+
+    monkeypatch.setattr(lab_ops_github, "_post_asset_stream", fail_after_server_acceptance)
+    monkeypatch.setattr(lab_ops_github, "api_json", refreshed)
+
+    result = lab_ops_github.upload_missing_chunks("owner", "repo", release, chunks, source, "github_pat_test")
+
+    assert result == [exact_asset]
+    assert calls == ["refresh"]
+
+
+def test_lab_native_qemu_is_egress_restricted_and_loopback_only(tmp_path):
+    vm = lab_ops_native_remote.RestoreVM(tmp_path)
+    argv = vm.argv(None, restricted=True)
+    network = next(value for value in argv if value.startswith("user,id="))
+
+    assert "restrict=on" in network
+    assert "hostfwd=tcp:127.0.0.1:" in network
+    assert "hostfwd=tcp:0.0.0.0:" not in network
+    assert argv[argv.index("-m") + 1] == str(32 * 1024)
+    assert "-accel" in argv and "tcg,thread=multi" in argv
+
+
+def test_lab_native_preflight_requires_kubectl(monkeypatch):
+    monkeypatch.setattr(lab_ops_native_remote.shutil, "which",
+                        lambda executable: None if executable == "kubectl" else "/usr/bin/" + executable)
+
+    try:
+        lab_ops_native_remote.check_tools()
+    except lab_ops_native_remote.JobError as exc:
+        assert "kubectl" in str(exc)
+    else:
+        raise AssertionError("snapshot and retirement commands require kubectl")
+
+
+def test_lab_native_docker_readiness_retries_slow_daemon(monkeypatch, tmp_path):
+    vm = lab_ops_native_remote.RestoreVM(tmp_path)
+    calls = []
+
+    def docker(_argv, **_kwargs):
+        calls.append("probe")
+        if len(calls) == 1:
+            raise lab_ops_native_remote.JobError("docker did not complete (TimeoutExpired).")
+        return SimpleNamespace(returncode=0, stdout=b"linux x86_64")
+
+    monkeypatch.setattr(vm, "docker", docker)
+    monkeypatch.setattr(vm, "pid", lambda: 1)
+    monkeypatch.setattr(lab_ops_native_remote.Path, "exists", lambda _path: True)
+    monkeypatch.setattr(lab_ops_native_remote, "assert_capacity", lambda _work: None)
+    monkeypatch.setattr(lab_ops_native_remote.time, "sleep", lambda _seconds: None)
+
+    vm.wait_for_docker()
+
+    assert calls == ["probe", "probe"]
+
+
+def test_lab_native_backup_archive_checks_manifest_members(tmp_path):
+    archive_path = tmp_path / "snapshot.zip"
+    selector = b'{"lane_id":"minh"}\n'
+    with zipfile.ZipFile(archive_path, "w", compression=zipfile.ZIP_STORED) as archive:
+        archive.writestr("lane/selector.json", selector)
+        archive.writestr("manifest.json", json.dumps({
+            "schema_version": 1,
+            "lane_id": "minh",
+            "legacy_minikube": {"container_id": "a" * 64},
+            "contents": [{"path": "lane/selector.json", "sha256": hashlib.sha256(selector).hexdigest()}],
+        }))
+
+    manifest, count = lab_ops_native_remote.verify_archive(archive_path, "minh")
+
+    assert manifest["lane_id"] == "minh"
+    assert count == 2
+    try:
+        lab_ops_native_remote.verify_archive(archive_path, "other-lane")
+    except lab_ops_native_remote.JobError as exc:
+        assert "selected lane" in str(exc) or "selected lane and approved" in str(exc)
+    else:
+        raise AssertionError("a different lane ID must not pass archive verification")
 
 
 def test_remote_snapshot_requires_exact_approved_default_profile_id():
