@@ -316,6 +316,55 @@ def test_lab_native_unexpected_failures_record_only_safe_type_and_phase():
     assert "sensitive-value" not in detail
 
 
+def test_lab_native_snapshot_pipeline_executes_the_age_binary(monkeypatch, tmp_path):
+    work = tmp_path / "work"
+    age_binary = work / "age" / "age"
+    age_binary.parent.mkdir(parents=True)
+    age_binary.write_bytes(b"test executable")
+    age_binary.chmod(0o700)
+    (work / "recipient.txt").write_text("age1test\n", encoding="ascii")
+    commands = []
+
+    class FakePipe:
+        def close(self):
+            pass
+
+    class FakeProcess:
+        def __init__(self, argv):
+            self.returncode = 0
+            self.stdout = FakePipe()
+            if argv[0] == str(age_binary):
+                output = Path(argv[argv.index("-o") + 1])
+                output.write_bytes(b"ciphertext")
+
+        def poll(self):
+            return self.returncode
+
+        def wait(self, timeout):
+            return self.returncode
+
+    def fake_popen(argv, **_kwargs):
+        commands.append(argv)
+        return FakeProcess(argv)
+
+    monkeypatch.setattr(lab_ops_native_remote.subprocess, "Popen", fake_popen)
+    monkeypatch.setattr(lab_ops_native_remote, "assert_capacity", lambda _work: None)
+    args = SimpleNamespace(
+        job_id="job-20261109T000000Z-1234abcd",
+        release_tag="lab-backup-20261109T000000Z",
+        selector="/tmp/selector.json",
+        state_dir="/tmp/state",
+        repo_dir="/tmp/repo",
+        minikube_id="sha256:" + "a" * 64,
+    )
+
+    encrypted = lab_ops_native_remote.start_snapshot(args, work, tmp_path / "status.json")
+
+    assert commands[2][0] == str(age_binary)
+    assert encrypted == work / "snapshot.zip.zst.age"
+    assert encrypted.read_bytes() == b"ciphertext"
+
+
 def test_lab_native_preflight_requires_kubectl(monkeypatch):
     monkeypatch.setattr(lab_ops_native_remote.shutil, "which",
                         lambda executable: None if executable == "kubectl" else "/usr/bin/" + executable)

@@ -549,7 +549,7 @@ def start_snapshot(args, work: Path, status_path: Path):
     snapshot_source = source[start:end].encode()
     code = "import base64;exec(base64.b64decode(" + repr(base64.b64encode(snapshot_source).decode()) + "))"
     archive = work / "snapshot.zip.zst.age"
-    age = work / "age"
+    age = work / "age" / "age"
     status(status_path, args.job_id, "snapshot-python-start", "Starting the selected-lane snapshot stream.",
            release_tag=args.release_tag)
     snapshot = subprocess.Popen([sys.executable, "-c", code, args.selector, args.state_dir, args.repo_dir,
