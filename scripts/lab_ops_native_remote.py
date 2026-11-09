@@ -206,6 +206,16 @@ def check_openclaw():
         raise JobError("A container now references the reviewed OpenClaw image; cleanup is blocked.")
 
 
+def verify_pulled_digest(value: str) -> str:
+    try:
+        repo_digests = json.loads(value)
+    except (TypeError, ValueError):
+        raise JobError("The fresh restore VM returned invalid OpenClaw digest metadata.") from None
+    if not isinstance(repo_digests, list) or IMAGE_DIGEST not in repo_digests:
+        raise JobError("The fresh restore VM did not retain the exact pinned OpenClaw registry digest.")
+    return IMAGE_DIGEST
+
+
 def download(url: str, path: Path, expected: str | None, work: Path):
     if path.exists() or path.is_symlink():
         raise JobError("A pinned bootstrap artifact already exists in this RAM-backed job.")
@@ -413,11 +423,10 @@ def prepare_vm(args, work: Path, status_path: Path):
         pulled = vm.docker(["pull", IMAGE_DIGEST], timeout=30 * 60, check=False)
         if pulled.returncode:
             raise JobError("The approved OpenClaw image digest could not be pulled in a fresh restore VM.")
-        inspected = vm.docker(["image", "inspect", "--format", "{{.Id}} {{json .RepoDigests}}", IMAGE_DIGEST])
-        image_record = inspected.stdout.decode(errors="replace").strip()
-        if IMAGE_DIGEST not in image_record or not image_record.startswith(IMAGE_ID + " "):
-            raise JobError("The approved OpenClaw digest did not verify in the fresh restore VM.")
-        (work / "openclaw-image-id.txt").write_text(image_record.split()[0] + "\n", encoding="ascii")
+        # Docker image stores differ on .Id semantics; the immutable pull and retained digest ref are the proof.
+        inspected = vm.docker(["image", "inspect", "--format", "{{json .RepoDigests}}", IMAGE_DIGEST])
+        verified_digest = verify_pulled_digest(inspected.stdout.decode(errors="replace"))
+        (work / "openclaw-verified-digest.txt").write_text(verified_digest + "\n", encoding="ascii")
         # The clean pull proved registry reachability; release those temporary guest-disk blocks
         # so the later restore fits the RAM-backed staging cap.
         vm.docker(["image", "rm", IMAGE_ID], timeout=120)
@@ -432,7 +441,7 @@ def prepare_vm(args, work: Path, status_path: Path):
         write_json(work / "job.json", config)
         status(status_path, args.job_id, "awaiting-recovery-key",
                "VM bootstrap and immutable image pull passed; guest is shut down. Resume locks egress before key transfer.",
-               release_tag=args.release_tag, openclaw_vm_image_id=image_record.split()[0])
+               release_tag=args.release_tag, openclaw_verified_digest=verified_digest)
     except Exception:
         vm.shutdown()
         raise
@@ -606,7 +615,7 @@ def upload_roundtrip(tag: str, encrypted: Path, work: Path, token: str, progress
     return release, downloaded, len(chunks)
 
 
-def retire_exact_resources(args, work: Path, manifest: dict, archive_path: Path, qemu_image_id: str,
+def retire_exact_resources(args, work: Path, manifest: dict, archive_path: Path, qemu_image_digest: str,
                             status_path: Path, release_url: str):
     expected = args.minikube_id.removeprefix("sha256:")
     current = run(["docker", "inspect", expected], timeout=20)
@@ -664,7 +673,7 @@ def retire_exact_resources(args, work: Path, manifest: dict, archive_path: Path,
     if live_context.returncode or json.loads(live_context.stdout) != saved_context:
         raise JobError("The Minikube kubeconfig context changed after backup; retirement was blocked.")
     check_openclaw()
-    if qemu_image_id != IMAGE_ID:
+    if qemu_image_digest != IMAGE_DIGEST:
         raise JobError("The isolated VM did not verify the exact OpenClaw digest; image cleanup was blocked.")
 
     status(status_path, args.job_id, "retiring-reviewed-profile",
@@ -735,8 +744,8 @@ def resume_job(args, identity: str):
             # The private identity is still only in this host process. Lock guest egress first.
             vm.start(work / ("kubellm-bootstrap-" + args.job_id + ".iso"), restricted=True)
             verify_guest_egress_blocked(vm)
-            verified_vm_image = (work / "openclaw-image-id.txt").read_text(encoding="ascii").strip()
-            if verified_vm_image != IMAGE_ID:
+            verified_vm_digest = (work / "openclaw-verified-digest.txt").read_text(encoding="ascii").strip()
+            if verified_vm_digest != IMAGE_DIGEST:
                 raise JobError("The prepared VM's pull-verified image identity changed.")
             if vm.docker(["image", "inspect", IMAGE_ID], timeout=30, check=False).returncode == 0:
                 vm.docker(["image", "rm", IMAGE_ID], timeout=120)
@@ -810,11 +819,10 @@ def resume_job(args, identity: str):
             published = publish_draft(OWNER, REPOSITORY, release, token)
             if published.get("draft") is not False:
                 raise JobError("The verified private backup release could not be published.")
-            qemu_image_id = (work / "openclaw-image-id.txt").read_text(encoding="ascii").strip()
             status(status_path, args.job_id, "backup-published",
                    "The private release is published after a successful isolated restore.",
                    release_tag=args.release_tag, release_url=published.get("html_url", ""), restore_checks=checks)
-            retire_exact_resources(args, work, manifest, plain, qemu_image_id, status_path,
+            retire_exact_resources(args, work, manifest, plain, verified_vm_digest, status_path,
                                    str(published.get("html_url", "")))
             retired = True
             shutil.rmtree(job_root(args.job_id), ignore_errors=True)

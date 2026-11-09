@@ -356,6 +356,18 @@ def test_lab_native_bootstrap_grants_docker_access_after_install(monkeypatch, tm
     assert "runcmd:\n  - [usermod, -aG, docker, ubuntu]\n" in user_data
 
 
+def test_lab_native_pinned_pull_requires_the_exact_registry_digest():
+    assert lab_ops_native_remote.verify_pulled_digest(
+        json.dumps([lab_ops_native_remote.IMAGE_DIGEST])) == lab_ops_native_remote.IMAGE_DIGEST
+
+    try:
+        lab_ops_native_remote.verify_pulled_digest(json.dumps(["ghcr.io/openclaw/openclaw@sha256:" + "0" * 64]))
+    except lab_ops_native_remote.JobError as exc:
+        assert "exact pinned OpenClaw registry digest" in str(exc)
+    else:
+        raise AssertionError("the digest-pinned pull must retain the exact reviewed registry digest")
+
+
 def test_lab_native_backup_archive_checks_manifest_members(tmp_path):
     archive_path = tmp_path / "snapshot.zip"
     selector = b'{"lane_id":"minh"}\n'
