@@ -760,6 +760,22 @@ def test_local_restore_engine_requires_isolated_x86_linux(monkeypatch):
         raise AssertionError("arm64 Docker engine was accepted for an x86_64 recovery test")
 
 
+def test_local_docker_timeout_reports_safe_operation_context(monkeypatch):
+    args = SimpleNamespace(restore_docker_host="ssh://ubuntu@127.0.0.1:12345")
+
+    def timed_out(command, *, timeout):
+        cause = subprocess.TimeoutExpired(command, timeout)
+        raise lab_ops_backup.BackupError("Could not complete docker: TimeoutExpired") from cause
+
+    monkeypatch.setattr(lab_ops_backup, "run", timed_out)
+    try:
+        lab_ops_backup.local_docker(args, "exec", "postgres", "pg_isready", "-q", timeout=15)
+    except lab_ops_backup.BackupError as exc:
+        assert str(exc) == "Isolated Docker exec/pg_isready timed out after 15 seconds."
+    else:
+        raise AssertionError("timed-out Docker operations did not produce safe context")
+
+
 def test_database_image_archive_config_digest_is_verified(tmp_path):
     config = json.dumps({"architecture": "amd64", "os": "linux", "config": {},
                          "rootfs": {"type": "layers", "diff_ids": ["sha256:" + "a" * 64]}}).encode()

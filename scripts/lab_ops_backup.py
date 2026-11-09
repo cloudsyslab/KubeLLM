@@ -37,6 +37,7 @@ MAX_ASSET_BYTES = 2 * 1024**3 - 1
 ASSET_PART_BYTES = 800 * 1024**2
 SNAPSHOT_TIMEOUT_SECONDS = 6 * 60 * 60
 RELEASE_TIMEOUT_SECONDS = 4 * 60 * 60
+POSTGRES_CONTAINER_START_TIMEOUT_SECONDS = 10 * 60
 DEFAULT_LOCAL_COPY_DIR = Path.home() / ".codex" / "lab-backups" / "snapshots"
 DEFAULT_MINIKUBE_LOOPBACK_PORTS = frozenset({"22/tcp", "2376/tcp", "32443/tcp", "5000/tcp", "8443/tcp"})
 
@@ -750,7 +751,18 @@ def upload_release_parts(repository: str, tag: str, parts: list[Path], temp_dir:
 
 
 def local_docker(args: argparse.Namespace, *argv: str, timeout: int = 60) -> subprocess.CompletedProcess:
-    return run(["docker", "--host", args.restore_docker_host, *argv], timeout=timeout)
+    try:
+        return run(["docker", "--host", args.restore_docker_host, *argv], timeout=timeout)
+    except BackupError as exc:
+        if isinstance(exc.__cause__, subprocess.TimeoutExpired):
+            if argv and argv[0] == "exec" and len(argv) > 2:
+                operation = f"exec/{Path(argv[2]).name}"
+            elif len(argv) > 1 and argv[0] == "image":
+                operation = f"image/{argv[1]}"
+            else:
+                operation = argv[0] if argv else "operation"
+            raise BackupError(f"Isolated Docker {operation} timed out after {timeout} seconds.") from None
+        raise
 
 
 def require_isolated_restore_engine(args: argparse.Namespace) -> None:
@@ -965,7 +977,8 @@ def verify_postgres_restore(args: argparse.Namespace, archive, manifest: dict) -
         database = "kubellm_restore_" + secrets.token_hex(4)
         started = local_docker(args, "run", "--detach", "--name", container,
                                "--env", "POSTGRES_HOST_AUTH_METHOD=trust", "--env", "POSTGRES_USER=" + user,
-                               "--env", "POSTGRES_DB=postgres", run_image, timeout=120)
+                               "--env", "POSTGRES_DB=postgres", run_image,
+                               timeout=POSTGRES_CONTAINER_START_TIMEOUT_SECONDS)
         if started.returncode:
             if image_loaded and local_docker(args, "image", "rm", image_cleanup_ref, timeout=120).returncode:
                 raise BackupError("Isolated PostgreSQL restore could not start and its temporary image remains.")
