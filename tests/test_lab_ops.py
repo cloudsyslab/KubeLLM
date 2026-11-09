@@ -308,6 +308,14 @@ def test_lab_native_qemu_is_egress_restricted_and_loopback_only(tmp_path):
     assert "-accel" in argv and "tcg,thread=multi" in argv
 
 
+def test_lab_native_unexpected_failures_record_only_safe_type_and_phase():
+    detail = lab_ops_native_remote.safe_failure_detail(
+        ValueError("sensitive-value"), "egress-check")
+
+    assert detail == "Unexpected ValueError during egress-check; sensitive RAM staging was removed."
+    assert "sensitive-value" not in detail
+
+
 def test_lab_native_preflight_requires_kubectl(monkeypatch):
     monkeypatch.setattr(lab_ops_native_remote.shutil, "which",
                         lambda executable: None if executable == "kubectl" else "/usr/bin/" + executable)

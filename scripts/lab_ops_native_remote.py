@@ -91,6 +91,13 @@ def status(status_path: Path, job_id: str, phase: str, detail: str, **fields):
                              "phase": phase, "detail": detail[:500], **fields})
 
 
+def safe_failure_detail(exc: Exception, last_phase: object) -> str:
+    if isinstance(exc, (JobError, GitHubReleaseError)):
+        return str(exc)
+    phase = last_phase if isinstance(last_phase, str) and re.fullmatch(r"[a-z-]{1,40}", last_phase) else "unknown"
+    return f"Unexpected {type(exc).__name__} during {phase}; sensitive RAM staging was removed."
+
+
 def sha256_file(path: Path):
     digest = hashlib.sha256()
     with path.open("rb") as source:
@@ -742,8 +749,21 @@ def resume_job(args, identity: str):
         expected = args.minikube_id.removeprefix("sha256:")
         try:
             # The private identity is still only in this host process. Lock guest egress first.
+            status(
+                status_path, args.job_id, "restricted-restore-boot",
+                "Booting the isolated restore VM with egress restricted.", release_tag=args.release_tag)
             vm.start(work / ("kubellm-bootstrap-" + args.job_id + ".iso"), restricted=True)
+            status(
+                status_path, args.job_id, "restricted-restore-ready",
+                "The isolated restore VM and Docker are ready.", release_tag=args.release_tag)
+            status(
+                status_path, args.job_id, "egress-check",
+                "Verifying guest egress is blocked before staging the recovery identity.",
+                release_tag=args.release_tag)
             verify_guest_egress_blocked(vm)
+            status(
+                status_path, args.job_id, "egress-blocked",
+                "Guest egress is blocked before recovery data is staged.", release_tag=args.release_tag)
             verified_vm_digest = (work / "openclaw-verified-digest.txt").read_text(encoding="ascii").strip()
             if verified_vm_digest != IMAGE_DIGEST:
                 raise JobError("The prepared VM's pull-verified image identity changed.")
@@ -752,6 +772,9 @@ def resume_job(args, identity: str):
                 if vm.docker(["image", "inspect", IMAGE_DIGEST], timeout=30, check=False).returncode == 0:
                     raise JobError("The temporary verified image could not be cleared before restore data.")
             age = install_age(work)
+            status(
+                status_path, args.job_id, "backup-auth-check",
+                "Checking the private backup repository credentials.", release_tag=args.release_tag)
             token = read_scoped_token(TOKEN_PATH, expected_uid=os.getuid())
             ensure_private_repository(OWNER, REPOSITORY, token)
             (work / "recipient.txt").write_text(args.age_recipient + "\n", encoding="ascii")
@@ -837,11 +860,11 @@ def resume_job(args, identity: str):
                         run(["docker", "start", expected], timeout=120)
                 except (ValueError, IndexError, TypeError):
                     pass
-            detail = str(exc) if isinstance(exc, (JobError, GitHubReleaseError)) else "The lab recovery job failed; sensitive RAM staging was removed."
             prior = json.loads(status_path.read_text(encoding="utf-8")) if status_path.exists() else {}
+            detail = safe_failure_detail(exc, prior.get("phase"))
             phase = "retirement-incomplete" if str(prior.get("phase", "")).startswith("retiring") else "failed"
             status(status_path, args.job_id, phase, detail, release_tag=args.release_tag,
-                   release_url=prior.get("release_url", ""))
+                   release_url=prior.get("release_url", ""), failure_phase=prior.get("phase", "unknown"))
             shutil.rmtree(job_root(args.job_id), ignore_errors=True)
             raise JobError(detail) from None
 
