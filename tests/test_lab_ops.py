@@ -802,7 +802,8 @@ def test_database_image_verification_rejects_config_and_layer_mismatches():
     restored = {"Architecture": "amd64", "Os": "linux", "Config": {"User": "root"},
                 "RootFS": {"Type": "layers", "Layers": ["sha256:" + "b" * 64]}}
 
-    assert lab_ops_backup._database_image_mismatches(source, restored) == ["Config", "RootFS"]
+    assert lab_ops_backup._database_image_mismatches(source, restored) == ["Config.User", "RootFS"]
+    assert lab_ops_backup._image_config_mismatches({"Volumes": {}}, {"Volumes": None}) == []
 
 
 def test_postgres_restore_uses_destination_store_id_and_verifies_image_contents(monkeypatch, tmp_path):

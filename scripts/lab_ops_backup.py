@@ -797,7 +797,10 @@ def _read_database_image_config(source_path: Path, image_id: str) -> dict:
             if hashlib.sha256(config_bytes).hexdigest() != expected:
                 raise BackupError("Selected database image config does not match the saved image ID.")
             image_config = json.loads(config_bytes)
-            if not isinstance(image_config, dict):
+            if (not isinstance(image_config, dict)
+                    or not isinstance(image_config.get("architecture"), str)
+                    or not isinstance(image_config.get("os"), str)
+                    or not isinstance(image_config.get("config"), dict)):
                 raise BackupError("Selected database image config is invalid.")
             rootfs = image_config.get("rootfs") or {}
             diff_ids = rootfs.get("diff_ids") if isinstance(rootfs, dict) else None
@@ -820,14 +823,33 @@ def _read_database_image_config(source_path: Path, image_id: str) -> dict:
 
 def _normalize_image_config(value):
     if isinstance(value, dict):
-        return {key: normalized for key, item in value.items()
-                if (normalized := _normalize_image_config(item)) is not None}
+        normalized = {key: item for key, value in value.items()
+                      if (item := _normalize_image_config(value)) is not None}
+        return normalized or None
     if isinstance(value, list):
         normalized = [_normalize_image_config(item) for item in value]
         return normalized or None
     if value is None or value == "":
         return None
     return value
+
+
+def _image_config_mismatches(expected: dict, actual: dict, path: str = "Config") -> list[str]:
+    expected_value = _normalize_image_config(expected)
+    actual_value = _normalize_image_config(actual)
+    if expected_value == actual_value:
+        return []
+    if isinstance(expected_value, dict) and isinstance(actual_value, dict):
+        mismatches = []
+        for key in sorted(expected_value.keys() | actual_value.keys()):
+            if key not in expected_value or key not in actual_value:
+                mismatches.append(path + "." + key)
+            else:
+                mismatches.extend(_image_config_mismatches(expected_value[key], actual_value[key], path + "." + key))
+            if len(mismatches) >= 16:
+                break
+        return mismatches
+    return [path]
 
 
 def _database_image_mismatches(source_config: dict, restored: dict) -> list[str]:
@@ -840,8 +862,7 @@ def _database_image_mismatches(source_config: dict, restored: dict) -> list[str]
                 != _normalize_image_config(restored.get(inspect_key))):
             mismatches.append(inspect_key)
     expected_config = source_config.get("config") or {}
-    if _normalize_image_config(expected_config) != _normalize_image_config(restored.get("Config") or {}):
-        mismatches.append("Config")
+    mismatches.extend(_image_config_mismatches(expected_config, restored.get("Config") or {}))
     expected_rootfs = source_config.get("rootfs") or {}
     restored_rootfs = restored.get("RootFS") or {}
     if (not isinstance(expected_rootfs, dict) or not isinstance(restored_rootfs, dict)
@@ -919,7 +940,7 @@ def verify_postgres_restore(args: argparse.Namespace, archive, manifest: dict) -
         mismatches = _database_image_mismatches(image_config, restored_image)
         if mismatches:
             raise BackupError("Loaded PostgreSQL image does not match the verified archive "
-                              f"(mismatched fields={', '.join(mismatches)}).")
+                              f"(mismatched fields={', '.join(mismatches[:8])}).")
         run_image = restored_image_id
         image_cleanup_ref = restored_image_id
 
