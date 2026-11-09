@@ -846,6 +846,65 @@ def test_database_image_verification_rejects_config_and_layer_mismatches():
     ) == ["Config.Tty"]
 
 
+def test_minikube_image_restore_accepts_verified_destination_store_id(monkeypatch, tmp_path):
+    diff_id = "sha256:" + "a" * 64
+    config = json.dumps({"architecture": "amd64", "os": "linux", "config": {},
+                         "rootfs": {"type": "layers", "diff_ids": [diff_id]}}).encode()
+    source_id = "sha256:" + hashlib.sha256(config).hexdigest()
+    loaded_id = "sha256:" + "c" * 64
+    config_name = "blobs/sha256/" + source_id.removeprefix("sha256:")
+    layer_name = "blobs/sha256/" + "a" * 64
+    image_tar = tmp_path / "minikube-image.tar"
+    with tarfile.open(image_tar, "w") as archive:
+        for name, content in [
+            ("manifest.json", json.dumps([{"Config": config_name,
+                                           "RepoTags": ["kubellm-legacy-snapshot:fixture"],
+                                           "Layers": [layer_name]}]).encode()),
+            (config_name, config),
+            (layer_name, b"layer bytes"),
+        ]:
+            member = tarfile.TarInfo(name)
+            member.size = len(content)
+            archive.addfile(member, io.BytesIO(content))
+
+    inspected_image = {
+        "Id": loaded_id,
+        "Architecture": "amd64",
+        "Os": "linux",
+        "Config": {key: False for key in lab_ops_backup._DOCKER_CONFIG_FALSE_DEFAULTS},
+        "RootFS": {"Type": "layers", "Layers": [diff_id]},
+    }
+    calls = []
+
+    def docker(_args, *argv, **_kwargs):
+        calls.append(argv)
+        if argv[:2] == ("image", "inspect") and argv[-1] == source_id:
+            return subprocess.CompletedProcess(argv, 1, b"", b"not found")
+        if argv[:2] == ("image", "load"):
+            return subprocess.CompletedProcess(argv, 0, b"Loaded image ID: " + loaded_id.encode(), b"")
+        if argv[:2] == ("image", "inspect") and argv[-1] == loaded_id:
+            return subprocess.CompletedProcess(argv, 0, json.dumps(inspected_image).encode(), b"")
+        raise AssertionError(argv)
+
+    monkeypatch.setattr(lab_ops_backup, "local_docker", docker)
+    actual_id, loaded_by_job, cleanup_ref = lab_ops_backup._load_verified_minikube_image(
+        SimpleNamespace(restore_docker_host="ssh://ubuntu@127.0.0.1:12345"), image_tar, source_id)
+
+    assert actual_id == loaded_id
+    assert loaded_by_job is True
+    assert cleanup_ref == loaded_id
+    assert any(call[:2] == ("image", "load") for call in calls)
+    assert any(call[:2] == ("image", "inspect") and call[-1] == loaded_id for call in calls)
+
+
+def test_docker_image_load_error_detail_is_categorized_without_leaking_paths():
+    detail = lab_ops_backup.docker_image_load_failure_reason(
+        b"failed to register layer /private/temporary/path: no space left on device")
+
+    assert detail == "insufficient guest disk space"
+    assert "/private/temporary/path" not in detail
+
+
 def test_postgres_restore_uses_destination_store_id_and_verifies_image_contents(monkeypatch, tmp_path):
     diff_id = "sha256:" + "a" * 64
     config = json.dumps({"architecture": "amd64", "os": "linux", "config": {},

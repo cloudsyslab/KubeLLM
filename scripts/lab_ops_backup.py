@@ -780,6 +780,28 @@ def local_docker(args: argparse.Namespace, *argv: str, timeout: int = 60) -> sub
         raise
 
 
+def docker_image_load_failure_reason(stderr: bytes | str | None) -> str:
+    if isinstance(stderr, bytes):
+        message = stderr.decode("utf-8", "replace").lower()
+    else:
+        message = str(stderr or "").lower()
+    if "no space left on device" in message or "not enough space" in message:
+        return "insufficient guest disk space"
+    if "cannot connect" in message or "error during connect" in message or "connection refused" in message:
+        return "guest Docker engine connection failed"
+    if "unexpected eof" in message or "unexpected end of file" in message:
+        return "image archive was truncated"
+    if "invalid tar" in message or "tar header" in message:
+        return "image archive format was rejected"
+    if "failed to register layer" in message or "failed to extract" in message or "applylayer" in message:
+        return "image layer import failed"
+    if "manifest" in message or "media type" in message or "unsupported format" in message:
+        return "image manifest format was rejected"
+    if message:
+        return "Docker rejected the image archive"
+    return "Docker returned no error detail"
+
+
 def require_isolated_restore_engine(args: argparse.Namespace) -> None:
     result = local_docker(args, "info", "--format", "{{.OSType}} {{.Architecture}}", timeout=20)
     if result.returncode or result.stdout.decode("utf-8", "replace").strip() not in {"linux x86_64", "linux amd64"}:
@@ -929,9 +951,43 @@ def _loaded_image_reference(load_result: subprocess.CompletedProcess) -> str:
     if len(references) != 1:
         report = "; ".join(line.strip()[:160] for line in output.splitlines()
                             if line.startswith(("Loaded image:", "Loaded image ID:")))
-        raise BackupError("Docker did not identify exactly one loaded PostgreSQL image "
+        raise BackupError("Docker did not identify exactly one loaded image "
                           f"(load report={report or 'none'}).")
     return references[0]
+
+
+def _load_verified_minikube_image(args: argparse.Namespace, image_tar: Path,
+                                  source_image_id: str) -> tuple[str, bool, str]:
+    image_config = _read_database_image_config(image_tar, source_image_id)
+    inspected = local_docker(args, "image", "inspect", "--format", "{{json .}}", source_image_id)
+    loaded_by_job = False
+    image_reference = source_image_id
+    if inspected.returncode:
+        loaded = local_docker(args, "image", "load", "--input", str(image_tar),
+                              timeout=RELEASE_TIMEOUT_SECONDS)
+        if loaded.returncode:
+            reason = docker_image_load_failure_reason(loaded.stderr)
+            raise BackupError("Old default Minikube image could not be restored into the isolated engine "
+                              f"(Docker image load exit={loaded.returncode}; {reason}).")
+        image_reference = _loaded_image_reference(loaded)
+        loaded_by_job = True
+        inspected = local_docker(args, "image", "inspect", "--format", "{{json .}}", image_reference)
+    if inspected.returncode:
+        raise BackupError("Old default Minikube image could not be inspected in the isolated engine.")
+    try:
+        restored_image = json.loads(inspected.stdout)
+    except (ValueError, TypeError):
+        raise BackupError("Old default Minikube image inspection returned invalid data.") from None
+    if not isinstance(restored_image, dict):
+        raise BackupError("Old default Minikube image inspection returned an invalid object.")
+    restored_image_id = str(restored_image.get("Id", ""))
+    if not re.fullmatch(r"sha256:[0-9a-f]{64}", restored_image_id):
+        raise BackupError("Old default Minikube image has an invalid destination image ID.")
+    mismatches = _database_image_mismatches(image_config, restored_image)
+    if mismatches:
+        raise BackupError("Restored old Minikube image does not match its verified archive "
+                          f"(mismatched fields={', '.join(mismatches[:8])}).")
+    return restored_image_id, loaded_by_job, image_reference
 
 
 def verify_postgres_restore(args: argparse.Namespace, archive, manifest: dict) -> None:
@@ -1117,6 +1173,7 @@ def verify_default_minikube_restore(args: argparse.Namespace, archive, manifest:
     clone_volume = "kubellm-restore-minikube-" + tag
     clone_network = "kubellm-restore-minikube-" + tag
     image_loaded = False
+    image_cleanup_ref = snapshot_image_id
     volume_created = False
     network_created = False
     container_created = False
@@ -1125,18 +1182,8 @@ def verify_default_minikube_restore(args: argparse.Namespace, archive, manifest:
         os.chmod(temp, 0o700)
         image_tar = temp / "container-image.tar"
         _copy_zip_member(archive, image_tar_name, image_tar)
-        before = local_docker(args, "image", "inspect", snapshot_image_id)
-        if before.returncode:
-            loaded = local_docker(args, "image", "load", "--input", str(image_tar), timeout=RELEASE_TIMEOUT_SECONDS)
-            if loaded.returncode:
-                raise BackupError("Old default Minikube image could not be restored into the isolated engine.")
-            image_loaded = True
-            if local_docker(args, "image", "inspect", snapshot_image_id).returncode:
-                removed = local_docker(args, "image", "rm", snapshot_image_id, timeout=120)
-                if removed.returncode:
-                    raise BackupError("Minikube image loading failed and its partial restore image could not be removed.")
-                image_loaded = False
-                raise BackupError("Old default Minikube image could not be restored into the isolated engine.")
+        snapshot_image_id, image_loaded, image_cleanup_ref = _load_verified_minikube_image(
+            args, image_tar, snapshot_image_id)
         try:
             created = local_docker(args, "volume", "create", clone_volume)
             if created.returncode:
@@ -1267,7 +1314,7 @@ def verify_default_minikube_restore(args: argparse.Namespace, archive, manifest:
                 if local_docker(args, "network", "rm", clone_network, timeout=120).returncode:
                     cleanup_failures.append("network")
             if image_loaded:
-                if local_docker(args, "image", "rm", snapshot_image_id, timeout=120).returncode:
+                if local_docker(args, "image", "rm", image_cleanup_ref, timeout=120).returncode:
                     cleanup_failures.append("image")
             if cleanup_failures:
                 raise BackupError("Isolated default Minikube restore artifacts could not be fully removed: "
