@@ -540,6 +540,8 @@ def verify_archive(path: Path, lane_id: str):
 
 
 def start_snapshot(args, work: Path, status_path: Path):
+    status(status_path, args.job_id, "snapshot-source", "Preparing the selected-lane archive stream.",
+           release_tag=args.release_tag)
     source = Path(__file__).with_name("lab_ops_backup.py").read_text(encoding="utf-8")
     marker = "REMOTE_SNAPSHOT = r'''"
     start = source.index(marker) + len(marker)
@@ -548,17 +550,25 @@ def start_snapshot(args, work: Path, status_path: Path):
     code = "import base64;exec(base64.b64decode(" + repr(base64.b64encode(snapshot_source).decode()) + "))"
     archive = work / "snapshot.zip.zst.age"
     age = work / "age"
+    status(status_path, args.job_id, "snapshot-python-start", "Starting the selected-lane snapshot stream.",
+           release_tag=args.release_tag)
     snapshot = subprocess.Popen([sys.executable, "-c", code, args.selector, args.state_dir, args.repo_dir,
                                  args.minikube_id.removeprefix("sha256:")],
                                 stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
                                 start_new_session=True)
+    status(status_path, args.job_id, "snapshot-zstd-start", "Starting RAM-stream compression.",
+           release_tag=args.release_tag)
     compressed = subprocess.Popen(["zstd", "-T2", "-3", "-c"], stdin=snapshot.stdout, stdout=subprocess.PIPE,
                                   stderr=subprocess.DEVNULL, start_new_session=True)
     snapshot.stdout.close()
+    status(status_path, args.job_id, "snapshot-age-start", "Starting age encryption for the snapshot stream.",
+           release_tag=args.release_tag)
     encrypted = subprocess.Popen([str(age), "-R", str(work / "recipient.txt"), "-o", str(archive)],
                                  stdin=compressed.stdout, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
                                  start_new_session=True)
     compressed.stdout.close()
+    status(status_path, args.job_id, "snapshot", "Streaming and compressing the cold profile snapshot into age ciphertext.",
+           release_tag=args.release_tag)
     try:
         deadline = time.monotonic() + 6 * 60 * 60
         last_report = 0.0
