@@ -795,6 +795,89 @@ def test_database_image_restore_adds_a_verified_temporary_tag(tmp_path):
         raise AssertionError("an image archive with the wrong config digest was accepted")
 
 
+def test_postgres_restore_falls_back_to_verified_image_id(monkeypatch, tmp_path):
+    config = b'{"architecture":"amd64","config":{}}'
+    image_id = "sha256:" + hashlib.sha256(config).hexdigest()
+    config_name = "blobs/sha256/" + image_id.removeprefix("sha256:")
+    image_tar = io.BytesIO()
+    with tarfile.open(fileobj=image_tar, mode="w") as archive:
+        for name, content in [
+            ("manifest.json", json.dumps([{"Config": config_name, "RepoTags": None,
+                                           "Layers": ["blobs/sha256/" + "a" * 64]}]).encode()),
+            (config_name, config),
+            ("blobs/sha256/" + "a" * 64, b"layer bytes"),
+        ]:
+            member = tarfile.TarInfo(name)
+            member.size = len(content)
+            archive.addfile(member, io.BytesIO(content))
+    image_tar.seek(0)
+    snapshot = tmp_path / "snapshot.zip"
+    with zipfile.ZipFile(snapshot, "w") as archive:
+        archive.writestr("database/selected-lane-image.tar", image_tar.read())
+        archive.writestr("database/selected-lane.pgcustom", b"database dump")
+
+    calls = []
+    ref_inspections = 0
+    id_inspections = 0
+
+    def docker(_args, *argv, **_kwargs):
+        nonlocal ref_inspections, id_inspections
+        calls.append(argv)
+        if argv[:2] == ("image", "inspect") and argv[-1] == image_id:
+            id_inspections += 1
+            if id_inspections == 1:
+                return subprocess.CompletedProcess(argv, 1, b"", b"not found")
+            return subprocess.CompletedProcess(argv, 0, image_id.encode(), b"")
+        if argv[:2] == ("image", "inspect") and argv[-1].startswith("kubellm-selected-database-restore:"):
+            ref_inspections += 1
+            return subprocess.CompletedProcess(argv, 1, b"", b"not found")
+        if argv[:2] == ("image", "load"):
+            with tarfile.open(argv[-1], "r:") as loaded:
+                record = json.load(loaded.extractfile("manifest.json"))[0]
+                assert record["RepoTags"] == [
+                    "kubellm-selected-database-restore:" + image_id.removeprefix("sha256:")[:12]
+                ]
+            return subprocess.CompletedProcess(argv, 0, b"Loaded image ID: " + image_id.encode(), b"")
+        if argv[0] == "run":
+            assert argv[-1] == image_id
+            return subprocess.CompletedProcess(argv, 0, b"container-id", b"")
+        if argv[0] == "exec" and "pg_isready" in argv:
+            return subprocess.CompletedProcess(argv, 0, b"", b"")
+        if argv[0] == "exec" and "createdb" in argv:
+            return subprocess.CompletedProcess(argv, 0, b"", b"")
+        if argv[0] == "exec" and "psql" in argv:
+            return subprocess.CompletedProcess(argv, 0, b"1\n", b"")
+        if argv[:2] == ("image", "rm") or argv[:2] == ("rm", "--force"):
+            return subprocess.CompletedProcess(argv, 0, b"", b"")
+        raise AssertionError(argv)
+
+    class FakeStdin:
+        def write(self, _data):
+            pass
+
+        def close(self):
+            pass
+
+    class FakeRestoreProcess:
+        def __init__(self, *_args, **_kwargs):
+            self.stdin = FakeStdin()
+
+        def wait(self, timeout=None):
+            return 0
+
+    monkeypatch.setattr(lab_ops_backup, "local_docker", docker)
+    monkeypatch.setattr(subprocess, "Popen", FakeRestoreProcess)
+    with zipfile.ZipFile(snapshot) as archive:
+        lab_ops_backup.verify_postgres_restore(
+            SimpleNamespace(restore_docker_host="unix:///isolated/docker.sock"), archive,
+            {"database_image_id": image_id, "database_user": "postgres"})
+
+    assert ref_inspections == 2
+    run_call = next(call for call in calls if call[0] == "run")
+    assert run_call[-1] == image_id
+    assert ("image", "rm", image_id) in calls
+
+
 def test_default_minikube_restore_accepts_only_reviewed_dynamic_loopback_ports():
     valid = {port: [{"HostIp": "127.0.0.1", "HostPort": ""}]
              for port in lab_ops_backup.DEFAULT_MINIKUBE_LOOPBACK_PORTS}

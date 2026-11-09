@@ -826,6 +826,7 @@ def verify_postgres_restore(args: argparse.Namespace, archive, manifest: dict) -
         loaded = exists.returncode != 0
         image_loaded = False
         run_image = image_id
+        image_cleanup_ref = restore_ref
         if loaded:
             existing_ref = local_docker(args, "image", "inspect", "--format", "{{.Id}}", restore_ref)
             if existing_ref.returncode == 0:
@@ -841,11 +842,34 @@ def verify_postgres_restore(args: argparse.Namespace, archive, manifest: dict) -
                 image_loaded = True
                 restored = local_docker(args, "image", "inspect", "--format", "{{.Id}}", restore_ref)
                 if restored.returncode or restored.stdout.decode("utf-8", "replace").strip() != image_id:
-                    local_docker(args, "image", "rm", restore_ref, timeout=120)
-                    if restored.returncode:
-                        raise BackupError("Loaded PostgreSQL image could not be inspected through its temporary tag.")
-                    raise BackupError("Loaded PostgreSQL image does not match the saved image ID.")
-                run_image = restore_ref
+                    by_id = local_docker(args, "image", "inspect", "--format", "{{.Id}}", image_id)
+                    if not by_id.returncode and by_id.stdout.decode("utf-8", "replace").strip() == image_id:
+                        if not restored.returncode and local_docker(
+                                args, "image", "rm", restore_ref, timeout=120).returncode:
+                            raise BackupError("Mismatched temporary PostgreSQL image tag could not be removed.")
+                        run_image = image_id
+                        image_cleanup_ref = image_id
+                    else:
+                        inventory = local_docker(args, "image", "ls", "--no-trunc", "--format",
+                                                 "{{.ID}} {{.Repository}}:{{.Tag}}", timeout=30)
+                        images = [line[:180] for line in inventory.stdout.decode("utf-8", "replace").splitlines()
+                                  if re.fullmatch(r"sha256:[0-9a-f]{64}\s+\S{1,100}", line)]
+                        load_lines = [line.strip()[:160] for line in
+                                      result.stdout.decode("utf-8", "replace").splitlines()
+                                      if line.startswith(("Loaded image:", "Loaded image ID:"))]
+                        inspect_detail = next((line.strip()[:180] for line in
+                                               restored.stderr.decode("utf-8", "replace").splitlines()
+                                               if line.startswith("Error response from daemon:")), "none")
+                        removed = local_docker(args, "image", "rm", restore_ref, timeout=120)
+                        cleanup_detail = "ok" if removed.returncode == 0 else "failed"
+                        raise BackupError(
+                            "Loaded PostgreSQL image was not addressable safely "
+                            f"(tag inspect rc={restored.returncode}; image-ID inspect rc={by_id.returncode}; "
+                            f"load report={'; '.join(load_lines) if load_lines else 'none'}; "
+                            f"available images={'; '.join(images[:2]) if images else 'none'}; "
+                            f"detail={inspect_detail}; temporary-tag cleanup={cleanup_detail}).")
+                else:
+                    run_image = restore_ref
 
         container = "kubellm-pg-restore-" + secrets.token_hex(4)
         database = "kubellm_restore_" + secrets.token_hex(4)
@@ -853,7 +877,7 @@ def verify_postgres_restore(args: argparse.Namespace, archive, manifest: dict) -
                                "--env", "POSTGRES_HOST_AUTH_METHOD=trust", "--env", "POSTGRES_USER=" + user,
                                "--env", "POSTGRES_DB=postgres", run_image, timeout=120)
         if started.returncode:
-            if image_loaded and local_docker(args, "image", "rm", restore_ref, timeout=120).returncode:
+            if image_loaded and local_docker(args, "image", "rm", image_cleanup_ref, timeout=120).returncode:
                 raise BackupError("Isolated PostgreSQL restore could not start and its temporary image remains.")
             raise BackupError("Isolated PostgreSQL restore container could not start.")
         restore_ok = False
@@ -899,7 +923,7 @@ def verify_postgres_restore(args: argparse.Namespace, archive, manifest: dict) -
             cleanup_ok = removed.returncode == 0
             image_cleanup_ok = True
             if image_loaded:
-                image_cleanup_ok = local_docker(args, "image", "rm", restore_ref, timeout=120).returncode == 0
+                image_cleanup_ok = local_docker(args, "image", "rm", image_cleanup_ref, timeout=120).returncode == 0
         if not restore_ok:
             raise BackupError("Selected PostgreSQL backup failed isolated restore verification.")
         if not cleanup_ok:
