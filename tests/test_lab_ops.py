@@ -475,6 +475,24 @@ def test_lab_native_unexpected_failures_record_only_safe_type_and_phase():
     assert "sensitive-value" not in detail
 
 
+def test_lab_native_unexpected_failures_record_safe_source_location():
+    namespace = {}
+    code = compile("def fail():\n    raise TypeError('sensitive-value')\n",
+                   "/private/server/path/lab_ops_backup.py", "exec")
+    exec(code, namespace)
+
+    try:
+        namespace["fail"]()
+    except TypeError as exc:
+        detail = lab_ops_native_remote.safe_failure_detail(exc, "isolated-restore")
+    else:
+        raise AssertionError("the synthetic restore failure did not occur")
+
+    assert "lab_ops_backup.py:fail:2" in detail
+    assert "/private/server/path" not in detail
+    assert "sensitive-value" not in detail
+
+
 def test_lab_native_surfaces_safe_backup_restore_failure_details():
     class BackupError(RuntimeError):
         pass

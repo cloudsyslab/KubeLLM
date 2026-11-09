@@ -21,6 +21,7 @@ import subprocess
 import sys
 import tempfile
 import time
+import traceback
 import zipfile
 
 try:
@@ -98,7 +99,15 @@ def safe_failure_detail(exc: Exception, last_phase: object) -> str:
             and type(exc).__module__.rsplit(".", 1)[-1] == "lab_ops_backup"):
         return str(exc)[:500]
     phase = last_phase if isinstance(last_phase, str) and re.fullmatch(r"[a-z-]{1,40}", last_phase) else "unknown"
-    return f"Unexpected {type(exc).__name__} during {phase}; sensitive RAM staging was removed."
+    location = None
+    for frame in reversed(traceback.extract_tb(exc.__traceback__)):
+        module = Path(frame.filename).name
+        if module in {"lab_ops_native_remote.py", "lab_ops_backup.py"}:
+            location = f"{module}:{frame.name}:{frame.lineno}"
+            break
+    location_detail = f" at {location}" if location else ""
+    return (f"Unexpected {type(exc).__name__} during {phase}{location_detail}; "
+            "sensitive RAM staging was removed.")
 
 
 def sha256_file(path: Path):
