@@ -12,8 +12,10 @@ import argparse
 import copy
 import datetime as dt
 import hashlib
+import io
 import json
 import os
+import re
 import secrets
 import shlex
 import shutil
@@ -22,6 +24,7 @@ import subprocess
 import sys
 import tempfile
 from pathlib import Path
+import tarfile
 import zipfile
 
 
@@ -756,6 +759,51 @@ def _copy_zip_member(archive, member_name: str, destination: Path) -> None:
         os.fsync(target.fileno())
 
 
+def _tag_database_image_archive(source_path: Path, destination_path: Path, image_id: str, restore_ref: str) -> None:
+    expected = image_id.removeprefix("sha256:")
+    if not re.fullmatch(r"[0-9a-f]{64}", expected):
+        raise BackupError("Snapshot has an invalid selected database image ID.")
+    try:
+        with tarfile.open(source_path, "r:") as source:
+            members = source.getmembers()
+            manifests = [member for member in members if member.name == "manifest.json"]
+            if len(manifests) != 1 or not manifests[0].isfile() or manifests[0].size > 1024 * 1024:
+                raise BackupError("Selected database image archive has an invalid Docker manifest.")
+            manifest_file = source.extractfile(manifests[0])
+            if manifest_file is None:
+                raise BackupError("Selected database image archive has an unreadable Docker manifest.")
+            docker_manifest = json.loads(manifest_file.read(1024 * 1024 + 1))
+            if not isinstance(docker_manifest, list) or len(docker_manifest) != 1:
+                raise BackupError("Selected database image archive must contain exactly one image.")
+            record = docker_manifest[0]
+            config_name = record.get("Config") if isinstance(record, dict) else None
+            if not isinstance(config_name, str) or config_name.startswith("/") or ".." in Path(config_name).parts:
+                raise BackupError("Selected database image archive has an invalid config path.")
+            configs = [member for member in members if member.name == config_name]
+            if len(configs) != 1 or not configs[0].isfile() or configs[0].size > 16 * 1024 * 1024:
+                raise BackupError("Selected database image archive is missing its image config.")
+            config_file = source.extractfile(configs[0])
+            if config_file is None or hashlib.sha256(config_file.read(16 * 1024 * 1024 + 1)).hexdigest() != expected:
+                raise BackupError("Selected database image config does not match the saved image ID.")
+            record["RepoTags"] = [restore_ref]
+            replacement = json.dumps(docker_manifest, separators=(",", ":")).encode("utf-8")
+            with tarfile.open(destination_path, "w", format=tarfile.PAX_FORMAT) as tagged:
+                for member in members:
+                    metadata = copy.copy(member)
+                    if member.name == "manifest.json":
+                        metadata.size = len(replacement)
+                        tagged.addfile(metadata, io.BytesIO(replacement))
+                    elif member.isfile():
+                        content = source.extractfile(member)
+                        if content is None:
+                            raise BackupError("Selected database image archive contains an unreadable file.")
+                        tagged.addfile(metadata, content)
+                    else:
+                        tagged.addfile(metadata)
+    except (OSError, tarfile.TarError, ValueError, TypeError, KeyError, json.JSONDecodeError):
+        raise BackupError("Selected database image archive could not be validated for restore.") from None
+
+
 def verify_postgres_restore(args: argparse.Namespace, archive, manifest: dict) -> None:
     import time
 
@@ -770,28 +818,42 @@ def verify_postgres_restore(args: argparse.Namespace, archive, manifest: dict) -
         temp = Path(temp_name)
         os.chmod(temp, 0o700)
         image_tar = temp / "database-image.tar"
+        tagged_image_tar = temp / "database-image-tagged.tar"
+        restore_ref = "kubellm-selected-database-restore:" + image_id.removeprefix("sha256:")[:12]
         _copy_zip_member(archive, image_member, image_tar)
+        _tag_database_image_archive(image_tar, tagged_image_tar, image_id, restore_ref)
         exists = local_docker(args, "image", "inspect", image_id)
         loaded = exists.returncode != 0
         image_loaded = False
+        run_image = image_id
         if loaded:
-            result = local_docker(args, "image", "load", "--input", str(image_tar), timeout=RELEASE_TIMEOUT_SECONDS)
-            if result.returncode:
-                raise BackupError("Selected database image could not be restored into the isolated engine.")
-            image_loaded = True
-            if local_docker(args, "image", "inspect", image_id).returncode:
-                removed = local_docker(args, "image", "rm", image_id, timeout=120)
-                if removed.returncode:
-                    raise BackupError("Selected database image failed verification and could not be removed.")
-                raise BackupError("Selected database image could not be restored into the isolated engine.")
+            existing_ref = local_docker(args, "image", "inspect", "--format", "{{.Id}}", restore_ref)
+            if existing_ref.returncode == 0:
+                if existing_ref.stdout.decode("utf-8", "replace").strip() != image_id:
+                    raise BackupError("Temporary PostgreSQL restore image tag is already owned by another image.")
+                loaded = False
+                run_image = restore_ref
+            else:
+                result = local_docker(args, "image", "load", "--input", str(tagged_image_tar),
+                                      timeout=RELEASE_TIMEOUT_SECONDS)
+                if result.returncode:
+                    raise BackupError("Selected database image could not be restored into the isolated engine.")
+                image_loaded = True
+                restored = local_docker(args, "image", "inspect", "--format", "{{.Id}}", restore_ref)
+                if restored.returncode or restored.stdout.decode("utf-8", "replace").strip() != image_id:
+                    local_docker(args, "image", "rm", restore_ref, timeout=120)
+                    if restored.returncode:
+                        raise BackupError("Loaded PostgreSQL image could not be inspected through its temporary tag.")
+                    raise BackupError("Loaded PostgreSQL image does not match the saved image ID.")
+                run_image = restore_ref
 
         container = "kubellm-pg-restore-" + secrets.token_hex(4)
         database = "kubellm_restore_" + secrets.token_hex(4)
         started = local_docker(args, "run", "--detach", "--name", container,
                                "--env", "POSTGRES_HOST_AUTH_METHOD=trust", "--env", "POSTGRES_USER=" + user,
-                               "--env", "POSTGRES_DB=postgres", image_id, timeout=120)
+                               "--env", "POSTGRES_DB=postgres", run_image, timeout=120)
         if started.returncode:
-            if image_loaded and local_docker(args, "image", "rm", image_id, timeout=120).returncode:
+            if image_loaded and local_docker(args, "image", "rm", restore_ref, timeout=120).returncode:
                 raise BackupError("Isolated PostgreSQL restore could not start and its temporary image remains.")
             raise BackupError("Isolated PostgreSQL restore container could not start.")
         restore_ok = False
@@ -837,7 +899,7 @@ def verify_postgres_restore(args: argparse.Namespace, archive, manifest: dict) -
             cleanup_ok = removed.returncode == 0
             image_cleanup_ok = True
             if image_loaded:
-                image_cleanup_ok = local_docker(args, "image", "rm", image_id, timeout=120).returncode == 0
+                image_cleanup_ok = local_docker(args, "image", "rm", restore_ref, timeout=120).returncode == 0
         if not restore_ok:
             raise BackupError("Selected PostgreSQL backup failed isolated restore verification.")
         if not cleanup_ok:

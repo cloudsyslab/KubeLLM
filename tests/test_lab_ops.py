@@ -5,6 +5,7 @@ import io
 import json
 import stat
 import subprocess
+import tarfile
 import zipfile
 from types import SimpleNamespace
 from pathlib import Path
@@ -755,6 +756,43 @@ def test_local_restore_engine_requires_isolated_x86_linux(monkeypatch):
         assert "x86_64" in str(exc)
     else:
         raise AssertionError("arm64 Docker engine was accepted for an x86_64 recovery test")
+
+
+def test_database_image_restore_adds_a_verified_temporary_tag(tmp_path):
+    config = b'{"architecture":"amd64","config":{}}'
+    image_id = "sha256:" + hashlib.sha256(config).hexdigest()
+    config_name = "blobs/sha256/" + image_id.removeprefix("sha256:")
+    layer_name = "blobs/sha256/" + "a" * 64
+    source_path = tmp_path / "image.tar"
+    tagged_path = tmp_path / "tagged-image.tar"
+    with tarfile.open(source_path, "w") as archive:
+        for name, content in [
+            ("manifest.json", json.dumps([{"Config": config_name, "RepoTags": None,
+                                           "Layers": [layer_name]}]).encode()),
+            (config_name, config),
+            (layer_name, b"layer bytes"),
+        ]:
+            member = tarfile.TarInfo(name)
+            member.size = len(content)
+            archive.addfile(member, io.BytesIO(content))
+
+    lab_ops_backup._tag_database_image_archive(
+        source_path, tagged_path, image_id, "kubellm-selected-database-restore:123456789abc")
+
+    with tarfile.open(tagged_path, "r:") as archive:
+        manifest = json.load(archive.extractfile("manifest.json"))
+        assert manifest[0]["Config"] == config_name
+        assert manifest[0]["RepoTags"] == ["kubellm-selected-database-restore:123456789abc"]
+        assert archive.extractfile(config_name).read() == config
+        assert archive.extractfile(layer_name).read() == b"layer bytes"
+
+    try:
+        lab_ops_backup._tag_database_image_archive(source_path, tagged_path, "sha256:" + "b" * 64,
+                                                   "kubellm-selected-database-restore:123456789abc")
+    except lab_ops_backup.BackupError as exc:
+        assert "does not match the saved image ID" in str(exc)
+    else:
+        raise AssertionError("an image archive with the wrong config digest was accepted")
 
 
 def test_default_minikube_restore_accepts_only_reviewed_dynamic_loopback_ports():
