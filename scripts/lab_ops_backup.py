@@ -40,6 +40,8 @@ RELEASE_TIMEOUT_SECONDS = 4 * 60 * 60
 POSTGRES_CONTAINER_START_TIMEOUT_SECONDS = 10 * 60
 POSTGRES_READINESS_TIMEOUT_SECONDS = 10 * 60
 POSTGRES_READINESS_PROBE_TIMEOUT_SECONDS = 120
+# Deleting a restored multi-gigabyte Docker volume is slow under QEMU TCG.
+RESTORE_VOLUME_CLEANUP_TIMEOUT_SECONDS = 15 * 60
 DEFAULT_LOCAL_COPY_DIR = Path.home() / ".codex" / "lab-backups" / "snapshots"
 DEFAULT_MINIKUBE_LOOPBACK_PORTS = frozenset({"22/tcp", "2376/tcp", "32443/tcp", "5000/tcp", "8443/tcp"})
 
@@ -1334,7 +1336,8 @@ def verify_default_minikube_restore(args: argparse.Namespace, archive, manifest:
                 if local_docker(args, "rm", "--force", clone_container, timeout=120).returncode:
                     cleanup_failures.append("container")
             if volume_created:
-                if local_docker(args, "volume", "rm", clone_volume, timeout=120).returncode:
+                if local_docker(args, "volume", "rm", clone_volume,
+                                timeout=RESTORE_VOLUME_CLEANUP_TIMEOUT_SECONDS).returncode:
                     cleanup_failures.append("volume")
             if network_created:
                 if local_docker(args, "network", "rm", clone_network, timeout=120).returncode:
