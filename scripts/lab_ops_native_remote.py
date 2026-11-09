@@ -224,7 +224,7 @@ def create_seed(work: Path, public_key: str, instance: str):
                  "    groups: [adm, sudo]\n    sudo: ALL=(ALL) NOPASSWD:ALL\n"
                  "    shell: /bin/bash\n    lock_passwd: true\n    ssh_authorized_keys:\n"
                  "      - " + json.dumps(public_key) + "\npackage_update: true\npackages:\n  - docker.io\n"
-                 "runcmd:\n  - [systemctl, enable, --now, docker]\n")
+                 "runcmd:\n  - [usermod, -aG, docker, ubuntu]\n  - [systemctl, enable, --now, docker]\n")
     (seed / "user-data").write_text(user_data, encoding="utf-8")
     (seed / "meta-data").write_text("instance-id: " + instance + "\nlocal-hostname: kubellm-restore\n", encoding="ascii")
     os.chmod(seed / "user-data", 0o600)

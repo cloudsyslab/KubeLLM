@@ -341,6 +341,21 @@ def test_lab_native_docker_readiness_retries_slow_daemon(monkeypatch, tmp_path):
     assert calls == ["probe", "probe"]
 
 
+def test_lab_native_bootstrap_grants_docker_access_after_install(monkeypatch, tmp_path):
+    def make_iso(argv, **_kwargs):
+        Path(argv[argv.index("-output") + 1]).touch()
+        return SimpleNamespace(returncode=0)
+
+    monkeypatch.setattr(lab_ops_native_remote, "run", make_iso)
+
+    seed = lab_ops_native_remote.create_seed(tmp_path, "ssh-ed25519 AAAA test", "bootstrap")
+    user_data = (tmp_path / "seed-bootstrap" / "user-data").read_text(encoding="utf-8")
+
+    assert seed.is_file()
+    assert "packages:\n  - docker.io\n" in user_data
+    assert "runcmd:\n  - [usermod, -aG, docker, ubuntu]\n" in user_data
+
+
 def test_lab_native_backup_archive_checks_manifest_members(tmp_path):
     archive_path = tmp_path / "snapshot.zip"
     selector = b'{"lane_id":"minh"}\n'
