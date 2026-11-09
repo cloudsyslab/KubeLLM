@@ -853,11 +853,13 @@ def test_postgres_restore_uses_destination_store_id_and_verifies_image_contents(
         archive.writestr("database/selected-lane.pgcustom", b"database dump")
 
     calls = []
+    timeouts = []
     inspected_image = {"Id": loaded_id, "Architecture": "amd64", "Os": "linux", "Config": {},
                        "RootFS": {"Type": "layers", "Layers": [diff_id]}}
 
-    def docker(_args, *argv, **_kwargs):
+    def docker(_args, *argv, **kwargs):
         calls.append(argv)
+        timeouts.append((argv, kwargs.get("timeout")))
         if argv[:2] == ("image", "inspect") and argv[-1] == image_id:
             return subprocess.CompletedProcess(argv, 1, b"", b"not found")
         if argv[:2] == ("image", "inspect") and argv[-1] == loaded_id:
@@ -904,6 +906,9 @@ def test_postgres_restore_uses_destination_store_id_and_verifies_image_contents(
     run_call = next(call for call in calls if call[0] == "run")
     assert run_call[-1] == loaded_id
     assert ("image", "rm", loaded_id) in calls
+    readiness_call = next(call for call, _timeout in timeouts if call[0] == "exec" and "pg_isready" in call)
+    assert next(timeout for call, timeout in timeouts if call == readiness_call) == \
+        lab_ops_backup.POSTGRES_READINESS_PROBE_TIMEOUT_SECONDS
 
 
 def test_default_minikube_restore_accepts_only_reviewed_dynamic_loopback_ports():

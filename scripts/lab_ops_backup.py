@@ -38,6 +38,8 @@ ASSET_PART_BYTES = 800 * 1024**2
 SNAPSHOT_TIMEOUT_SECONDS = 6 * 60 * 60
 RELEASE_TIMEOUT_SECONDS = 4 * 60 * 60
 POSTGRES_CONTAINER_START_TIMEOUT_SECONDS = 10 * 60
+POSTGRES_READINESS_TIMEOUT_SECONDS = 10 * 60
+POSTGRES_READINESS_PROBE_TIMEOUT_SECONDS = 120
 DEFAULT_LOCAL_COPY_DIR = Path.home() / ".codex" / "lab-backups" / "snapshots"
 DEFAULT_MINIKUBE_LOOPBACK_PORTS = frozenset({"22/tcp", "2376/tcp", "32443/tcp", "5000/tcp", "8443/tcp"})
 
@@ -986,9 +988,10 @@ def verify_postgres_restore(args: argparse.Namespace, archive, manifest: dict) -
         restore_ok = False
         cleanup_ok = False
         try:
-            deadline = time.monotonic() + 180
+            deadline = time.monotonic() + POSTGRES_READINESS_TIMEOUT_SECONDS
             while time.monotonic() < deadline:
-                ready = local_docker(args, "exec", container, "pg_isready", "-q", "-U", user, timeout=15)
+                ready = local_docker(args, "exec", container, "pg_isready", "-q", "-U", user,
+                                     timeout=POSTGRES_READINESS_PROBE_TIMEOUT_SECONDS)
                 if ready.returncode == 0:
                     break
                 time.sleep(3)
