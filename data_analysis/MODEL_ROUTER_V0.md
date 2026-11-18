@@ -162,8 +162,7 @@ image registry digests for recovery. The latest root filesystem preflight
 on 2026-11-18 measured 23.10 GB (21.50 GiB) available after reducing new
 feature worktrees to the curated sparse data view. Both the 20 GB campaign
 startup floor and 20 GiB Docker-root profile-start gate pass. The 25 GiB
-early-warning
-remains active. No campaign has been run. Raw campaign/test runs and
+early-warning remains active. No campaign has been run. Raw campaign/test runs and
 retired-workspace archives remain intact. Never prune shared containers,
 volumes, profiles, or research workloads.
 

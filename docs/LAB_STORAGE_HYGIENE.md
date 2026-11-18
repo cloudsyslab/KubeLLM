@@ -69,9 +69,8 @@ were recorded for recovery. The latest root filesystem preflight on
 feature worktrees to retain only `data/README.md` and `data/exploratory` from
 the large tracked datasets. Both the 20 GB campaign startup floor and 20 GiB
 Docker-root profile-start gate pass. The 25 GiB early-warning remains active.
-The report now finds zero
-eligible temporary build archives and zero private cleanup candidates. No
-campaign has been run.
+The report now finds zero eligible temporary build archives and zero private
+cleanup candidates. No campaign has been run.
 
 The cron job runs Mondays at 09:00 UTC. It executes from the persistent
 model-router-v0 feature worktree, so update the crontab path if that worktree is
