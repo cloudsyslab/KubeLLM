@@ -158,9 +158,11 @@ git sparse-checkout add data/<dataset>.
 The reviewed 2026-11-18 cleanup removed ten allowlisted user directories,
 four unused Python base tags from the private lane, and 347 stale, user-owned
 temporary build archives (about 5.5 MB allocated). It recorded the private
-image registry digests for recovery. Current root free space is 23.24 GB
-(21.64 GiB), up from 19.03 GB before cleanup. Both the 20 GB campaign startup
-floor and 20 GiB Docker-root profile-start gate pass. The 25 GiB early-warning
+image registry digests for recovery. The latest root filesystem preflight
+on 2026-11-18 measured 23.10 GB (21.50 GiB) available after reducing new
+feature worktrees to the curated sparse data view. Both the 20 GB campaign
+startup floor and 20 GiB Docker-root profile-start gate pass. The 25 GiB
+early-warning
 remains active. No campaign has been run. Raw campaign/test runs and
 retired-workspace archives remain intact. Never prune shared containers,
 volumes, profiles, or research workloads.

@@ -64,9 +64,12 @@ four unused Python base tags from the private lane, and 347 eligible
 `/tmp/build.<digits>.tar` files (about 5.5 MB allocated). Those archives were
 user-owned, valid tar files at least 30 days old, single-link, and free of open
 handles; two were older than four months. The private image registry digests
-were recorded for recovery. Current root free space is 23.24 GB (21.64 GiB).
-Both the 20 GB campaign startup floor and 20 GiB Docker-root profile-start gate
-pass. The 25 GiB early-warning remains active. The report now finds zero
+were recorded for recovery. The latest root filesystem preflight on
+2026-11-18 measured 23.10 GB (21.50 GiB) available after configuring new
+feature worktrees to retain only `data/README.md` and `data/exploratory` from
+the large tracked datasets. Both the 20 GB campaign startup floor and 20 GiB
+Docker-root profile-start gate pass. The 25 GiB early-warning remains active.
+The report now finds zero
 eligible temporary build archives and zero private cleanup candidates. No
 campaign has been run.
 
