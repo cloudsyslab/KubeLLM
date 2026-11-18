@@ -127,3 +127,20 @@ Run the targeted router tests and then the repository's full test suite in the l
 Interpret model rankings only for these 27 development scenarios and this plan-conditioned decision point. Evidence of a monotonic vendor-tier ranking would support the intelligence-scaling hypothesis within this benchmark; failure to see that pattern would be useful evidence too. Compare complementarity by scenario and check whether richer registry/history changes held-out routing outcomes. Do not turn this development screen into a live-router claim.
 
 References: [OpenAI Decisions guide](https://developers.openai.com/api/docs/guides/decisions), [Decisions create reference](https://developers.openai.com/api/reference/resources/decisions/methods/create), [Responses Structured Outputs](https://developers.openai.com/api/docs/guides/structured-outputs?api-mode=responses), and the [Jev model-router example](https://www.mindstudio.ai/blog/how-to-build-model-router-with-jev).
+
+Before storage cleanup, create and inspect a private plan on the lab:
+
+~~~bash
+python3 orchestrator/lab_storage_hygiene.py --plan
+~~~
+
+The plan applies only on the same host, as the same user, within one hour,
+while the exact cache manifests and selected private-lane dangling image IDs
+remain unchanged. It removes only Minh-owned idle Playwright/npm/Minikube fixture
+image caches and unused dangling images inside the verified `minh-lane` node.
+It preserves KIC/preloaded Minikube caches and never lists or changes shared host
+Docker images. Apply the reviewed plan with:
+
+~~~bash
+python3 orchestrator/lab_storage_hygiene.py --apply ~/.local/lab-ops/storage-hygiene-plan.json
+~~~
