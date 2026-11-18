@@ -25,6 +25,12 @@ class TestCalculateCost(unittest.TestCase):
         cost = metrics_db.calculate_cost("gpt-4o-mini", 1000, 2000)
         self.assertEqual(cost, 0.0054)
 
+    def test_gpt_62_router_candidates_use_registry_standard_rates(self):
+        sol = metrics_db.calculate_cost("gpt-6.2-sol", 1000, 1000)
+        astra = metrics_db.calculate_cost("gpt-6.2-astra", 1000, 1000)
+        self.assertEqual(sol, 0.012)
+        self.assertEqual(astra, 0.048)
+
     def test_unknown_model_warns_and_returns_zero(self):
         buf = StringIO()
         with redirect_stdout(buf):

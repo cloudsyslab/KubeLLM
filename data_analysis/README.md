@@ -19,17 +19,26 @@ configurations and their export-integrity status. The analysis intentionally
 includes incomplete observations and reports missing evidence; it does not
 filter them to improve a score.
 
+## Current model-router study
+
+The current v0 research direction is documented in [MODEL_ROUTER_V0.md](MODEL_ROUTER_V0.md).
+It compares fixed DebugAgent baselines with Decisions API and conventional
+structured-output routers after a shared KnowledgeAgent plan. It does not use
+the earlier embeddings, PCA, feature-reduction, or trained-predictor path.
+Whole-incident routing across the complete agent pipeline remains future v2–3
+work.
+
 The fixed seed makes bootstrap results repeatable. `--bootstrap-replicates` defaults to 10,000; lower it for exploratory runs. `analyze.py` removes and recreates the nominated output directory, so point `--output` only at generated artifacts.
 
-## Offline prediction pilot
+## Historical offline prediction pilot
 
-The success-prediction audit is separate from the canonical analyzer and runner. See [PREDICTION_PILOT.md](PREDICTION_PILOT.md) for its source audit, held-out-task protocol, and limits. It evaluates Adiba's pinned post-KnowledgeAgent feature export with grouped probability metrics, then uses canonical exports only as historical cost context.
+The former success-prediction audit is separate from the canonical analyzer and runner. See [PREDICTION_PILOT.md](PREDICTION_PILOT.md) for its source audit and limits. It is historical context only; it does not define the current model-router thesis.
 
-The paired campaign harness and [experiment protocol](PREDICTION_EXPERIMENT_PROTOCOL.md) capture one KnowledgeAgent plan per task replicate and replay it across DebugAgent candidates through the canonical runner. Ground Truth immediately after debugging is the prediction label; an observational verifier judgment is measured against it, then Ground Truth runs again to check state integrity. Raw paired traces stay under ignored `.local/`. The explicit `--pilot-storage` profile is capped at 18 scheduled attempts, requires 12 GB free at startup, keeps the 10 GB before-attempt floor, and records free space around each attempt. Standard campaigns retain the 20 GB startup minimum. Local candidates are revision-pinned and warmed at DebugAgent entry with a separate warm-up time record. Routing remains offline.
+The paired campaign harness captures one KnowledgeAgent plan per scenario replicate and replays it across DebugAgent candidates through the canonical runner. Ground Truth immediately after debugging is the repair label; verification is measured separately, then Ground Truth runs again to check state integrity. Raw paired traces stay under ignored .local. The current 27-scenario, five-plan, three-candidate router experiment and routing analysis are specified in [MODEL_ROUTER_V0.md](MODEL_ROUTER_V0.md). Standard campaigns require 20 GB free at startup and keep the 10 GB before-attempt floor.
 
-The first warmed pilot stopped after 14 of 18 scheduled attempts. Thirteen attempts have Ground Truth (12 pass, one fail); one runtime error left Ground Truth unknown and four attempts unstarted. The campaign was not resumed. Its [sanitized attempt-level pack](../data/exploratory/prediction-pilot-2026-10/README.md) includes outcomes, costs, timing, and the categorical stop reason. Investigate the Ollama/Phi runtime error, then use a fresh named wave and review its integrity before expanding to all 27 cases × 3 plans × 6 models (486 candidate executions).
+The historical warmed pilot stopped after 14 of 18 scheduled attempts. Thirteen attempts have Ground Truth (12 pass, one fail); one runtime error left Ground Truth unknown and four attempts unstarted. It was not resumed. Its [sanitized attempt-level pack](../data/exploratory/prediction-pilot-2026-10/README.md) includes outcomes, costs, timing, and the stop reason. The proposed 486-execution feature-prediction expansion was never launched and is superseded by the model-router experiment.
 
-Install the optional modeling dependency in an isolated environment, retrieve the pinned handoff CSV into ignored `.local/`, then run:
+The following optional modeling workflow reproduces the historical feature-prediction audit only. It is not a dependency or step for Model Router v0. To reproduce that audit, install its optional modeling dependency in an isolated environment and retrieve the pinned handoff CSV into ignored local storage:
 
 ```bash
 python3 -m venv .local/prediction_pilot/venv
