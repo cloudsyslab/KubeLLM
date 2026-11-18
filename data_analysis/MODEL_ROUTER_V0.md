@@ -8,6 +8,8 @@ The v0 thesis is about effective model routing. Public capability tiers and benc
 
 The v0 decision point is after the KnowledgeAgent plan and before one DebugAgent. Selecting an agent for the entire incident before any pipeline stage is v2–3.
 
+The three registered GPT-6 DebugAgents use the Responses API adapter in debug_assistant_latest/responses_model.py; the other OpenAI model paths retain phidata's Chat Completions adapter. The GPT-6 adapter is text-only and non-streaming, matching the current DebugAgent run path.
+
 ~~~mermaid
 flowchart LR
     A[Incident description] --> B[Fixed KnowledgeAgent]
@@ -33,7 +35,7 @@ The dated registry is model_router_v0_registry.json. It contains:
 - Source URLs and runtime compatibility status.
 - A fixed router model, gpt-6-luna, for both API conditions.
 
-Vendor claims and price snapshots are features for the rich-registry experiment. They are not KubeLLM outcomes. The current lab API key returned 429 credit_balance_exhausted for a small POST probe on both router endpoints and all three function-tool candidates; those probes did not execute model inference. Accordingly, runtime tool compatibility remains unconfirmed. Re-run the compatibility probe after the project has API credit before starting the campaign.
+Vendor claims and price snapshots are features for the rich-registry experiment. They are not KubeLLM outcomes. The first lab API-key probe returned HTTP 429 credit_balance_exhausted before model inference. After the key refresh, the 2026-11-18 compatibility pass confirmed a Decisions API typed choice, a Responses structured choice, and function calling through all three DebugAgent candidates. A final smoke call through the lockfile Python 3.13 environment also passed. The GPT-6 DebugAgent path uses OpenAIResponsesChat to bridge Responses function calls into the pinned phidata 2.7 tool loop; a local Python tool executed end to end. These were synthetic API probes, not benchmark outcomes. Their token counts and environment versions are recorded in the registry.
 
 ## Paired benchmark data
 

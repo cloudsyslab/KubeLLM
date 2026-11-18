@@ -220,7 +220,24 @@ class RuntimeConfigTests(unittest.TestCase):
         self.assertEqual(model["temperature"], 0.4)
         self.assertEqual(imported_modules, ["phi.model.openai"])
 
-    def test_build_chat_model_luna_sets_reasoning_effort_none(self):
+    def test_build_chat_model_gpt6_candidates_use_responses_adapter(self):
+        captured = {}
+
+        def fake_import(module_name):
+            if module_name == "debug_assistant_latest.responses_model":
+                return types.SimpleNamespace(
+                    OpenAIResponsesChat=lambda **kwargs: captured.update(kwargs) or kwargs
+                )
+            raise AssertionError(f"Unexpected module import request: {module_name}")
+
+        with patch.dict(os.environ, {"OPENAI_API_KEY": "test-key"}, clear=False), patch(
+            "runtime_config.importlib.import_module", side_effect=fake_import
+        ):
+            for model_name in ("gpt-6-luna", "gpt-6.2-sol", "gpt-6.2-astra"):
+                runtime_config.build_chat_model(model_name)
+                self.assertEqual(captured["id"], model_name)
+
+    def test_build_chat_model_legacy_luna_keeps_chat_completions_compatibility(self):
         captured = {}
 
         def fake_import(module_name):
@@ -231,7 +248,7 @@ class RuntimeConfigTests(unittest.TestCase):
         with patch.dict(os.environ, {"OPENAI_API_KEY": "test-key"}, clear=False), patch(
             "runtime_config.importlib.import_module", side_effect=fake_import
         ):
-            runtime_config.build_chat_model("gpt-6-luna")
+            runtime_config.build_chat_model("gpt-5.6-luna")
 
         self.assertEqual(
             captured["request_params"]["extra_body"]["reasoning_effort"],
