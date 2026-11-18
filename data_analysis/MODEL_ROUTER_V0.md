@@ -82,7 +82,7 @@ The report and figures are private artifacts under .local.
 
 All campaign, API, report, and dependency work is performed on the lab server in this feature worktree. The branch starts from verified origin/main revision 4b7c656917037743275c53443f7070f762f0ebf0. This router adds no package dependency. The workline has an isolated .venv prepared from requirements.lock with Python 3.13.18, OpenAI SDK 1.109.1, and phidata 2.7.10; repository pins are unchanged.
 
-The paired campaign keeps the canonical 20 GiB startup storage guard and 10 GiB before-attempt guard. Do not run it until the selected lane's backing filesystem has at least 20 GiB free and the explicit-lane runner preflight passes. Initial free space was 11.06 GiB. The approved cleanup and reversible local sparse checkout raised it to 15.0 GiB; the campaign remains gated, about 5.0 GiB short. The lane readiness check and runner preflight pass. Do not prune shared containers, volumes, profiles, or research workloads to recover space.
+The paired campaign startup guard is 20,000,000,000 bytes (20 GB decimal); its before-attempt guard is 10,000,000,000 bytes. The separate readiness helper needs 20 GiB free in Docker's data root before starting the Minikube profile. Keep 20 GiB as the planning target and use the weekly 25 GiB warning to catch growth early. Do not run a campaign until its exact startup guard and explicit-lane runner preflight pass. Initial free space was 11.06 GiB. Reviewed cleanup on 2026-11-18 raised it to 23.18 GB (21.59 GiB): the campaign startup floor and the Docker-root profile-start gate both pass, while the 25 GiB early-warning remains active. The weekly report records current headroom. Do not prune shared containers, volumes, profiles, or research workloads to recover space.
 
 ~~~bash
 cd /home/minh/KubeLLM/.local/operator_ui/worktrees/model-router-v0
@@ -128,31 +128,48 @@ Interpret model rankings only for these 27 development scenarios and this plan-c
 
 References: [OpenAI Decisions guide](https://developers.openai.com/api/docs/guides/decisions), [Decisions create reference](https://developers.openai.com/api/reference/resources/decisions/methods/create), [Responses Structured Outputs](https://developers.openai.com/api/docs/guides/structured-outputs?api-mode=responses), and the [Jev model-router example](https://www.mindstudio.ai/blog/how-to-build-model-router-with-jev).
 
-Before storage cleanup, create and inspect a private plan on the lab:
+## Storage hygiene and current headroom
+
+Create a fresh owner-only plan on the lab and inspect its exact targets before
+applying:
 
 ~~~bash
 ./.venv/bin/python orchestrator/lab_storage_hygiene.py --plan
+cat ~/.local/lab-ops/storage-hygiene-plan.json
 ~~~
 
-The plan applies only on the same host, as the same user, within one hour,
-while the exact cache manifests and selected private-lane image targets remain
-unchanged. It removes only Minh-owned allowlisted caches, dangling images, and
-case-image tags that are listed by checked-in case configuration, have a
-checked-in Dockerfile, and have no container or pod references in the verified
-private lane. Pod checks use the lane's owner-only kubeconfig. It preserves
-Kubernetes/base/unknown images and never lists or changes shared host Docker
-images.
+Plans apply only on the same host and for the same user, expire after one hour,
+and are refused if the exact rebuildable-path manifests or private-lane image
+targets change. Directory targets come from a fixed allowlist, are user-owned,
+have no open file handles or other users' files, and fingerprint internal
+symlinks. Dangling, foreign-owned, or escaping symlinks block the plan; the
+prediction-pilot venv has an exact exception for its Python symlink chain.
+Private image removal is confined to the verified minh-lane Minikube node.
+Case images must be backed by checked-in case configs and Dockerfiles. The
+four selected Python base tags must have no container or pod references and
+are recorded by registry digest before removal. Shared-host Docker images are
+never listed or changed.
 
-The first reviewed apply removed 23 rebuildable case-image IDs and freed 1.24
-GiB after layer sharing; it found no eligible caches or dangling images. The
-canonical checkout's 2.73 GiB tracked data tree matched live origin/main and
-had no open files, so a reversible sparse checkout kept data/exploratory and
-released the larger historical datasets from this copy. Those files remain in
-GitHub and can be restored with git sparse-checkout add data/<dataset>. Root
-free space is now 15.0 GiB, still about 5.0 GiB below the 20 GiB campaign gate.
-Further capacity recovery from unowned shared images remains a separate
-owner-review investigation. Apply a fresh reviewed plan with:
+The active operator UI worktree keeps data/README.md and data/exploratory.
+Sparse checkout released about 2.92 GB while retaining all exploratory
+evidence. The other tracked datasets remain in GitHub and can be restored with
+git sparse-checkout add data/<dataset>.
+
+The reviewed 2026-11-18 cleanup removed ten allowlisted user directories,
+four unused Python base tags from the private lane, and 347 stale, user-owned
+temporary build archives (about 5.5 MB allocated). It recorded the private
+image registry digests for recovery. Current root free space is 23.24 GB
+(21.64 GiB), up from 19.03 GB before cleanup. Both the 20 GB campaign startup
+floor and 20 GiB Docker-root profile-start gate pass. The 25 GiB early-warning
+remains active. No campaign has been run. Raw campaign/test runs and
+retired-workspace archives remain intact. Never prune shared containers,
+volumes, profiles, or research workloads.
+
+Run this on the lab worktree with a newly reviewed plan:
 
 ~~~bash
-./.venv/bin/python orchestrator/lab_storage_hygiene.py --apply ~/.local/lab-ops/storage-hygiene-plan.json
+./.venv/bin/python orchestrator/lab_storage_hygiene.py --plan
+cat ~/.local/lab-ops/storage-hygiene-plan.json
+./.venv/bin/python orchestrator/lab_storage_hygiene.py \
+  --apply ~/.local/lab-ops/storage-hygiene-plan.json
 ~~~

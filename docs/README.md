@@ -9,6 +9,7 @@ are linked below.
 - [Architecture](../.agents/skills/kubellm-benchmarks/references/architecture.md)
 - [Benchmark integrity](../.agents/skills/kubellm-benchmarks/references/benchmark-integrity.md)
 - [Shared-lab lanes](../.agents/skills/kubellm-benchmarks/references/lab-lanes.md)
+- [Lab storage hygiene](LAB_STORAGE_HYGIENE.md)
 - [Case design](../.agents/skills/kubellm-benchmarks/references/test-cases.md)
 - [Benchmark reporting](../.agents/skills/kubellm-benchmarks/references/reporting.md)
 - [Benchmark export catalog](../data/README.md)
