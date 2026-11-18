@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
-"""Plan and remove only Minh-owned idle caches and dangling images in minh-lane.
+"""Plan and remove Minh-owned caches and rebuildable unused images in minh-lane.
 
 This tool never lists, prunes, or removes images from the shared host Docker
 daemon. Docker image operations run only inside the verified private Minikube
-node container.
+node container. Tagged case images require checked-in build configs and
+Dockerfiles, with no Docker-container or Kubernetes-pod references.
 """
 from __future__ import annotations
 
@@ -19,6 +20,7 @@ import sys
 import time
 from typing import Any
 
+REPO_ROOT = Path(__file__).resolve().parents[1]
 CACHE_RELATIVE_PATHS = (
     ".cache/ms-playwright",
     ".npm/_cacache",
@@ -29,6 +31,7 @@ EXPECTED_LANE = {
     "lane_id": "minh",
     "minikube_profile": "minh-lane",
     "minikube_container": "minh-lane",
+    "kubeconfig_path": str(Path.home() / ".config/kubellm/lanes/minh.kubeconfig"),
 }
 PLAN_TTL_SECONDS = 3600
 
@@ -148,6 +151,19 @@ def read_lane() -> tuple[dict[str, Any], str]:
         raise SafetyError("private lane configuration must be user-owned and owner-only")
     if any(lane.get(k) != v for k, v in EXPECTED_LANE.items()):
         raise SafetyError("configured lane does not match the approved private lane")
+    kubeconfig_path = Path(lane["kubeconfig_path"])
+    try:
+        kubeconfig_stat = kubeconfig_path.lstat()
+    except OSError as exc:
+        raise SafetyError("private lane kubeconfig is unavailable") from exc
+    if (
+        stat.S_ISLNK(kubeconfig_stat.st_mode)
+        or not stat.S_ISREG(kubeconfig_stat.st_mode)
+        or kubeconfig_stat.st_uid != os.getuid()
+        or stat.S_IMODE(kubeconfig_stat.st_mode) & 0o077
+        or kubeconfig_path.resolve(strict=True) != kubeconfig_path
+    ):
+        raise SafetyError("private lane kubeconfig must be user-owned and owner-only")
     container = EXPECTED_LANE["minikube_container"]
     output = run([
         "docker", "inspect", "--format",
@@ -206,12 +222,137 @@ def private_dangling_images(container: str) -> list[dict[str, Any]]:
     return targets
 
 
+def rebuildable_case_image_tags() -> set[str]:
+    """Return exact local case-image tags backed by checked-in Dockerfiles."""
+    if str(REPO_ROOT) not in sys.path:
+        sys.path.insert(0, str(REPO_ROOT))
+    from debug_assistant_latest.lab_context import configured_local_images
+
+    cases_root = REPO_ROOT / "debug_assistant_latest" / "troubleshooting"
+    allowed: set[str] = set()
+    cases_root = cases_root.resolve(strict=True)
+    for config_path in sorted(cases_root.glob("*/config_step.json")):
+        case_dir = config_path.parent
+        dockerfile = case_dir / "Dockerfile"
+        if (
+            case_dir.is_symlink()
+            or config_path.is_symlink()
+            or dockerfile.is_symlink()
+            or not case_dir.resolve(strict=True).is_relative_to(cases_root)
+        ):
+            raise SafetyError("case image source contains a symlink or escapes the repository")
+        if not dockerfile.is_file():
+            continue
+        try:
+            document = json.loads(config_path.read_text())
+        except (OSError, json.JSONDecodeError) as exc:
+            raise SafetyError("case image configuration could not be read") from exc
+        if not isinstance(document, dict):
+            raise SafetyError("case image configuration is not an object")
+        config = document.get("config", document)
+        if not isinstance(config, dict):
+            raise SafetyError("case image config is not an object")
+        allowed.update(
+            image for image in configured_local_images(config)
+            if isinstance(image, str) and image
+        )
+    return allowed
+
+
+def _pod_image_references(kubeconfig_path: str) -> set[str]:
+    output = run([
+        "kubectl", "--kubeconfig", kubeconfig_path, "get", "pods",
+        "--all-namespaces", "-o", "json",
+    ], timeout=90)
+    try:
+        document = json.loads(output)
+        pods = document["items"]
+        if not isinstance(pods, list):
+            raise ValueError("items is not a list")
+        references = set()
+        for pod in pods:
+            spec = pod.get("spec") or {}
+            for field in ("containers", "initContainers", "ephemeralContainers"):
+                references.update(
+                    entry["image"] for entry in spec.get(field, [])
+                    if isinstance(entry.get("image"), str)
+                )
+        return references
+    except (KeyError, TypeError, ValueError, json.JSONDecodeError) as exc:
+        raise SafetyError("private lane pod image references are unreadable") from exc
+
+
+def private_rebuildable_case_images(
+    container: str, kubeconfig_path: str
+) -> list[dict[str, Any]]:
+    """Find unused lane case images that the checked-in runner can rebuild."""
+    allowed_tags = rebuildable_case_image_tags()
+    if not allowed_tags:
+        return []
+
+    ids_text = run([
+        "docker", "exec", container, "docker", "image", "ls",
+        "--no-trunc", "--quiet",
+    ])
+    image_ids = sorted(set(line.strip() for line in ids_text.splitlines() if line.strip()))
+    container_ids_text = run([
+        "docker", "exec", container, "docker", "container", "ls",
+        "--all", "--quiet", "--no-trunc",
+    ])
+    container_references: set[str] = set()
+    for container_id in sorted(set(container_ids_text.split())):
+        image_id = run([
+            "docker", "exec", container, "docker", "inspect", "--format",
+            "{{.Image}}", container_id,
+        ])
+        if image_id:
+            container_references.add(image_id)
+
+    pod_references = _pod_image_references(kubeconfig_path)
+    targets: list[dict[str, Any]] = []
+    for image_id in image_ids:
+        details = run([
+            "docker", "exec", container, "docker", "image", "inspect",
+            "--format",
+            "{{.Id}}|{{.Size}}|{{json .RepoTags}}|{{json .RepoDigests}}",
+            image_id,
+        ])
+        try:
+            inspected_id, size_text, tags_text, digests_text = details.split("|", 3)
+            tags = json.loads(tags_text) or []
+            digests = json.loads(digests_text) or []
+            size = int(size_text)
+        except (ValueError, json.JSONDecodeError) as exc:
+            raise SafetyError("private case image inspection was invalid") from exc
+        if (
+            inspected_id != image_id
+            or not isinstance(tags, list)
+            or not all(isinstance(tag, str) for tag in tags)
+            or not isinstance(digests, list)
+            or not all(isinstance(digest, str) for digest in digests)
+        ):
+            raise SafetyError("private case image identity was invalid")
+        tags = sorted(tag for tag in tags if tag != "<none>:<none>")
+        digests = sorted(digests)
+        if not tags or not set(tags).issubset(allowed_tags):
+            continue
+        if image_id in container_references or set(tags + digests).intersection(pod_references):
+            continue
+        targets.append({
+            "id": inspected_id,
+            "repo_tags": tags,
+            "repo_digests": digests,
+            "size_bytes": size,
+        })
+    return targets
+
+
 def free_bytes() -> int:
     return shutil.disk_usage("/").free
 
 
 def inventory() -> dict[str, Any]:
-    _, container = read_lane()
+    lane, container = read_lane()
     caches = []
     for relative in CACHE_RELATIVE_PATHS:
         manifest = cache_manifest(relative)
@@ -221,7 +362,7 @@ def inventory() -> dict[str, Any]:
         caches.append(manifest)
     now = int(time.time())
     return {
-        "schema_version": 1,
+        "schema_version": 2,
         "created_at": now,
         "expires_at": now + PLAN_TTL_SECONDS,
         "host": os.uname().nodename,
@@ -230,6 +371,9 @@ def inventory() -> dict[str, Any]:
         "lane_container": container,
         "caches": caches,
         "private_dangling_images": private_dangling_images(container),
+        "private_rebuildable_case_images": private_rebuildable_case_images(
+            container, lane["kubeconfig_path"]
+        ),
     }
 
 
@@ -249,12 +393,15 @@ def apply_plan(plan_path: Path) -> dict[str, Any]:
         plan = json.loads(plan_path.read_text())
     except (OSError, json.JSONDecodeError) as exc:
         raise SafetyError("plan file is unavailable or invalid") from exc
-    if plan.get("schema_version") != 1 or plan.get("uid") != os.getuid():
+    if plan.get("schema_version") != 2 or plan.get("uid") != os.getuid():
         raise SafetyError("plan schema or owner does not match this user")
     if plan.get("host") != os.uname().nodename or int(plan.get("expires_at", 0)) < time.time():
         raise SafetyError("plan host differs or the plan has expired")
     fresh = inventory()
-    for key in ("lane_container", "caches", "private_dangling_images"):
+    for key in (
+        "lane_container", "caches", "private_dangling_images",
+        "private_rebuildable_case_images",
+    ):
         if fresh.get(key) != plan.get(key):
             raise SafetyError(f"targets changed since plan creation: {key}")
 
@@ -270,22 +417,25 @@ def apply_plan(plan_path: Path) -> dict[str, Any]:
             "allocated_bytes": target["allocated_bytes"],
         })
 
-    removed_images: list[str] = []
-    image_ids = [item["id"] for item in fresh["private_dangling_images"]]
+    dangling_ids = [item["id"] for item in fresh["private_dangling_images"]]
+    rebuildable_ids = [item["id"] for item in fresh["private_rebuildable_case_images"]]
+    image_ids = sorted(set(dangling_ids + rebuildable_ids))
+    if len(image_ids) != len(dangling_ids) + len(rebuildable_ids):
+        raise SafetyError("private image target categories overlap")
     if image_ids:
-        # No force flag: the private daemon refuses any image in use by a container.
+        # No force flag: the private daemon refuses images used by a container.
         run([
             "docker", "exec", fresh["lane_container"], "docker", "image", "rm",
             *image_ids,
         ])
-        removed_images = image_ids
 
     return {
         "host": os.uname().nodename,
         "free_bytes_before": plan["free_bytes_before"],
         "free_bytes_after": free_bytes(),
         "removed_caches": removed_caches,
-        "removed_private_dangling_image_ids": removed_images,
+        "removed_private_dangling_image_ids": dangling_ids,
+        "removed_private_rebuildable_case_image_ids": rebuildable_ids,
     }
 
 

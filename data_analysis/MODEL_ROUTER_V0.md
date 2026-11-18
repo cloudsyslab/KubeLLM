@@ -80,17 +80,15 @@ The report and figures are private artifacts under .local.
 
 ## Lab execution
 
-All campaign, API, report, and dependency work is performed on the lab server in the feature worktree. The branch starts from verified origin/main revision 4b7c656917037743275c53443f7070f762f0ebf0. Use the lab's provisioned project environment; this router adds no package dependency. The project pins and installed lab environment were inspected without installing or changing packages.
+All campaign, API, report, and dependency work is performed on the lab server in this feature worktree. The branch starts from verified origin/main revision 4b7c656917037743275c53443f7070f762f0ebf0. This router adds no package dependency. The workline has an isolated .venv prepared from requirements.lock with Python 3.13.18, OpenAI SDK 1.109.1, and phidata 2.7.10; repository pins are unchanged.
 
-The paired campaign keeps the canonical 20 GB startup storage guard and 10 GB before-attempt guard. Do not run it until the selected lane's backing filesystem has at least 20 GB free and the canonical runner preflight passes. The latest lab check had 2.9 GB free, so campaign execution is currently gated. Do not prune shared containers, volumes, profiles, or research workloads to recover space.
-
-After storage and lane readiness are restored, first inspect the campaign schedule:
+The paired campaign keeps the canonical 20 GiB startup storage guard and 10 GiB before-attempt guard. Do not run it until the selected lane's backing filesystem has at least 20 GiB free and the explicit-lane runner preflight passes. Initial free space was 11.06 GiB. The approved cleanup and reversible local sparse checkout raised it to 15.0 GiB; the campaign remains gated, about 5.0 GiB short. The lane readiness check and runner preflight pass. Do not prune shared containers, volumes, profiles, or research workloads to recover space.
 
 ~~~bash
 cd /home/minh/KubeLLM/.local/operator_ui/worktrees/model-router-v0
-/home/minh/KubeLLM/.venv/bin/python debug_assistant_latest/runner.py \
+./.venv/bin/python debug_assistant_latest/runner.py \
   --lab-config "$HOME/.config/kubellm/lanes/minh.json" --preflight
-/home/minh/KubeLLM/.venv/bin/python data_analysis/run_paired_campaign.py \
+./.venv/bin/python data_analysis/run_paired_campaign.py \
   --cases all \
   --debug-models 'gpt-6-luna,gpt-6.2-sol,gpt-6.2-astra' \
   --plan-replicates 5 \
@@ -104,7 +102,7 @@ Then run the fresh named campaign using the same command without --dry-run. Pres
 Once the complete campaign report exists and the API key has credit, validate the router schedule without API calls:
 
 ~~~bash
-/home/minh/KubeLLM/.venv/bin/python data_analysis/model_router_v0.py \
+./.venv/bin/python data_analysis/model_router_v0.py \
   --campaign-report .local/prediction_campaigns/model-router-v0-2026-11-18/campaign_report.json \
   --output-dir .local/model_router_v0/route-wave-2026-11-18 \
   --dry-run
@@ -113,7 +111,7 @@ Once the complete campaign report exists and the API key has credit, validate th
 After inspecting the 2,160-call schedule and API compatibility, execute the routing comparison on the selected private lane:
 
 ~~~bash
-/home/minh/KubeLLM/.venv/bin/python data_analysis/model_router_v0.py \
+./.venv/bin/python data_analysis/model_router_v0.py \
   --campaign-report .local/prediction_campaigns/model-router-v0-2026-11-18/campaign_report.json \
   --output-dir .local/model_router_v0/route-wave-2026-11-18 \
   --lab-config "$HOME/.config/kubellm/lanes/minh.json" \
@@ -133,16 +131,28 @@ References: [OpenAI Decisions guide](https://developers.openai.com/api/docs/guid
 Before storage cleanup, create and inspect a private plan on the lab:
 
 ~~~bash
-python3 orchestrator/lab_storage_hygiene.py --plan
+./.venv/bin/python orchestrator/lab_storage_hygiene.py --plan
 ~~~
 
 The plan applies only on the same host, as the same user, within one hour,
-while the exact cache manifests and selected private-lane dangling image IDs
-remain unchanged. It removes only Minh-owned idle Playwright/npm/Minikube fixture
-image caches and unused dangling images inside the verified `minh-lane` node.
-It preserves KIC/preloaded Minikube caches and never lists or changes shared host
-Docker images. Apply the reviewed plan with:
+while the exact cache manifests and selected private-lane image targets remain
+unchanged. It removes only Minh-owned allowlisted caches, dangling images, and
+case-image tags that are listed by checked-in case configuration, have a
+checked-in Dockerfile, and have no container or pod references in the verified
+private lane. Pod checks use the lane's owner-only kubeconfig. It preserves
+Kubernetes/base/unknown images and never lists or changes shared host Docker
+images.
+
+The first reviewed apply removed 23 rebuildable case-image IDs and freed 1.24
+GiB after layer sharing; it found no eligible caches or dangling images. The
+canonical checkout's 2.73 GiB tracked data tree matched live origin/main and
+had no open files, so a reversible sparse checkout kept data/exploratory and
+released the larger historical datasets from this copy. Those files remain in
+GitHub and can be restored with git sparse-checkout add data/<dataset>. Root
+free space is now 15.0 GiB, still about 5.0 GiB below the 20 GiB campaign gate.
+Further capacity recovery from unowned shared images remains a separate
+owner-review investigation. Apply a fresh reviewed plan with:
 
 ~~~bash
-python3 orchestrator/lab_storage_hygiene.py --apply ~/.local/lab-ops/storage-hygiene-plan.json
+./.venv/bin/python orchestrator/lab_storage_hygiene.py --apply ~/.local/lab-ops/storage-hygiene-plan.json
 ~~~
