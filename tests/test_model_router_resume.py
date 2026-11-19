@@ -264,6 +264,7 @@ def test_recovery_preserves_an_incomplete_runner_attempt_as_unknown(tmp_path):
 def test_router_resume_allows_driver_fixes_without_changing_protocol():
     original = {
         "router_protocol_version": ROUTER_PROTOCOL_VERSION,
+        "responses_max_output_tokens": 80,
         "router_model": "gpt-6-luna",
         "candidate_ids": ["a", "b"],
         "variant_names": ["responses", "decisions"],
@@ -286,6 +287,8 @@ def test_router_resume_allows_driver_fixes_without_changing_protocol():
             original,
             {**patched, "router_protocol_version": "different-protocol"},
         )
+    with pytest.raises(ValueError, match="responses_max_output_tokens"):
+        _validate_resume_manifest(original, {**patched, "responses_max_output_tokens": 25000})
 
 
 def test_campaign_lock_survives_parent_descriptor_close_in_runner_child(tmp_path):

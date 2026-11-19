@@ -38,6 +38,7 @@ EXPECTED_SCENARIOS = 27
 # Bump when route prompts, candidate selection, request schemas, or scoring semantics change.
 ROUTER_PROTOCOL_VERSION = "model-router-v0-protocol-1"
 ROUTER_MODEL = "gpt-6-luna"
+DEFAULT_RESPONSES_MAX_OUTPUT_TOKENS = 80
 API_ROOT = "https://api.openai.com/v1"
 
 
@@ -441,6 +442,13 @@ def _usage(data: dict[str, Any]) -> tuple[int | None, int | None]:
             int(out) if isinstance(out, (int, float)) else None)
 
 
+def _reasoning_tokens(data: dict[str, Any]) -> int | None:
+    usage = data.get("usage")
+    details = usage.get("output_tokens_details") if isinstance(usage, dict) else None
+    value = details.get("reasoning_tokens") if isinstance(details, dict) else None
+    return int(value) if isinstance(value, (int, float)) else None
+
+
 def parse_decisions(data: dict[str, Any], allowed: set[str]) -> dict[str, Any]:
     answers = data.get("answers")
     if not isinstance(answers, list) or len(answers) != 1:
@@ -466,7 +474,10 @@ def parse_decisions(data: dict[str, Any], allowed: set[str]) -> dict[str, Any]:
 
 def parse_responses(data: dict[str, Any], allowed: set[str]) -> dict[str, Any]:
     if data.get("status") == "incomplete":
-        raise ValueError("Responses router returned an incomplete result")
+        details = data.get("incomplete_details")
+        reason = details.get("reason") if isinstance(details, dict) else None
+        normalized = re.sub(r"[^a-z0-9]+", "_", reason.lower()).strip("_") if isinstance(reason, str) else "unknown"
+        raise ValueError(f"responses_incomplete_{normalized or 'unknown'}")
     texts = []
     for item in data.get("output") or []:
         for part in item.get("content") or []:
@@ -553,6 +564,8 @@ def call_router(
     input_text: str,
     registry: dict[str, Any],
     api_key: str,
+    *,
+    responses_max_output_tokens: int = DEFAULT_RESPONSES_MAX_OUTPUT_TOKENS,
 ) -> tuple[dict[str, Any], dict[str, Any], str | None, str | None]:
     candidates = registry["candidates"]
     allowed = {item["id"] for item in candidates}
@@ -587,7 +600,7 @@ def call_router(
                     },
                 }
             },
-            "max_output_tokens": 80,
+            "max_output_tokens": responses_max_output_tokens,
         }
         endpoint = "responses"
     data, request_id = _post_json(endpoint, body, api_key)
@@ -597,6 +610,7 @@ def call_router(
     usage = {
         "input_tokens": input_tokens,
         "output_tokens": output_tokens,
+        "reasoning_tokens": _reasoning_tokens(data),
         "estimated_router_cost_usd": _usage_cost(input_tokens, output_tokens, variant, registry),
     }
     try:
@@ -654,9 +668,11 @@ def _validate_resume_manifest(existing: dict[str, Any], current: dict[str, Any])
         "campaign_report_sha256",
         "lab_config_sha256",
         "lane_id",
+        "responses_max_output_tokens",
     )
     for key in fields:
-        if existing.get(key) != current.get(key):
+        existing_value = existing.get(key, DEFAULT_RESPONSES_MAX_OUTPUT_TOKENS if key == "responses_max_output_tokens" else None)
+        if existing_value != current.get(key):
             raise ValueError(f"Resume configuration differs from the original router wave ({key})")
 
 
@@ -729,6 +745,7 @@ def _execute_routes_locked(
     folds: int = DEFAULT_FOLDS,
     seed: int = DEFAULT_SEED,
     resume: bool = False,
+    responses_max_output_tokens: int = DEFAULT_RESPONSES_MAX_OUTPUT_TOKENS,
 ) -> Path:
     from lab_context import bootstrap_from_argv
 
@@ -748,6 +765,7 @@ def _execute_routes_locked(
         "router_protocol_version": ROUTER_PROTOCOL_VERSION,
         "router_model": ROUTER_MODEL,
         "router_model_requested_by": "fixed registry; returned model ID recorded per API response",
+        "responses_max_output_tokens": responses_max_output_tokens,
         "campaign_report_sha256": campaign_report_sha256,
         "candidate_ids": [item["id"] for item in registry["candidates"]],
         "variant_names": [item["name"] for item in variants],
@@ -809,7 +827,13 @@ def _execute_routes_locked(
             began = time.perf_counter()
             input_text = _route_text(observation, variant, registry, history if variant["training_history"] else None)
             try:
-                parsed, usage, request_id, actual_router_model = call_router(variant, input_text, registry, api_key)
+                parsed, usage, request_id, actual_router_model = call_router(
+                    variant,
+                    input_text,
+                    registry,
+                    api_key,
+                    responses_max_output_tokens=responses_max_output_tokens,
+                )
                 elapsed = time.perf_counter() - began
                 event = {
                     "event": "router_finished",
@@ -916,6 +940,7 @@ def execute_routes(
     folds: int = DEFAULT_FOLDS,
     seed: int = DEFAULT_SEED,
     resume: bool = False,
+    responses_max_output_tokens: int = DEFAULT_RESPONSES_MAX_OUTPUT_TOKENS,
 ) -> Path:
     output_dir = _private_path(output_dir, REPO_ROOT, "Output directory")
     secure_private_directory(output_dir.parent)
@@ -930,6 +955,7 @@ def execute_routes(
             folds=folds,
             seed=seed,
             resume=resume,
+            responses_max_output_tokens=responses_max_output_tokens,
         )
 
 
@@ -1447,8 +1473,15 @@ def write_report(
         },
         "router_execution_provenance": {
             key: manifest.get(key)
-            for key in ("router_protocol_version", "router_model", "candidate_ids", "router_code_sha256", "git_branch", "git_commit", "campaign_report_sha256", "registry_sha256", "fold_count", "seed", "lane_id")
+            for key in ("router_protocol_version", "router_model", "responses_max_output_tokens", "candidate_ids", "router_code_sha256", "git_branch", "git_commit", "campaign_report_sha256", "registry_sha256", "fold_count", "seed", "lane_id")
         },
+        "responses_reasoning_token_coverage": sum(
+            isinstance(row.get("reasoning_tokens"), (int, float)) for row in finished if row.get("router") == "responses"
+        ),
+        "responses_reasoning_tokens_total": sum(
+            row["reasoning_tokens"] for row in finished
+            if row.get("router") == "responses" and isinstance(row.get("reasoning_tokens"), (int, float))
+        ),
         "router_code_revisions": [
             {
                 "phase": "wave_start",
@@ -1553,6 +1586,8 @@ def main() -> int:
     parser.add_argument("--lab-config", type=Path, help="Explicit private lab lane config; required with --execute")
     parser.add_argument("--folds", type=int, default=DEFAULT_FOLDS)
     parser.add_argument("--seed", type=int, default=DEFAULT_SEED)
+    parser.add_argument("--responses-max-output-tokens", type=int, default=DEFAULT_RESPONSES_MAX_OUTPUT_TOKENS,
+                        help="Responses API output limit; recorded as an experiment condition")
     parser.add_argument("--bootstrap-replicates", type=int, default=2000)
     parser.add_argument("--dry-run", action="store_true", help="Validate pairing and print the route schedule without API calls")
     parser.add_argument("--execute", action="store_true", help="Make the held-out Responses and Decisions API calls")
@@ -1566,6 +1601,8 @@ def main() -> int:
         parser.error("--resume requires --execute")
     if args.bootstrap_replicates < 1:
         parser.error("--bootstrap-replicates must be positive")
+    if args.responses_max_output_tokens < 1:
+        parser.error("--responses-max-output-tokens must be positive")
     try:
         registry = load_registry()
         report, campaign_root = validate_campaign(args.campaign_report, registry)
@@ -1587,6 +1624,7 @@ def main() -> int:
                         },
                         "router_variants": [variant["name"] for variant in router_variants()],
                         "expected_router_calls": expected,
+                        "responses_max_output_tokens": args.responses_max_output_tokens,
                         "raw_route_inputs_saved": False,
                     },
                     indent=2,
@@ -1602,6 +1640,7 @@ def main() -> int:
             folds=args.folds,
             seed=args.seed,
             resume=args.resume,
+            responses_max_output_tokens=args.responses_max_output_tokens,
         )
         write_report(
             args.output_dir,

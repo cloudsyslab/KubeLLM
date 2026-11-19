@@ -169,7 +169,11 @@ def test_responses_structured_choice_and_unknown_candidate_rejected():
         "model": "gpt-6-luna",
         "status": "completed",
         "output": [{"content": [{"type": "output_text", "text": '{"candidate":"gpt-6-luna"}'}]}],
-        "usage": {"input_tokens": 100, "output_tokens": 10},
+        "usage": {
+            "input_tokens": 100,
+            "output_tokens": 10,
+            "output_tokens_details": {"reasoning_tokens": 7},
+        },
     }
     with patch.object(router, "_post_json", return_value=(response, "req-response")) as post:
         parsed, usage, request_id, _ = router.call_router(
@@ -177,6 +181,8 @@ def test_responses_structured_choice_and_unknown_candidate_rejected():
         )
     endpoint, body, _ = post.call_args.args
     assert endpoint == "responses"
+    assert body["max_output_tokens"] == router.DEFAULT_RESPONSES_MAX_OUTPUT_TOKENS
+    assert usage["reasoning_tokens"] == 7
     assert body["text"]["format"]["strict"] is True
     assert body["text"]["format"]["schema"]["properties"]["candidate"]["enum"] == sorted(
         item["id"] for item in registry["candidates"]
@@ -190,6 +196,35 @@ def test_responses_structured_choice_and_unknown_candidate_rejected():
                 "status": "completed",
                 "output": [{"content": [{"type": "output_text", "text": '{"candidate":"unknown"}'}]}],
             },
+            {"gpt-6-luna"},
+        )
+
+
+def test_responses_max_output_tokens_is_configurable():
+    registry = router.load_registry()
+    variant = next(item for item in router.router_variants() if item["router"] == "responses")
+    response = {
+        "model": "gpt-6-luna",
+        "status": "completed",
+        "output": [{"content": [{"type": "output_text", "text": '{"candidate":"gpt-6-luna"}'}]}],
+        "usage": {"input_tokens": 100, "output_tokens": 10},
+    }
+    with patch.object(router, "_post_json", return_value=(response, "req-response")) as post:
+        router.call_router(
+            variant,
+            "private test prompt",
+            registry,
+            "test-key",
+            responses_max_output_tokens=25_000,
+        )
+    _, body, _ = post.call_args.args
+    assert body["max_output_tokens"] == 25_000
+
+
+def test_responses_incomplete_error_preserves_api_reason():
+    with pytest.raises(ValueError, match="responses_incomplete_max_output_tokens"):
+        router.parse_responses(
+            {"status": "incomplete", "incomplete_details": {"reason": "max_output_tokens"}},
             {"gpt-6-luna"},
         )
 
