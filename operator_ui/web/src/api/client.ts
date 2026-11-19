@@ -1,5 +1,6 @@
 import type {
   DataSourceInfo,
+  CampaignHealthHistory,
   JobEvent,
   OverviewSnapshot,
   OperatorCase,
@@ -28,6 +29,7 @@ export interface OperatorApi {
   stopJob(id: string): Promise<OperatorJob>;
   telemetry(): Promise<TelemetrySample>;
   topology(): Promise<TopologySnapshot>;
+  topologyHistory(campaignId: string): Promise<CampaignHealthHistory>;
   publishPreview(id: string): Promise<PublishPreview>;
   publishPreviewFile(id: string, path: string): Promise<{ path: string; content: string }>;
   publish(id: string, token: string): Promise<OperatorJob>;
@@ -109,6 +111,7 @@ const fixtureApi: OperatorApi = {
   stopJob: unavailable,
   telemetry: unavailable,
   topology: unavailable,
+  topologyHistory: unavailable,
   publishPreview: unavailable,
   publishPreviewFile: unavailable,
   publish: unavailable,
@@ -151,6 +154,10 @@ const httpApi: OperatorApi = {
   },
   topology() {
     return readJson("/api/topology");
+  },
+  topologyHistory(campaignId) {
+    const query = new URLSearchParams({ campaign_id: campaignId });
+    return readJson(`/api/topology/history?${query.toString()}`);
   },
   publishPreview(id) {
     return sendJson(`/api/publish/preview/${encodeURIComponent(id)}`, "POST");

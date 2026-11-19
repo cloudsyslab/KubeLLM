@@ -327,6 +327,11 @@ def _selected_profile(config: dict[str, Any]) -> dict[str, Any]:
                 nodes.append({"name": str(meta.get("name", "unknown"))[:253], "status": "Ready" if ready is True else "NotReady" if ready is False else "Unknown", "ip": ip if isinstance(ip, str) else None})
         except ValueError:
             nodes = []
+    # A Ready node returned through the lane's dedicated kubeconfig is direct
+    # evidence that this selected profile is running, even when Minikube's
+    # status formatter is unavailable or returns an unexpected value.
+    if any(node["status"] == "Ready" for node in nodes):
+        selected_status = "Running"
     version_raw = _command(["kubectl", "--kubeconfig", str(kubeconfig), "version", "-o", "json"], timeout=8)
     version = None
     if version_raw:

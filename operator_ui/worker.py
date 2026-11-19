@@ -7,6 +7,7 @@ import json
 import os
 import subprocess
 import sys
+import threading
 import time
 from datetime import datetime, timezone
 from pathlib import Path
@@ -16,9 +17,10 @@ from .jobs import (
     add_attempt,
     add_event,
     app_value,
+    record_campaign_health,
     get_job,
     now,
-    set_app_value,
+    set_app_values,
     update_job,
     worker_config,
 )
@@ -31,6 +33,8 @@ READINESS_SCRIPT = REPO / ".agents" / "skills" / "kubellm-benchmarks" / "scripts
 RUNNER = REPO / "debug_assistant_latest" / "runner.py"
 REPORTER = REPO / ".agents" / "skills" / "kubellm-benchmarks" / "scripts" / "summarize_run.py"
 _RUN_STARTED: dict[str, float] = {}
+_HEALTH_SAMPLERS: dict[str, tuple[threading.Event, threading.Thread]] = {}
+HEALTH_SAMPLE_INTERVAL_S = 30
 
 
 def _private_json(path: Path, data: dict) -> None:
@@ -50,6 +54,56 @@ def _private_json(path: Path, data: dict) -> None:
 def _stop_requested(job_id: str) -> bool:
     job = get_job(job_id)
     return bool(job and job["stop_requested"])
+
+
+def _capture_campaign_health(job_id: str, lane_fingerprint: str) -> None:
+    """Capture a bounded, read-only observation tied to this campaign and lane."""
+    try:
+        if private_lab_fingerprint() != lane_fingerprint:
+            return
+        from . import telemetry
+
+        host = telemetry.host_snapshot()
+        topology = telemetry.topology_snapshot()
+        sampled_at = topology.get("sampled_at") or host.get("sampled_at") or now()
+        record_campaign_health(job_id, lane_fingerprint, {
+            "sampled_at": sampled_at,
+            "telemetry": host,
+            "topology": topology,
+        })
+    except Exception:
+        # A failed observation is not a benchmark failure and must not affect
+        # the runner. The next interval can still capture a real sample.
+        return
+
+
+def _start_health_sampler(job_id: str, lane_fingerprint: str) -> None:
+    stop = threading.Event()
+
+    def sample() -> None:
+        _capture_campaign_health(job_id, lane_fingerprint)
+        while not stop.wait(HEALTH_SAMPLE_INTERVAL_S):
+            job = get_job(job_id)
+            if not job or job["status"] not in {"queued", "running", "stop_requested"}:
+                return
+            if private_lab_fingerprint() != lane_fingerprint:
+                return
+            _capture_campaign_health(job_id, lane_fingerprint)
+
+    thread = threading.Thread(target=sample, name=f"health-{job_id[:8]}", daemon=True)
+    _HEALTH_SAMPLERS[job_id] = (stop, thread)
+    thread.start()
+
+
+def _stop_health_sampler(job_id: str) -> None:
+    sampler = _HEALTH_SAMPLERS.pop(job_id, None)
+    if not sampler:
+        return
+    stop, thread = sampler
+    stop.set()
+    # Health history is ancillary telemetry. Never hold up a runner result or
+    # teardown while a read-only cluster probe is finishing in the background.
+    thread.join(timeout=0.2)
 
 
 def _elapsed(job_id: str) -> float:
@@ -198,11 +252,13 @@ def _run_readiness_job(job_id: str, kind: str) -> None:
             "hint": "The selected lane changed during preflight. Run the checks again.",
         })
     if readiness["status"] == "READY":
-        set_app_value("readiness_status", "READY")
-        set_app_value("readiness_at", now())
-        set_app_value("readiness_job", job_id)
-        set_app_value("readiness_lane_fingerprint", lane_fingerprint)
-        set_app_value("readiness_server_id", server_id)
+        set_app_values({
+            "readiness_status": "READY",
+            "readiness_at": now(),
+            "readiness_job": job_id,
+            "readiness_lane_fingerprint": lane_fingerprint,
+            "readiness_server_id": server_id,
+        })
         add_event(job_id, {
             "t": _elapsed(job_id),
             "attempt": 0,
@@ -213,11 +269,13 @@ def _run_readiness_job(job_id: str, kind: str) -> None:
         })
         _finish(job_id, "completed", "Environment checks passed.", result)
     else:
-        set_app_value("readiness_status", "BLOCKED")
-        set_app_value("readiness_at", now())
-        set_app_value("readiness_job", job_id)
-        set_app_value("readiness_lane_fingerprint", lane_fingerprint)
-        set_app_value("readiness_server_id", server_id)
+        set_app_values({
+            "readiness_status": "BLOCKED",
+            "readiness_at": now(),
+            "readiness_job": job_id,
+            "readiness_lane_fingerprint": lane_fingerprint,
+            "readiness_server_id": server_id,
+        })
         add_event(job_id, {
             "t": _elapsed(job_id),
             "attempt": 0,
@@ -350,6 +408,8 @@ def _run_campaign(job_id: str, config: dict, run_root: Path) -> None:
     }
     _private_json(run_root / "campaign.json", manifest)
     update_job(job_id, status="running", started_at=now(), current_label="Preparing serial campaign.")
+    lane_fingerprint = private_lab_fingerprint()
+    _start_health_sampler(job_id, lane_fingerprint)
     for sequence, item in enumerate(items, start=1):
         if _stop_requested(job_id):
             manifest["status"] = "stopped"
@@ -358,6 +418,7 @@ def _run_campaign(job_id: str, config: dict, run_root: Path) -> None:
             _private_json(run_root / "campaign.json", manifest)
             completed = safe_campaign_attempts([attempts_dir])
             _write_campaign_report(job_id, run_root, len(items), completed, "Stopped")
+            _stop_health_sampler(job_id)
             _finish(job_id, "stopped", "Stopped between attempts; completed results are preserved.")
             return
 
@@ -448,6 +509,7 @@ def _run_campaign(job_id: str, config: dict, run_root: Path) -> None:
     manifest["status"] = "completed"
     manifest["finished_at"] = now()
     _private_json(run_root / "campaign.json", manifest)
+    _stop_health_sampler(job_id)
     _finish(job_id, "completed", "Campaign finished. Review per-case Ground Truth, Verification, and integrity separately.")
 
 
@@ -481,6 +543,7 @@ def run_job(job_id: str) -> None:
         if current and current["status"] not in {"completed", "blocked", "stopped", "failed"}:
             _finish(job_id, "failed", "The operator task stopped unexpectedly. Recorded outputs are preserved.")
     finally:
+        _stop_health_sampler(job_id)
         _RUN_STARTED.pop(job_id, None)
 
 

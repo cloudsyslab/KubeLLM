@@ -71,6 +71,45 @@ def _readiness_fresh() -> bool:
         return False
 
 
+def _readiness_snapshot() -> dict:
+    """One shared view of the last result and whether it can gate a campaign."""
+    job_id = jobs.app_value("readiness_job")
+    job = jobs.get_job(job_id) if job_id else None
+    result = ((job or {}).get("result") or {}).get("readiness") or {}
+    status = result.get("status") or jobs.app_value("readiness_status")
+    checked_at = (job or {}).get("finished_at") or jobs.app_value("readiness_at")
+    lane_matches = jobs.app_value("readiness_lane_fingerprint") == private_lab_fingerprint()
+    server_matches = jobs.app_value("readiness_server_id") == OPERATOR_INSTANCE_ID
+    age = None
+    if checked_at:
+        try:
+            age = (datetime.now(timezone.utc) - datetime.fromisoformat(checked_at)).total_seconds()
+        except (TypeError, ValueError):
+            age = None
+    time_fresh = age is not None and 0 <= age <= 20 * 60
+    fresh = lane_matches and server_matches and time_fresh
+    if not status:
+        reason = "never_checked"
+    elif not lane_matches:
+        reason = "lane_changed"
+    elif not server_matches:
+        reason = "operator_restarted"
+    elif not time_fresh:
+        reason = "expired"
+    elif status == "BLOCKED":
+        reason = "blocked"
+    else:
+        reason = None
+    return {
+        "status": status,
+        "checked_at": checked_at,
+        "job_id": job_id,
+        "fresh": fresh,
+        "ready": status == "READY" and fresh,
+        "reason": reason,
+    }
+
+
 def _new_worker(kind: str, config: dict, total: int = 0) -> dict:
     try:
         job = jobs.create_job(kind, config, total)
@@ -194,13 +233,6 @@ def logout():
 def overview(request: Request):
     runs = all_runs()
     recent = [public_run(item) for item in runs[:8]]
-    readiness_at = jobs.app_value("readiness_at")
-    readiness_status = jobs.app_value("readiness_status")
-    readiness_matches = (
-        jobs.app_value("readiness_lane_fingerprint") == private_lab_fingerprint()
-        and jobs.app_value("readiness_server_id") == OPERATOR_INSTANCE_ID
-    )
-    readiness_fresh = _readiness_fresh()
     return {
         "headline": history_summary(runs),
         "sources": {
@@ -208,10 +240,7 @@ def overview(request: Request):
             "exploratory": sum(item["source"] == "exploratory" for item in runs),
             "local": sum(item["source"] == "local" for item in runs),
         },
-        "readiness": {
-            "status": readiness_status if readiness_fresh or readiness_matches and readiness_status == "BLOCKED" else None,
-            "checked_at": readiness_at,
-        },
+        "readiness": _readiness_snapshot(),
         "latest_runs": recent,
         "jobs": jobs.list_jobs(6),
     }
@@ -236,6 +265,13 @@ def get_telemetry():
 @app.get("/api/topology")
 def get_topology():
     return telemetry.topology_snapshot()
+
+
+@app.get("/api/topology/history")
+def get_topology_history(campaign_id: str):
+    if not JOB_ID_RE.fullmatch(campaign_id):
+        raise HTTPException(status_code=404, detail="Campaign not found.")
+    return jobs.campaign_health_history(campaign_id, private_lab_fingerprint())
 
 
 @app.get("/api/cases")
