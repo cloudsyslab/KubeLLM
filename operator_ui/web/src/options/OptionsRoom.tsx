@@ -113,6 +113,7 @@ function SurfaceRoom({ surface }: { surface: Surface }) {
 
 /** Surfaces driven by the shared demo campaign show the replay controls. */
 export const LIVE_SURFACES = new Set<Surface>(["execution", "resources", "topology", "jobs", "dock"]);
+const LIVE_DETAIL_SURFACES = new Set<Surface>(["execution", "jobs", "publish"]);
 
 function SurfaceNav({ value, onChange }: { value: Surface | "overview"; onChange: (next: Surface | "overview") => void }) {
   const groups = [...new Set(SURFACES.map((s) => s.group))];
@@ -186,7 +187,7 @@ export function OptionsRoomPage() {
 export function SurfacePage({ surface }: { surface: Surface }) {
   const [option] = useOptionChoice(surface);
   const def = surfaceDef(surface);
-  if (api.isLive && surface !== "runs" && surface !== "compare") {
+  if (api.isLive && LIVE_DETAIL_SURFACES.has(surface)) {
     return (
       <Suspense fallback={<StageFallback />}>
         <LiveSurface key={surface} surface={surface} />
@@ -200,13 +201,6 @@ export function SurfacePage({ surface }: { surface: Surface }) {
         eyebrow={def.group}
         title={def.title}
         description={def.description}
-        actions={
-          <Link to={`/options?surface=${surface}`} className="inline-flex h-8 items-center gap-2 rounded-md border border-line px-3 text-[12.5px] text-fg-2 hover:bg-surface-2 hover:text-fg">
-            <span className="font-mono text-fg-3">{option.letter}</span>
-            {option.name}
-            <span className="text-fg-3">{isDecided(def) ? "· decided" : `· compare ${def.options.length} options`}</span>
-          </Link>
-        }
       />
       {!api.isLive && LIVE_SURFACES.has(surface) && <ReplayBar />}
       <Suspense fallback={<StageFallback />}>

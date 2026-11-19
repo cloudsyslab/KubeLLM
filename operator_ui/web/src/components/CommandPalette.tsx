@@ -51,7 +51,6 @@ export function CommandPalette({ open, onOpenChange }: { open: boolean; onOpenCh
     const pages: Item[] = [
       { id: "page-models", group: "Pages", title: "Models", detail: "Evaluate", to: "/", haystack: "models explorer leaderboard evaluate" },
       ...SURFACES.filter((s) => s.path).map((s) => ({ id: `page-${s.id}`, group: "Pages" as const, title: s.title, detail: s.group, to: s.path!, haystack: `${s.title} ${s.label} ${s.group}`.toLowerCase() })),
-      { id: "page-options", group: "Pages", title: "Options room", detail: "Design review", to: "/options", haystack: "options room design review picks" },
     ];
     const configs = runs.data ? buildConfigs(runs.data, "all") : [];
     const models: Item[] = configs.map((c) => ({

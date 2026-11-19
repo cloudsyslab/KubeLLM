@@ -14,35 +14,18 @@ interface Row {
   lane?: boolean;
 }
 
-const SYSTEM = ["sys:kube-apiserver", "sys:etcd", "sys:kube-controller-manager", "sys:kube-scheduler", "sys:kube-proxy", "sys:coredns", "sys:storage-provisioner"];
-
-/** One containment tree: the lab server, its processes and containers, and the selected lane's cluster nested inside its minikube profile. */
+/** Render only the containment described by each node's parent field. */
 function tree(graph: TopologyGraph, collapsed: Set<string>): Row[] {
-  const row = (id: string, depth: number, extra: Partial<Row> = {}): Row[] => (graph.byId.has(id) ? [{ key: id, id, depth, ...extra }] : []);
-  const kids = (id: string, depth: number, ids: string[]) => (collapsed.has(id) ? [] : ids.flatMap((child) => row(child, depth, { lane: true })));
-  const fixture = ["fixture:pod", "fixture:svc", "fixture:ep"];
-  return [
-    ...row("host", 0),
-    ...["operator", "worker", "rag", "ollama", "gpu-0", "gpu-1"].flatMap((id) => row(id, 1)),
-    ...row("docker", 1, { collapsible: true }),
-    ...(collapsed.has("docker")
-      ? []
-      : [
-          ...row("pgvector", 2),
-          ...row("profile:minh-lane", 2, { collapsible: true }),
-          ...(collapsed.has("profile:minh-lane")
-            ? []
-            : [
-                ...row("node:minh-lane", 3, { lane: true }),
-                ...row("ns:default", 3, { collapsible: true, lane: true }),
-                ...kids("ns:default", 4, [...fixture, "pod:curl-pod", "pod:tmpcurl"]),
-                ...row("ns:kube-system", 3, { collapsible: true, lane: true }),
-                ...kids("ns:kube-system", 4, SYSTEM),
-              ]),
-          ...["profile:minikube", "profile:minh", "profile:lamap", "profile:xyz"].flatMap((id) => row(id, 2)),
-        ]),
-    ...row("openai", 0),
-  ];
+  const children = new Map<string, string[]>();
+  for (const node of graph.nodes) if (node.parent) children.set(node.parent, [...(children.get(node.parent) ?? []), node.id]);
+  const walk = (id: string, depth: number): Row[] => {
+    const node = graph.byId.get(id);
+    if (!node) return [];
+    const descendants = children.get(id) ?? [];
+    const row: Row = { key: id, id, depth, collapsible: descendants.length > 0, lane: node.scope === "lane" };
+    return [row, ...(collapsed.has(id) ? [] : descendants.flatMap((child) => walk(child, depth + 1)))];
+  };
+  return graph.nodes.filter((node) => !node.parent).flatMap((node) => walk(node.id, 0));
 }
 
 // Indentation per depth, narrower on phones so deep rows keep their names.
@@ -165,6 +148,7 @@ export function MapView({
   onToggleWhatIf,
   onWhatIfOff,
   panel,
+  allowWhatIf = true,
 }: {
   graph: TopologyGraph;
   selected: string;
@@ -173,6 +157,7 @@ export function MapView({
   onToggleWhatIf: () => void;
   onWhatIfOff: () => void;
   panel: ReactNode;
+  allowWhatIf?: boolean;
 }) {
   const [filter, setFilter] = useState<FilterId>("all");
   const [query, setQuery] = useState("");
@@ -237,6 +222,7 @@ export function MapView({
 
   const rows = useMemo(() => tree(graph, visible ? new Set() : collapsed).filter((r) => !visible || visible.has(r.id)), [graph, collapsed, visible]);
   const selectedShown = rows.some((r) => r.id === selected);
+  const selectedProfile = graph.nodes.find((node) => node.kind === "profile" && node.tags.includes("selected-lane"));
 
   const onRowKey = (event: KeyboardEvent<HTMLButtonElement>, index: number, row: Row) => {
     const move = (to: number) => {
@@ -257,9 +243,9 @@ export function MapView({
     } else if (event.key === "ArrowLeft" && row.collapsible && !collapsed.has(row.id)) {
       event.preventDefault();
       toggle(row.id);
-    } else if (event.key === "w") {
+    } else if (event.key === "w" && allowWhatIf) {
       onToggleWhatIf();
-    } else if (event.key === "Escape") {
+    } else if (event.key === "Escape" && allowWhatIf) {
       onWhatIfOff();
     }
   };
@@ -270,7 +256,7 @@ export function MapView({
       <section className="min-w-0 self-start overflow-hidden rounded-lg border border-line bg-surface">
         <header className="border-b border-line px-4 py-2.5">
           <h3 className="text-[13px] font-medium">Lab server and lane</h3>
-          <p className="text-[12px] text-fg-3">Processes, devices, and containers on the lab server, with the selected lane's cluster inside its minikube profile</p>
+          <p className="text-[12px] text-fg-3">Host resources and read-only inventory for {selectedProfile?.name ?? "the selected lane"}</p>
         </header>
         {rows.length ? (
           <ul className="divide-y divide-line">
@@ -285,7 +271,7 @@ export function MapView({
                       <span className="absolute inset-y-0 left-[42px] w-px bg-accent-line sm:left-[54px]" aria-hidden />
                       <span className="w-[calc(12px_+_var(--depth)_*_12px_+_16px)] shrink-0 sm:w-[calc(12px_+_var(--depth)_*_18px_+_16px)]" aria-hidden />
                       <span className="min-w-0 truncate text-[11.5px] text-fg-3">
-                        Inside the lane · read through <span className="font-mono text-fg-2">minh-lane</span>'s own kubeconfig
+                        Inside the selected lane · read through its dedicated kubeconfig
                       </span>
                     </li>
                   )}

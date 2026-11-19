@@ -70,9 +70,16 @@ export interface DataSourceInfo {
 export interface OverviewSnapshot {
   headline?: Record<string, unknown>;
   sources?: Record<string, number>;
-  readiness?: { status: string | null; checked_at: string | null };
+  readiness?: { status: string | null; checked_at: string | null; job_id?: string | null; fresh?: boolean; ready?: boolean; reason?: string | null };
   latest_runs?: Run[];
   jobs?: OperatorJob[];
+}
+
+export interface CampaignHealthHistory {
+  campaign_id: string;
+  samples: { sampled_at: string; telemetry: TelemetrySample; topology: TopologySnapshot }[];
+  truncated: boolean;
+  reason: string | null;
 }
 
 export type JobKind = "readiness" | "prepare" | "campaign" | "publish";
@@ -89,6 +96,12 @@ export interface JobAttempt {
   verified: boolean | null;
   duration_s: number | null;
   run_ref?: string | null;
+  started_at?: string | null;
+  finished_at?: string | null;
+  return_code?: number | null;
+  outcome?: string | null;
+  ground_truth_configured?: boolean | null;
+  report_available?: boolean;
 }
 
 export interface OperatorJob {
@@ -103,11 +116,21 @@ export interface OperatorJob {
   total: number;
   current_label: string | null;
   attempts: JobAttempt[];
-  plan?: { case: string; technique: Technique; debug_model: string | null; repetition: number }[];
+  campaign?: {
+    cases: string[];
+    techniques: Technique[];
+    debug_models: (string | null)[];
+    repetitions: number;
+    api_model: string | null;
+    verification_model: string | null;
+  };
   result?: {
     readiness?: ReadinessResult;
     preparation?: RepairResult[];
     reason?: string;
+    branch?: string;
+    remote?: string;
+    commit?: string;
   } | null;
   stop_requested: boolean;
 }

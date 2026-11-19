@@ -622,16 +622,16 @@ export function Inspector({
         )}
       </div>
 
-      <WhatIfToggle on={whatIfOn} onChange={onWhatIf} className="w-full" />
-      {whatIfOn && impact && (
+      {graph.relationshipsKnown !== false && <WhatIfToggle on={whatIfOn} onChange={onWhatIf} className="w-full" />}
+      {graph.relationshipsKnown !== false && whatIfOn && impact && (
         <section className="grid gap-1.5">
           <h4 className="label !text-[10px]">Why each fails</h4>
           <WhatIfPanel graph={graph} impact={impact} onSelect={onSelect} />
         </section>
       )}
 
-      <Section title="Depends on" count={hopCount(ups.length, upAll.size)}>
-        {ups.length ? (
+      <Section title="Depends on" count={graph.relationshipsKnown === false ? undefined : hopCount(ups.length, upAll.size)}>
+        {graph.relationshipsKnown === false ? <p className="text-[12.5px] text-fg-3">Dependency links are not included in the live inventory.</p> : ups.length ? (
           <>
             <ul className="-mx-2 grid">
               {ups.map((link) => (
@@ -644,8 +644,8 @@ export function Inspector({
           <p className="text-[12.5px] text-fg-3">Nothing: it's a foundation.</p>
         )}
       </Section>
-      <Section title="Needed by" count={hopCount(downs.length, downAll.size)}>
-        {downs.length ? (
+      <Section title="Needed by" count={graph.relationshipsKnown === false ? undefined : hopCount(downs.length, downAll.size)}>
+        {graph.relationshipsKnown === false ? <p className="text-[12.5px] text-fg-3">Dependent components are not reported by the live inventory.</p> : downs.length ? (
           <>
             <ul className="-mx-2 grid">
               {downs.map((link) => (
@@ -671,9 +671,7 @@ export function Inspector({
           </dl>
         </Section>
       )}
-      <Section title="Recent changes">
-        <ChangeList id={id} />
-      </Section>
+      {graph.relationshipsKnown !== false && <Section title="Recent changes"><ChangeList id={id} /></Section>}
     </div>
   );
 }
