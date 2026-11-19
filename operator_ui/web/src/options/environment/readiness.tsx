@@ -1,6 +1,9 @@
 import clsx from "clsx";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Check, Circle, CircleMinus, CircleX, LoaderCircle, TriangleAlert } from "lucide-react";
 import { useEffect, useState, useSyncExternalStore, type ReactNode } from "react";
+import { api } from "@/api/client";
+import type { OperatorJob, ReadinessCheckResult } from "@/api/types";
 import { Segmented, Tag, Tip } from "@/components/ui";
 import { DEMO_NOW, JOBS, type DemoJob } from "@/demo/jobs";
 import { BLOCKED_CHECKS, GROUPS, LANE, READINESS_TTL_MIN, READY_CHECKS, summarize, type CheckLevel, type ReadinessCheck } from "@/demo/readiness";
@@ -94,6 +97,7 @@ export interface RepairResult {
   ok: boolean;
   message: string;
   ms: number;
+  commands?: ReadinessCheckResult["commands"];
 }
 
 // Repair outcomes, worded as check_readiness.py words them.
@@ -308,8 +312,8 @@ function announceFinal(run: ReadinessRun) {
 }
 
 export const readiness = {
-  run: () => startRun("readiness"),
-  prepare: () => startRun("prepare"),
+  run: () => api.isLive ? api.runReadiness() : startRun("readiness"),
+  prepare: () => api.isLive ? api.prepare() : startRun("prepare"),
   setScenario(scenario: Scenario) {
     if (timer) window.clearTimeout(timer);
     emit({ scenario, scenarioRun: scenarioRun(scenario), session: [], active: undefined });
@@ -326,7 +330,7 @@ export type Freshness =
   | { state: "checking"; active: ActiveRun; latest?: ReadinessRun }
   | { state: "never" }
   | { state: "blocked"; latest: ReadinessRun; age: number }
-  | { state: "stale"; latest: ReadinessRun; age: number }
+  | { state: "stale"; latest: ReadinessRun; age: number; reason?: string }
   | { state: "fresh"; latest: ReadinessRun; age: number; left: number };
 
 export function freshnessOf(latest: ReadinessRun | undefined, active: ActiveRun | undefined, now: number): Freshness {
@@ -340,10 +344,93 @@ export function freshnessOf(latest: ReadinessRun | undefined, active: ActiveRun 
 
 /** Readiness, freshness, and the launch gate, re-evaluated every second. */
 export function useFreshness() {
-  const r = useReadiness();
-  const now = useDemoNow();
-  const fresh = freshnessOf(r.latest, r.active, now);
-  return { ...r, now, fresh, canLaunch: fresh.state === "fresh" };
+  const local = useReadiness();
+  const demoTime = useDemoNow();
+  const [realTime, setRealTime] = useState(Date.now());
+  useEffect(() => {
+    if (!api.isLive) return;
+    const id = window.setInterval(() => setRealTime(Date.now()), 1000);
+    return () => window.clearInterval(id);
+  }, []);
+  const jobsQuery = useQuery({ queryKey: ["operator-jobs"], queryFn: api.jobs, enabled: api.isLive, refetchInterval: 1_500, staleTime: 0, retry: 0 });
+  const overviewQuery = useQuery({ queryKey: ["operator-overview"], queryFn: api.overview, enabled: api.isLive, refetchInterval: 10_000, staleTime: 0, retry: 0 });
+  const now = api.isLive ? realTime : demoTime;
+  if (!api.isLive) {
+    const fresh = freshnessOf(local.latest, local.active, now);
+    return { ...local, now, fresh, busy: Boolean(local.active), canLaunch: fresh.state === "fresh", error: undefined as Error | undefined };
+  }
+  const all = jobsQuery.data ?? [];
+  const toRun = (job: OperatorJob): ReadinessRun => {
+    const result = job.result?.readiness;
+    const checks = (result?.checks ?? []).map((check) => fromOperatorCheck(check));
+    return {
+      id: job.id,
+      kind: job.kind === "prepare" ? "prepare" : "readiness",
+      mode: result?.mode ?? "check-only",
+      status: result?.status ?? (job.status === "completed" ? "READY" : "BLOCKED"),
+      startedAt: Date.parse(job.started_at ?? job.created_at),
+      finishedAt: Date.parse(job.finished_at ?? job.updated_at),
+      checks,
+      repairs: (result?.repairs ?? []).map((repair) => ({ name: repair.name, label: repair.label, ok: repair.status === "pass", message: repair.message ?? "", ms: repair.duration_ms ?? 0, commands: repair.commands })),
+      summary: job.current_label ?? job.status,
+      origin: "history",
+    };
+  };
+  const readinessJobs = all.filter((job) => job.kind === "readiness" || job.kind === "prepare").sort((a, b) => Date.parse(b.finished_at ?? b.created_at) - Date.parse(a.finished_at ?? a.created_at));
+  const activeJob = readinessJobs.find((job) => ["queued", "running", "stop_requested"].includes(job.status));
+  const operatorBusy = all.some((job) => ["queued", "running", "stop_requested"].includes(job.status));
+  const latestJob = readinessJobs.find((job) => job.result?.readiness);
+  const latest = latestJob ? toRun(latestJob) : undefined;
+  const active: ActiveRun | undefined = activeJob ? {
+    id: activeJob.id,
+    kind: activeJob.kind === "prepare" ? "prepare" : "readiness",
+    pass: activeJob.kind === "prepare" ? "repair" : "check",
+    label: activeJob.current_label ?? "Checking the selected lab environment.",
+    startedAt: Date.parse(activeJob.started_at ?? activeJob.created_at),
+    done: [],
+    repairs: [],
+    total: activeJob.total,
+    target: [],
+    announce: activeJob.status,
+  } : undefined;
+  const runs = readinessJobs.filter((job) => job.result?.readiness).map(toRun);
+  const age = latest ? Math.max(0, now - latest.finishedAt) : 0;
+  const snapshot = overviewQuery.data?.readiness;
+  const fresh: Freshness = active
+    ? { state: "checking", active, latest }
+    : !latest
+      ? { state: "never" }
+      : latest.status === "BLOCKED" && snapshot?.fresh
+        ? { state: "blocked", latest, age }
+        : snapshot?.ready
+          ? { state: "fresh", latest, age, left: Math.max(0, TTL_MS - age) }
+          : { state: "stale", latest, age, reason: snapshot?.reason ?? (latest.status === "BLOCKED" ? "blocked" : "expired") };
+  const scenarioState: State = { scenario: "stale", history: runs, session: [], active };
+  return {
+    ...scenarioState,
+    runs,
+    latest,
+    finalMessage: "",
+    now,
+    fresh,
+    busy: operatorBusy,
+    canLaunch: fresh.state === "fresh" && !operatorBusy && !jobsQuery.isError && !overviewQuery.isError,
+    error: jobsQuery.error ?? overviewQuery.error ?? undefined,
+  };
+}
+
+function fromOperatorCheck(check: ReadinessCheckResult): ReadinessCheck {
+  const name = check.name.toLowerCase();
+  const group = name.includes("provider") || name.includes("adapter") ? "providers"
+    : name.includes("repo") || name.includes("checkout") ? "repo"
+      : name.includes("venv") || name.includes("python") || name.includes("pytest") ? "venv"
+        : name.includes("artifact") || name.includes("path") || name.includes("disk") ? "artifacts"
+          : name.includes("kubeconfig") || name.includes("lane_config") ? "kubeconfig"
+            : name.includes("rag") ? "rag"
+              : name.includes("pgvector") || name.includes("database") || name.includes("db_") ? "pgvector"
+                : name.includes("runner") || name.includes("ground_truth") || name.includes("case_catalog") ? "static" : "live";
+  const level: CheckLevel = check.status === "skip" ? "skip" : check.status === "pass" ? "pass" : check.blocking ? "block" : "warn";
+  return { id: check.name, group, label: check.label, level, detail: check.detail ?? check.hint ?? "", ms: check.duration_ms ?? 0, repairable: false, commands: check.commands };
 }
 
 // ---------------------------------------------------------------- pieces
@@ -386,8 +473,13 @@ export function freshnessLine(fresh: Freshness): string {
       return "No preflight on record for this lane.";
     case "blocked":
       return `Blocked ${ago(fresh.age)}. Resolve blockers, then run preflight again.`;
-    case "stale":
-      return `Ready ${ago(fresh.age)}, older than ${READINESS_TTL_MIN} minutes. Run preflight again.`;
+    case "stale": {
+      const explanation = fresh.reason === "lane_changed" ? "The selected lane changed since this check."
+        : fresh.reason === "operator_restarted" ? "The operator restarted since this check."
+          : fresh.latest.status === "BLOCKED" ? "The last check was blocked, but it no longer describes the current lane."
+            : `The last check is older than ${READINESS_TTL_MIN} minutes.`;
+      return `${explanation} Run preflight again.`;
+    }
     case "fresh":
       return `Ready ${ago(fresh.age)}; launches allowed until ${clockUtc(fresh.latest.finishedAt + TTL_MS)} UTC.`;
   }
@@ -406,25 +498,46 @@ export function groupChecks(checks: ReadinessCheck[]) {
 
 /** Run preflight (check-only) and Prepare environment (repair-safe), demo jobs. */
 export function RunActions({ className, size = "md" }: { className?: string; size?: "sm" | "md" }) {
-  const { active } = useReadiness();
-  const busy = Boolean(active);
+  const { active, error, busy } = useFreshness();
+  const queryClient = useQueryClient();
+  const [actionPending, setActionPending] = useState(false);
+  const [actionKind, setActionKind] = useState<"readiness" | "prepare">("readiness");
+  const [actionError, setActionError] = useState("");
+  const start = async (kind: "readiness" | "prepare") => {
+    setActionError("");
+    setActionKind(kind);
+    setActionPending(true);
+    try {
+      await (kind === "readiness" ? readiness.run() : readiness.prepare());
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ["operator-jobs"] }),
+        queryClient.invalidateQueries({ queryKey: ["operator-overview"] }),
+      ]);
+    } catch (cause) {
+      setActionError(cause instanceof Error ? cause.message : "The operator action could not be started.");
+    } finally {
+      setActionPending(false);
+    }
+  };
   const btn = clsx(
     "inline-flex shrink-0 cursor-pointer items-center justify-center gap-1.5 rounded-md font-medium whitespace-nowrap transition-colors disabled:cursor-not-allowed disabled:opacity-40",
     size === "sm" ? "h-7 px-2.5 text-[12.5px]" : "h-8 px-3 text-[13px]",
   );
-  const demo = <span className="font-mono text-[10px] tracking-[0.06em] uppercase opacity-60">Demo</span>;
+  const demo = api.isLive ? null : <span className="font-mono text-[10px] tracking-[0.06em] uppercase opacity-60">Demo</span>;
   return (
     <div className={clsx("flex flex-wrap items-center gap-2", className)}>
       <Tip content="check_readiness.py --check-only. Reads the lane and the runner gates; changes nothing.">
-        <button type="button" disabled={busy} onClick={readiness.run} className={clsx(btn, "bg-fg text-bg hover:bg-fg/85")}>
-          {active?.kind === "readiness" ? "Checking…" : "Run preflight"} {demo}
+        <button type="button" disabled={busy || actionPending} onClick={() => void start("readiness")} className={clsx(btn, "bg-fg text-bg hover:bg-fg/85")}>
+          {actionPending && actionKind === "readiness" || active?.kind === "readiness" ? "Checking…" : "Run preflight"} {demo}
         </button>
       </Tip>
       <Tip content="check_readiness.py --repair-safe, then a check-only recheck. Repairs only this lane's own services.">
-        <button type="button" disabled={busy} onClick={readiness.prepare} className={clsx(btn, "border border-line-strong bg-surface text-fg hover:bg-surface-2")}>
-          {active?.kind === "prepare" ? "Preparing…" : "Prepare environment"} {demo}
+        <button type="button" disabled={busy || actionPending} onClick={() => void start("prepare")} className={clsx(btn, "border border-line-strong bg-surface text-fg hover:bg-surface-2")}>
+          {actionPending && actionKind === "prepare" || active?.kind === "prepare" ? "Preparing…" : "Prepare environment"} {demo}
         </button>
       </Tip>
+      {error && <p className="basis-full text-[12px] text-warn">{error.message}</p>}
+      {actionError && <p role="alert" className="basis-full text-[12px] text-warn">{actionError}</p>}
     </div>
   );
 }
@@ -480,6 +593,7 @@ export function FreshnessBar({ fresh, className }: { fresh: Freshness; className
 
 /** Demo-only control: which readiness state the lane starts in. */
 export function ScenarioSwitch({ className }: { className?: string }) {
+  if (api.isLive) return null;
   const { scenario } = useReadiness();
   return (
     <div className={clsx("flex flex-wrap items-center gap-2", className)}>

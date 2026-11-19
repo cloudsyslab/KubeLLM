@@ -98,7 +98,10 @@ function LiveOverview() {
   if (!api.isLive) return null;
   if (query.error) return <p className="rounded-md border border-warn/40 bg-warn-soft px-3 py-2 text-[12px] text-warn">Live overview unavailable: {query.error.message}</p>;
   if (!query.data) return <p className="text-[12px] text-fg-3">Loading live overview…</p>;
-  const readiness = query.data.readiness?.status ?? "Not checked";
+  const readinessSnapshot = query.data.readiness;
+  const readiness = readinessSnapshot?.status === "BLOCKED" ? readinessSnapshot.fresh ? "Blocked" : "Stale"
+    : readinessSnapshot?.status === "READY" ? readinessSnapshot.ready ? "Ready" : "Stale"
+      : "Not checked";
   const sources = query.data.sources ?? {};
   const sourceCounts = query.data.sources
     ? `Sources · canonical ${sources.canonical ?? 0} · exploratory ${sources.exploratory ?? 0} · local ${sources.local ?? 0}`
@@ -106,7 +109,7 @@ function LiveOverview() {
   const recentJobCount = query.data.jobs?.length;
   return (
     <div className="flex flex-wrap items-center gap-x-6 gap-y-2 border-y border-line py-3 text-[12px]">
-      <span className="flex items-center gap-2"><span className="label !text-[10px]">Live preflight</span><Tag tone={readiness === "READY" ? "accent" : readiness === "BLOCKED" ? "warn" : "neutral"}>{readiness}</Tag>{query.data.readiness?.checked_at && <span className="num text-fg-3">{new Date(query.data.readiness.checked_at).toLocaleString()}</span>}</span>
+      <span className="flex items-center gap-2"><span className="label !text-[10px]">Live preflight</span><Tag tone={readiness === "Ready" ? "accent" : readiness === "Blocked" || readiness === "Stale" ? "warn" : "neutral"}>{readiness}</Tag>{readinessSnapshot?.checked_at && <span className="num text-fg-3">{new Date(readinessSnapshot.checked_at).toLocaleString()}</span>}{readinessSnapshot?.reason && readinessSnapshot.reason !== "blocked" && <span className="text-fg-3">· {readinessSnapshot.reason.replaceAll("_", " ")}</span>}</span>
       <span className="text-fg-2">{sourceCounts}</span>
       <span className="text-fg-3">{recentJobCount == null ? "Recent jobs unavailable" : `${recentJobCount} recent operator job${recentJobCount === 1 ? "" : "s"}`}</span>
     </div>

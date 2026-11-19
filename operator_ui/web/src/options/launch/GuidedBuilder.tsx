@@ -1,9 +1,10 @@
 import clsx from "clsx";
 import { ArrowRight, Check } from "lucide-react";
 import { useEffect, useRef, useState, type ReactNode } from "react";
+import { useQuery } from "@tanstack/react-query";
 import { useNavigate } from "react-router";
+import { api } from "@/api/client";
 import { Button, Tag } from "@/components/ui";
-import { DEMO_CASES } from "@/demo/campaign";
 import { techniqueLabel } from "@/lib/explore";
 import { count, duration, usd } from "@/lib/format";
 import { CheckMark, GROUPS, LANE, LiveAnnouncer, ScenarioSwitch, freshnessLine, readiness, useFreshness } from "../environment/readiness";
@@ -32,6 +33,7 @@ import {
   estimate,
   formula,
   plannedCount,
+  requestBody,
   useHistory,
   validate,
   type Plan,
@@ -55,8 +57,7 @@ const TITLES: Record<StepId, string> = {
 const FORMULA_STEP: StepId[] = ["cases", "models", "technique", "repetitions"];
 
 const STARTERS: { id: string; label: string; hint: string; plan: Partial<Plan>; open?: StepId }[] = [
-  { id: "canonical", label: "Canonical suite", hint: "27 cases · all at once · 5×", plan: { cases: CATALOG, techniques: ["allStepsAtOnce"], repetitions: 5, apiModel: "", verificationModel: "" }, open: "models" },
-  { id: "c7e2a91f", label: "Like c7e2a91f", hint: "2 models · 9 cases · 1×", plan: { cases: [...DEMO_CASES], techniques: ["allStepsAtOnce"], models: ["gpt-6-luna", "glm-4.7-flash:latest"], repetitions: 1, apiModel: "", verificationModel: "" } },
+  { id: "catalog", label: "Full case catalog", hint: "All available cases · all at once · 1×", plan: { cases: CATALOG, techniques: ["allStepsAtOnce"], repetitions: 1, apiModel: "", verificationModel: "" }, open: "models" },
 ];
 
 interface Action {
@@ -327,23 +328,35 @@ function MobileBar({ plan, action }: { plan: Plan; action: Action }) {
 
 // ---------------------------------------------------------------- page
 
-/** Starting is demo-only: it opens Execution, where the replay runs. */
+/** Live campaigns are started only from the final reviewed plan. */
 function useStart() {
   const navigate = useNavigate();
   const [starting, setStarting] = useState(false);
+  const [error, setError] = useState("");
   const timer = useRef<number | undefined>(undefined);
   useEffect(() => () => window.clearTimeout(timer.current), []);
-  const start = () => {
+  const start = (plan: Plan) => {
+    setError("");
     setStarting(true);
-    timer.current = window.setTimeout(() => navigate("/execution"), 700);
+    if (!api.isLive) {
+      timer.current = window.setTimeout(() => navigate("/execution"), 700);
+      return;
+    }
+    void api.startCampaign(requestBody(plan)).then((job) => {
+      navigate(`/execution?job=${encodeURIComponent(job.id)}`);
+    }).catch((cause: unknown) => {
+      setError(cause instanceof Error ? cause.message : "Campaign could not be started.");
+    }).finally(() => setStarting(false));
   };
-  return { starting, start };
+  return { starting, start, error };
 }
 
 export default function GuidedBuilder() {
   const history = useHistory();
   const { canLaunch } = useFreshness();
-  const { starting, start } = useStart();
+  const { starting, start, error: startError } = useStart();
+  const casesQuery = useQuery({ queryKey: ["operator-cases"], queryFn: api.cases, enabled: api.isLive, staleTime: 60_000, retry: 0 });
+  const catalog = api.isLive ? (casesQuery.data?.map((item) => item.id) ?? []) : CATALOG;
   const [plan, setPlan] = useState<Plan>(EMPTY_PLAN);
   const [current, setCurrent] = useState(0);
   const [reached, setReached] = useState(0);
@@ -365,7 +378,7 @@ export default function GuidedBuilder() {
   const stateOf = (index: number) => (index === current ? "active" : index < current || (index <= reached && index < LAST) ? "done" : "todo");
 
   const applyStarter = (starter: (typeof STARTERS)[number]) => {
-    update(starter.plan);
+    update({ ...starter.plan, ...(starter.id === "catalog" ? { cases: catalog } : {}) });
     setReached(LAST);
     go(STEP_IDS.indexOf(starter.open ?? "confirm"));
   };
@@ -382,9 +395,9 @@ export default function GuidedBuilder() {
     current === LAST
       ? {
           label: starting ? "Starting…" : `Start ${count(total)} ${noun}`,
-          onClick: start,
+          onClick: () => start(plan),
           disabled: starting || errors.length > 0 || !canLaunch,
-          demo: true,
+          demo: !api.isLive,
         }
       : { label: `Review ${count(total)} ${noun}`, onClick: () => go(LAST), disabled: errors.length > 0 };
 
@@ -420,6 +433,8 @@ export default function GuidedBuilder() {
         </div>
         <ScenarioSwitch />
       </div>
+      {api.isLive && casesQuery.isError && <p className="rounded-md border border-warn/40 bg-warn-soft px-3 py-2 text-[12.5px] text-warn">The canonical runner case catalog is unavailable: {casesQuery.error.message}</p>}
+      {startError && <p role="alert" className="rounded-md border border-warn/40 bg-warn-soft px-3 py-2 text-[12.5px] text-warn">{startError}</p>}
 
       <div className="grid items-start gap-6 xl:grid-cols-[minmax(0,1fr)_320px]">
         <div className="rounded-lg border border-line bg-surface px-4 py-5 sm:px-6">
@@ -428,8 +443,8 @@ export default function GuidedBuilder() {
               <ModelList history={history} value={plan.models} onChange={(models) => update({ models })} />
               {continueRow(true, plan.models.length ? `Continue with ${plan.models.length} ${plan.models.length === 1 ? "model" : "models"}` : "Continue with case defaults")}
             </Step>
-            <Step id="cases" index={1} state={stateOf(1)} onEdit={() => go(1)} summary={plan.cases.length === CATALOG.length ? `All ${CATALOG.length} cases` : `${plan.cases.length} of ${CATALOG.length} cases`}>
-              <CasePicker value={plan.cases} onChange={(cases) => update({ cases })} />
+            <Step id="cases" index={1} state={stateOf(1)} onEdit={() => go(1)} summary={plan.cases.length === catalog.length ? `All ${catalog.length} cases` : `${plan.cases.length} of ${catalog.length} cases`}>
+              <CasePicker value={plan.cases} onChange={(cases) => update({ cases })} catalog={catalog} disabled={api.isLive && !casesQuery.data} />
               {continueRow(plan.cases.length > 0, "Continue", plan.cases.length ? `${plan.cases.length} selected` : "Select at least one case.")}
             </Step>
             <Step id="technique" index={2} state={stateOf(2)} onEdit={() => go(2)} summary={plan.techniques.map(techniqueLabel).join(", ") || "None selected"}>
