@@ -111,6 +111,19 @@ class OpenAIResponsesChat(OpenAIChat):
         return kwargs
 
     def _as_chat_completion(self, response: Any) -> ChatCompletion:
+        status = _value(response, "status")
+        if status != "completed":
+            status_label = (
+                status if isinstance(status, str) and status in ("incomplete", "failed")
+                else "missing" if status is None else "unexpected"
+            )
+            details = _value(response, "incomplete_details")
+            reason = _value(details, "reason")
+            reason = reason if reason in ("max_output_tokens", "content_filter") else None
+            reason_text = f" (reason={reason})" if reason else ""
+            raise RuntimeError(
+                f"Responses API did not complete (status={status_label}{reason_text})."
+            )
         content_parts: List[str] = []
         refusal_parts: List[str] = []
         tool_calls: List[ChatCompletionMessageToolCall] = []
