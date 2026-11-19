@@ -1449,7 +1449,7 @@ def _run_campaign_locked(args: argparse.Namespace, campaign_lock_fd: int | None)
                         break
                 if stop_reason:
                     break
-                resolved_debug = resolved_models.get("debug")
+                resolved_debug = (result.get("resolved_models") or {}).get("debug")
                 if resolved_debug and resolved_debug != model:
                     prior_candidates = {
                         row.get("resolved_models", {}).get("debug")
