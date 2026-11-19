@@ -17,6 +17,7 @@ are linked below.
 - [Prediction selector pilot evidence](../data/exploratory/prediction-pilot-2026-10/README.md)
 - [GPT-5 mini KAO vs SingleAgent data pack and reports](../data/exploratory/kao-singleagent-gpt5mini-2026-10/README.md)
 - [Branch and prototype preservation record](BRANCH_ARCHIVE.md)
+- [Lab operations and recovery](LAB_OPERATIONS.md)
 
 [`archive/`](archive/) contains historical development notes; these are not
 current operating instructions.

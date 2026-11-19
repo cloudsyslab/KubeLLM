@@ -62,6 +62,19 @@ _REPAIR_LABELS = {
     "env_permissions": "Configuration file permissions",
     "dependent_services": "Dependent lab services",
 }
+_RUNNER_PREFLIGHT_LABELS = {
+    "lab_lane": "Lab ownership",
+    "python_imports": "Python imports",
+    "pytest": "pytest",
+    "db_connectivity": "Database",
+    "rag_api": "RAG API",
+    "kubectl": "kubectl",
+    "docker_engine": "Docker",
+    "minikube_status": "Minikube",
+    "cluster_access": "Cluster access",
+    "config_validity": "Case configuration",
+}
+_RUNNER_PREFLIGHT_CHECK_LIMIT = 12
 
 
 def _model(value: object) -> str | None:
@@ -80,6 +93,37 @@ def _safe_detail(value: object) -> str | None:
     return detail or None
 
 
+def _safe_runner_preflight_failures(item: dict) -> list[dict]:
+    """Expose bounded, redacted runner failure summaries without raw output."""
+    details = item.get("details")
+    raw_checks = details.get("checks") if isinstance(details, dict) else None
+    if not isinstance(raw_checks, list):
+        return []
+
+    failures = []
+    seen = set()
+    for check in raw_checks[:_RUNNER_PREFLIGHT_CHECK_LIMIT * 2]:
+        if not isinstance(check, dict):
+            continue
+        name = check.get("name")
+        if (
+            name not in _RUNNER_PREFLIGHT_LABELS
+            or name in seen
+            or check.get("passed") is not False
+        ):
+            continue
+        seen.add(name)
+        failures.append({
+            "name": name,
+            "label": _RUNNER_PREFLIGHT_LABELS[name],
+            "status": "fail",
+            "detail": _safe_detail(check.get("message")),
+        })
+        if len(failures) >= _RUNNER_PREFLIGHT_CHECK_LIMIT:
+            break
+    return failures
+
+
 def safe_readiness(value: object) -> dict:
     if not isinstance(value, dict):
         return {"status": "BLOCKED", "checks": [], "repairs": []}
@@ -93,14 +137,19 @@ def safe_readiness(value: object) -> dict:
         status = item.get("status")
         if status not in {"pass", "fail", "skip"}:
             status = "fail"
-        checks.append({
+        projected = {
             "name": name,
             "label": _CHECK_LABELS.get(name, "Environment check"),
             "status": status,
             "blocking": item.get("blocking") is True,
             "detail": _safe_detail(item.get("message")),
             "hint": _CHECK_HINTS.get(name) if status == "fail" else None,
-        })
+        }
+        if name == "runner_preflight":
+            failures = _safe_runner_preflight_failures(item)
+            if failures:
+                projected["subchecks"] = failures
+        checks.append(projected)
     repairs = []
     for item in value.get("repairs", []):
         if not isinstance(item, dict):

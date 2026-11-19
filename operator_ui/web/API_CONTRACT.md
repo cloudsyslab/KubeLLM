@@ -68,8 +68,11 @@ prompts or raw command output. Job state includes the planned attempt list
 
 ## Readiness and publication details (needed by some options)
 
-- `safe_readiness` currently returns name, label, status, blocking, and hint
-  per check. The Environment page also needs, per check:
+- `safe_readiness` returns name, label, status, blocking, hint, and redacted
+  detail per check. A failed canonical runner preflight may also include a
+  bounded `subchecks` list containing allowlisted check names, status, label,
+  and redacted detail; raw runner output and unknown subchecks are dropped. The
+  Environment page also needs, per check:
   - its redacted `detail`, start offset, and `duration_ms`
   - the terminal execution: each command it ran (redacted argv, plus the
     parent command such as `runner.py --preflight`), its redacted and
