@@ -57,12 +57,140 @@ TRACKED_CONTAINER = None
 LAST_CONTAINER_MEMORY_CHECK = 0.0
 
 
-def job_root(job_id: str) -> Path:
-    return Path("/dev/shm") / ("kubellm-" + job_id)
-
-
 class JobError(RuntimeError):
     pass
+
+
+RAM_ROOT = Path("/dev/shm")
+JOB_ID_PATTERN = re.compile(r"job-[0-9]{8}T[0-9]{6}Z-[a-f0-9]{8}")
+
+
+def job_root(job_id: str) -> Path:
+    if not isinstance(job_id, str) or not JOB_ID_PATTERN.fullmatch(job_id):
+        raise JobError("The RAM staging job ID is invalid.")
+    return RAM_ROOT / ("kubellm-" + job_id)
+
+
+def _require_ram_tmpfs():
+    try:
+        root_stat = RAM_ROOT.lstat()
+        if stat.S_ISLNK(root_stat.st_mode) or not stat.S_ISDIR(root_stat.st_mode):
+            raise JobError("The RAM staging root is not a real directory.")
+        if RAM_ROOT.resolve(strict=True) != RAM_ROOT or not os.path.ismount(RAM_ROOT):
+            raise JobError("The RAM staging root is not a dedicated mount.")
+        mounted_tmpfs = False
+        for line in Path("/proc/self/mountinfo").read_text(encoding="utf-8").splitlines():
+            before, separator, after = line.partition(" - ")
+            fields = before.split()
+            filesystem = after.split() if separator else []
+            if (len(fields) > 4 and filesystem
+                    and fields[4] == str(RAM_ROOT)
+                    and filesystem[0] == "tmpfs"):
+                mounted_tmpfs = True
+                break
+        if not mounted_tmpfs or root_stat.st_dev == Path("/").stat().st_dev:
+            raise JobError("The RAM staging root is not backed by tmpfs.")
+        return root_stat
+    except JobError:
+        raise
+    except OSError:
+        raise JobError("The RAM staging filesystem could not be verified.") from None
+
+
+def _validate_private_directory(path: Path, expected_parent: Path, parent_stat):
+    try:
+        path_stat = path.lstat()
+        if stat.S_ISLNK(path_stat.st_mode) or not stat.S_ISDIR(path_stat.st_mode):
+            raise JobError("The RAM staging path is not a real directory.")
+        if path_stat.st_uid != os.getuid() or stat.S_IMODE(path_stat.st_mode) != 0o700:
+            raise JobError("The RAM staging directory is not private to this user.")
+        if path_stat.st_dev != parent_stat.st_dev:
+            raise JobError("The RAM staging directory is outside the verified tmpfs.")
+        if path.resolve(strict=True).parent != expected_parent.resolve(strict=True):
+            raise JobError("The RAM staging directory resolved outside its expected parent.")
+        flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0) | getattr(os, "O_NOFOLLOW", 0)
+        fd = os.open(path, flags)
+        try:
+            opened = os.fstat(fd)
+            if (not stat.S_ISDIR(opened.st_mode) or opened.st_dev != path_stat.st_dev
+                    or opened.st_ino != path_stat.st_ino or opened.st_uid != os.getuid()
+                    or stat.S_IMODE(opened.st_mode) != 0o700):
+                raise JobError("The RAM staging directory changed during validation.")
+        finally:
+            os.close(fd)
+        return path_stat
+    except JobError:
+        raise
+    except OSError:
+        raise JobError("The RAM staging directory could not be safely verified.") from None
+
+
+def validate_job_staging(job_id: str, *, allow_missing: bool = False) -> Path | None:
+    root = job_root(job_id)
+    ram_stat = _require_ram_tmpfs()
+    try:
+        root.lstat()
+    except FileNotFoundError:
+        if allow_missing:
+            return None
+        raise JobError("The prepared RAM-backed restore VM is unavailable.") from None
+    root_stat = _validate_private_directory(root, RAM_ROOT, ram_stat)
+    work = root / "data"
+    try:
+        work.lstat()
+    except FileNotFoundError:
+        if allow_missing:
+            return None
+        raise JobError("The prepared RAM-backed restore VM is unavailable.") from None
+    _validate_private_directory(work, root, root_stat)
+    return work
+
+
+def create_job_staging(job_id: str) -> Path:
+    root = job_root(job_id)
+    ram_stat = _require_ram_tmpfs()
+    try:
+        os.mkdir(root, 0o700)
+    except FileExistsError:
+        raise JobError("A RAM-backed directory already uses this job ID.") from None
+    try:
+        flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0) | getattr(os, "O_NOFOLLOW", 0)
+        root_fd = os.open(root, flags)
+        try:
+            os.fchmod(root_fd, 0o700)
+            os.mkdir("data", 0o700, dir_fd=root_fd)
+            data_fd = os.open("data", flags, dir_fd=root_fd)
+            try:
+                os.fchmod(data_fd, 0o700)
+            finally:
+                os.close(data_fd)
+        finally:
+            os.close(root_fd)
+        _validate_private_directory(root, RAM_ROOT, ram_stat)
+        return validate_job_staging(job_id)
+    except Exception:
+        remove_job_root(job_id, suppress_invalid=True)
+        raise
+
+
+def remove_job_root(job_id: str, *, suppress_invalid: bool = False):
+    root = job_root(job_id)
+    try:
+        try:
+            root.lstat()
+        except FileNotFoundError:
+            return
+        ram_stat = _require_ram_tmpfs()
+        _validate_private_directory(root, RAM_ROOT, ram_stat)
+        if not getattr(shutil.rmtree, "avoids_symlink_attacks", False):
+            raise JobError("Safe RAM staging cleanup is unavailable on this platform.")
+        shutil.rmtree(root)
+    except JobError:
+        if not suppress_invalid:
+            raise
+    except OSError:
+        if not suppress_invalid:
+            raise JobError("RAM staging cleanup did not complete.") from None
 
 
 def run(argv, *, timeout=60, stdin=None, stdout=None, env=None):
@@ -492,13 +620,13 @@ def prepare_job(args):
         except (OSError, ValueError):
             continue
         if record.get("phase") in {"awaiting-recovery-key", "vm-bootstrap", "snapshot", "isolated-restore"}:
-            prepared = job_root(str(record.get("job_id", ""))) / "data"
-            if prepared.is_dir():
+            recorded_job_id = record.get("job_id")
+            if not isinstance(recorded_job_id, str) or not JOB_ID_PATTERN.fullmatch(recorded_job_id):
+                continue
+            prepared = validate_job_staging(recorded_job_id, allow_missing=True)
+            if prepared is not None:
                 raise JobError("Another prepared backup job must be resumed or cleaned up first.")
-    work = job_root(args.job_id) / "data"
-    if work.exists() or work.is_symlink():
-        raise JobError("A RAM-backed directory already uses this job ID.")
-    work.mkdir(mode=0o700)
+    work = create_job_staging(args.job_id)
     lock_path = STATUS_DIR / "active.lock"
     lock_path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
     with lock_path.open("a") as lock:
@@ -506,12 +634,12 @@ def prepare_job(args):
         try:
             fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
         except BlockingIOError:
-            shutil.rmtree(work, ignore_errors=True)
+            remove_job_root(args.job_id, suppress_invalid=True)
             raise JobError("Another lab backup or restore job is active.") from None
         try:
             prepare_vm(args, work, STATUS_DIR / (args.job_id + ".json"))
         except Exception:
-            shutil.rmtree(work, ignore_errors=True)
+            remove_job_root(args.job_id, suppress_invalid=True)
             raise
 
 
@@ -798,10 +926,10 @@ def retire_exact_resources(args, work: Path, manifest: dict, archive_path: Path,
 def resume_job(args, identity: str):
     global TRACKED_CONTAINER
     check_args(args)
-    work = job_root(args.job_id) / "data"
+    work = validate_job_staging(args.job_id)
     status_path = STATUS_DIR / (args.job_id + ".json")
     config_path = work / "job.json"
-    if work.is_symlink() or not work.is_dir() or config_path.is_symlink() or not config_path.is_file():
+    if config_path.is_symlink() or not config_path.is_file():
         raise JobError("The prepared RAM-backed restore VM is unavailable.")
     saved = json.loads(config_path.read_text(encoding="utf-8"))
     if (saved.get("job_id") != args.job_id or saved.get("release_tag") != args.release_tag
@@ -946,7 +1074,7 @@ def resume_job(args, identity: str):
             retire_exact_resources(args, work, manifest, plain, verified_vm_digest, status_path,
                                    str(published.get("html_url", "")))
             retired = True
-            shutil.rmtree(job_root(args.job_id), ignore_errors=True)
+            remove_job_root(args.job_id)
         except Exception as exc:
             vm.shutdown()
             # Only restart if the exact old container still exists; a completed retirement must stay retired.
@@ -963,7 +1091,7 @@ def resume_job(args, identity: str):
             phase = "retirement-incomplete" if str(prior.get("phase", "")).startswith("retiring") else "failed"
             status(status_path, args.job_id, phase, detail, release_tag=args.release_tag,
                    release_url=prior.get("release_url", ""), failure_phase=prior.get("phase", "unknown"))
-            shutil.rmtree(job_root(args.job_id), ignore_errors=True)
+            remove_job_root(args.job_id, suppress_invalid=True)
             raise JobError(detail) from None
 
 
@@ -1036,9 +1164,9 @@ def main():
                 status(path, args.job_id, "failed", str(exc),
                        release_tag=getattr(args, "release_tag", ""))
             if args.action == "resume-worker":
-                shutil.rmtree(job_root(args.job_id), ignore_errors=True)
+                remove_job_root(args.job_id, suppress_invalid=True)
             elif args.action == "prepare-worker":
-                shutil.rmtree(job_root(args.job_id), ignore_errors=True)
+                remove_job_root(args.job_id, suppress_invalid=True)
         print("lab-ops-native: " + str(exc), file=sys.stderr)
         return 2
 

@@ -1155,3 +1155,97 @@ def test_service_supervisor_parses_listener_pid_and_fails_closed(monkeypatch):
             "LISTEN 0 2048 127.0.0.1:8787 0.0.0.0:*\n", ""),
     )
     assert supervise_lab_user_services.listening_pids(8787) is None
+
+
+def _use_test_ram_root(monkeypatch, root):
+    monkeypatch.setattr(lab_ops_native_remote, "RAM_ROOT", root)
+    monkeypatch.setattr(lab_ops_native_remote, "_require_ram_tmpfs", lambda: root.stat())
+
+
+def test_job_staging_creation_validates_private_directory_and_cleans_it(monkeypatch, tmp_path):
+    _use_test_ram_root(monkeypatch, tmp_path)
+    job_id = "job-20261118T180000Z-deadbeef"
+
+    work = lab_ops_native_remote.create_job_staging(job_id)
+
+    assert work.is_dir()
+    assert stat.S_IMODE(work.stat().st_mode) == 0o700
+    assert stat.S_IMODE(work.parent.stat().st_mode) == 0o700
+    assert lab_ops_native_remote.validate_job_staging(job_id) == work
+    lab_ops_native_remote.remove_job_root(job_id)
+    assert not work.parent.exists()
+
+
+def test_job_staging_rejects_preexisting_root_symlink(monkeypatch, tmp_path):
+    _use_test_ram_root(monkeypatch, tmp_path)
+    job_id = "job-20261118T180001Z-deadbeef"
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    sentinel = outside / "sentinel"
+    sentinel.write_text("preserve", encoding="utf-8")
+    lab_ops_native_remote.job_root(job_id).symlink_to(outside, target_is_directory=True)
+
+    try:
+        lab_ops_native_remote.create_job_staging(job_id)
+    except lab_ops_native_remote.JobError as exc:
+        assert "already uses" in str(exc)
+    else:
+        raise AssertionError("a preexisting job-root symlink was accepted")
+
+    assert sentinel.read_text(encoding="utf-8") == "preserve"
+    assert lab_ops_native_remote.job_root(job_id).is_symlink()
+
+
+def test_job_staging_rejects_symlinked_data_directory(monkeypatch, tmp_path):
+    _use_test_ram_root(monkeypatch, tmp_path)
+    job_id = "job-20261118T180002Z-deadbeef"
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    sentinel = outside / "sentinel"
+    sentinel.write_text("preserve", encoding="utf-8")
+    root = lab_ops_native_remote.job_root(job_id)
+    root.mkdir(mode=0o700)
+    root.chmod(0o700)
+    (root / "data").symlink_to(outside, target_is_directory=True)
+
+    try:
+        lab_ops_native_remote.validate_job_staging(job_id)
+    except lab_ops_native_remote.JobError as exc:
+        assert "real directory" in str(exc)
+    else:
+        raise AssertionError("a symlinked data directory was accepted")
+
+    assert sentinel.read_text(encoding="utf-8") == "preserve"
+
+
+def test_job_staging_rejects_nonprivate_root(monkeypatch, tmp_path):
+    _use_test_ram_root(monkeypatch, tmp_path)
+    job_id = "job-20261118T180003Z-deadbeef"
+    work = lab_ops_native_remote.create_job_staging(job_id)
+    work.parent.chmod(0o755)
+
+    try:
+        lab_ops_native_remote.validate_job_staging(job_id)
+    except lab_ops_native_remote.JobError as exc:
+        assert "not private" in str(exc)
+    else:
+        raise AssertionError("a nonprivate job root was accepted")
+
+
+def test_job_staging_requires_verified_tmpfs_before_creation(monkeypatch, tmp_path):
+    monkeypatch.setattr(lab_ops_native_remote, "RAM_ROOT", tmp_path)
+
+    def reject_filesystem():
+        raise lab_ops_native_remote.JobError("The RAM staging root is not backed by tmpfs.")
+
+    monkeypatch.setattr(lab_ops_native_remote, "_require_ram_tmpfs", reject_filesystem)
+    job_id = "job-20261118T180004Z-deadbeef"
+
+    try:
+        lab_ops_native_remote.create_job_staging(job_id)
+    except lab_ops_native_remote.JobError as exc:
+        assert "tmpfs" in str(exc)
+    else:
+        raise AssertionError("staging was created without a verified tmpfs")
+
+    assert not lab_ops_native_remote.job_root(job_id).exists()
