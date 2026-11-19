@@ -1,5 +1,11 @@
 # Prediction research campaign
 
+> Historical proposal for the earlier feature-prediction direction. The current
+> model-router v0 plan is [MODEL_ROUTER_V0.md](MODEL_ROUTER_V0.md): it selects a
+> DebugAgent after a fixed KnowledgeAgent plan and does not use embeddings, PCA,
+> dimensionality reduction, or a trained success predictor. The old warmed
+> pilot remains terminal and must not be resumed.
+
 ## Objective and boundary
 
 The first experiment is a post-KnowledgeAgent selector study: for one task prompt and one exact KnowledgeAgent response, estimate each candidate DebugAgent's Ground Truth success probability and full observed cost. The response is captured once, then replayed unchanged after an independent fixture reset for every DebugAgent candidate. KnowledgeAgent and verifier settings stay fixed within each pair. The selector remains offline; this work does not route live tasks.
@@ -29,9 +35,9 @@ Run a dry-run, readiness check, and canonical preflight before a new campaign. T
 
 The `pilot-v1-warmup-v2` campaign is terminal: 14 of 18 attempts finished, 13 were Ground-Truth scored (12 pass and one fail), and one attempt stopped before Ground Truth after an Ollama/Phi HTTP 500/XML parse error. Four scheduled attempts were not started. The second Ground Truth checkpoint matched after Verification for every scored attempt. The cause of the HTTP 500 is unknown; the raw trace remains private. Do not resume or retry this campaign. Investigate the failure, then use a fresh campaign name and review the full attempt schedule, paired response identity, fixed KnowledgeAgent/verifier IDs, both Ground Truth checkpoints, verifier agreement, DebugAgent-entry warm-up, model revisions, teardown, and storage growth. This partial pilot informs harness recovery only; it cannot establish predictor quality or family generalization. Its sanitized results are in [the prediction pilot pack](../data/exploratory/prediction-pilot-2026-10/README.md).
 
-### Breadth screen
+### Historical breadth proposal (superseded)
 
-After the pilot passes its integrity review, expand to all 27 Ground Truth cases, three independently generated KnowledgeAgent plans per case, and six runtime-audited DebugAgent candidates: 486 candidate executions. Each plan is shared by all six candidates. The existing runner performs preflight, setup, fixture cleanup, verification, Ground Truth checks, and teardown for each serial attempt.
+This proposal was not run. It described 27 Ground Truth cases, three KnowledgeAgent plans, and six candidates (486 candidate executions) for a feature-prediction study. It is superseded by [Model Router v0](MODEL_ROUTER_V0.md), which uses 27 scenarios, five plans, and three OpenAI DebugAgent candidates (405 attempts). Do not use the historical command below for the current thesis.
 
 The breadth command requires explicit model IDs and a private lab lane. These six IDs are the historical matched candidates from the handoff/canonical audit:
 
@@ -87,11 +93,8 @@ Historical Adiba runs and current canonical exports can guide feature and model 
 
 ## Readiness gate
 
-Before any new candidate execution, the selected personal lane must pass the canonical runner preflight. The 18-attempt warmed pilot has already run and stopped on an unknown Ground Truth result. Resolve or isolate the Ollama/Phi runtime failure in the private lane, then start a fresh named campaign only after the failure path and lane readiness are understood. Do not automatically repeat the old schedule or resume its persisted stop state. For a new campaign, run:
+This readiness gate describes the historical local-model pilot only. The current router campaign uses the lab lane and the standard storage guard, and is documented in [Model Router v0](MODEL_ROUTER_V0.md). The old 18-attempt pilot is terminal; do not resume it.
 
-```bash
-python3 debug_assistant_latest/runner.py --lab-config /path/to/private-lane.json --preflight
-python3 data_analysis/run_paired_campaign.py --debug-models '...' --pilot-storage --dry-run
-```
+For current lab readiness and execution commands, follow the runbook in [Model Router v0](MODEL_ROUTER_V0.md).
 
-The first campaign report should be reviewed for complete pair counts, identical response and prompt hashes within each pair, fixed API/verifier identities, Ground Truth coverage, teardown status, and pooled/equal-task success before expanding to task variants or policy training.
+For any new paired run, review complete pair counts, matching response and prompt hashes, fixed API/verifier identities, Ground Truth coverage, teardown, and pooled/equal-scenario outcomes before using it for further experiments.

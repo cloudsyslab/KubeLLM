@@ -73,11 +73,11 @@ coverage, so no static model met the 80%, 90%, 95%, or 100% equal-task
 thresholds. These results check the harness and guide the next debugging
 step; they do not validate predictor quality or task-family generalization.
 
-Do not resume this campaign. Investigate the recorded Ollama/Phi runtime 500
-in the private trace, then schedule a fresh named 18-attempt wave after the
-cause is understood or a controlled recovery is defined. Preserve the failed
-and unknown attempt in this pack. Expand to the 27-case breadth screen only
-after the fresh wave passes its pairing, Ground Truth, and teardown review.
+Do not resume this terminal campaign. Its earlier recommendation to schedule
+a fresh 18-attempt wave and then expand to a 27-case breadth screen is
+superseded by [Model Router v0](MODEL_ROUTER_V0.md). Use that protocol for the
+current planned paired experiment; this historical pilot's failed and unknown
+attempts remain preserved in the sanitized pack.
 
 ## Reproduce
 

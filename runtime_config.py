@@ -125,12 +125,19 @@ def is_gemini_chat_model(model_name: str) -> bool:
 
 
 def openai_chat_requires_reasoning_effort_none(model_name: str) -> bool:
-    """Luna models reject function tools on Chat Completions unless reasoning_effort is none."""
+    """Legacy GPT-5.6 Luna Chat Completions require reasoning_effort=none for function tools."""
     normalized = _normalize_model_name(model_name)
     if normalized is None:
         return False
-    lowered = normalized.lower()
-    return lowered.startswith("gpt-5.6-luna") or lowered.startswith("gpt-6-luna")
+    return normalized.lower().startswith("gpt-5.6-luna")
+
+
+def openai_model_requires_responses_api(model_name: str) -> bool:
+    """Use Responses for GPT-6 candidates whose function calls reject Chat Completions."""
+    normalized = _normalize_model_name(model_name)
+    if normalized is None:
+        return False
+    return normalized.lower().startswith(("gpt-6-luna", "gpt-6.2-sol", "gpt-6.2-astra"))
 
 
 def infer_chat_provider(model_name: str) -> str:
@@ -230,6 +237,13 @@ def build_chat_model(model_name: str, temperature=None):
 
     if provider == OPENAI_PROVIDER:
         require_openai_api_key(model_name)
+        if openai_model_requires_responses_api(model_name):
+            responses_chat = _import_symbol(
+                "debug_assistant_latest.responses_model",
+                "OpenAIResponsesChat",
+                install_hint="openai",
+            )
+            return responses_chat(id=model_name, **kwargs)
         openai_chat = _import_symbol("phi.model.openai", "OpenAIChat", install_hint="openai")
         if openai_chat_requires_reasoning_effort_none(model_name):
             extra = dict(kwargs.get("request_params") or {})
