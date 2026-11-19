@@ -9,6 +9,7 @@ incident pipeline.
 from __future__ import annotations
 
 import argparse
+import fcntl
 import hashlib
 import itertools
 import json
@@ -23,6 +24,7 @@ import time
 import urllib.error
 import urllib.request
 from collections import defaultdict
+from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -33,6 +35,8 @@ REGISTRY_PATH = Path(__file__).with_name("model_router_v0_registry.json")
 DEFAULT_FOLDS = 5
 DEFAULT_SEED = 20261118
 EXPECTED_SCENARIOS = 27
+# Bump when route prompts, candidate selection, request schemas, or scoring semantics change.
+ROUTER_PROTOCOL_VERSION = "model-router-v0-protocol-1"
 ROUTER_MODEL = "gpt-6-luna"
 API_ROOT = "https://api.openai.com/v1"
 
@@ -635,6 +639,27 @@ def _read_jsonl(path: Path) -> list[dict[str, Any]]:
     return result
 
 
+def _validate_resume_manifest(existing: dict[str, Any], current: dict[str, Any]) -> None:
+    fields = (
+        "router_protocol_version",
+        "router_model",
+        "candidate_ids",
+        "variant_names",
+        "scenario_folds",
+        "fold_count",
+        "seed",
+        "plan_count",
+        "registry_sha256",
+        "git_branch",
+        "campaign_report_sha256",
+        "lab_config_sha256",
+        "lane_id",
+    )
+    for key in fields:
+        if existing.get(key) != current.get(key):
+            raise ValueError(f"Resume configuration differs from the original router wave ({key})")
+
+
 def _event_state(events: list[dict[str, Any]]) -> tuple[set[str], set[str], set[str]]:
     starts: set[str] = set()
     finished: set[str] = set()
@@ -652,7 +677,26 @@ def _event_state(events: list[dict[str, Any]]) -> tuple[set[str], set[str], set[
     return starts - finished, finished, errors
 
 
-def execute_routes(
+@contextmanager
+def _exclusive_wave_lock(path: Path):
+    path.parent.mkdir(parents=True, exist_ok=True)
+    descriptor = os.open(path, os.O_CREAT | os.O_RDWR, 0o600)
+    stream = os.fdopen(descriptor, "r+")
+    try:
+        os.fchmod(stream.fileno(), 0o600)
+        try:
+            fcntl.flock(stream.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError as exc:
+            raise ValueError(f"Another router process holds the wave lock: {path}") from exc
+        yield
+    finally:
+        try:
+            fcntl.flock(stream.fileno(), fcntl.LOCK_UN)
+        finally:
+            stream.close()
+
+
+def _execute_routes_locked(
     observations: list[dict[str, Any]],
     registry: dict[str, Any],
     output_dir: Path,
@@ -678,6 +722,7 @@ def execute_routes(
     manifest = {
         "schema_version": 1,
         "created_at_utc": datetime.now(timezone.utc).isoformat(),
+        "router_protocol_version": ROUTER_PROTOCOL_VERSION,
         "router_model": ROUTER_MODEL,
         "router_model_requested_by": "fixed registry; returned model ID recorded per API response",
         "campaign_report_sha256": campaign_report_sha256,
@@ -704,9 +749,7 @@ def execute_routes(
         if not manifest_path.is_file() or not events_path.is_file():
             raise ValueError("--resume requires an existing router wave manifest and append-only ledger")
         existing = json.loads(manifest_path.read_text(encoding="utf-8"))
-        for key in ("router_model", "candidate_ids", "variant_names", "scenario_folds", "fold_count", "seed", "plan_count", "registry_sha256", "router_code_sha256", "git_branch", "git_commit", "campaign_report_sha256", "lab_config_sha256", "lane_id"):
-            if existing.get(key) != manifest.get(key):
-                raise ValueError(f"Resume configuration differs from the original router wave ({key})")
+        _validate_resume_manifest(existing, manifest)
         events = _read_jsonl(events_path)
         interrupted, finished, errors = _event_state(events)
         if interrupted:
@@ -714,6 +757,16 @@ def execute_routes(
         if errors:
             raise ValueError("This router wave contains an API error; resolve it and start a fresh wave")
         completed = finished
+        append_jsonl(
+            events_path,
+            {
+                "event": "router_resumed",
+                "router_protocol_version": ROUTER_PROTOCOL_VERSION,
+                "router_code_sha256": sha256_file(Path(__file__)),
+                "git_commit": git_value("rev-parse", "HEAD"),
+                "resumed_at_utc": datetime.now(timezone.utc).isoformat(),
+            },
+        )
     else:
         if output_dir.exists() and any(output_dir.iterdir()):
             raise FileExistsError(f"Output directory is not empty: {output_dir}")
@@ -828,6 +881,33 @@ def execute_routes(
                 print(f"{len(completed) + 1}/{len(observations) * len(variants)} {route_id} -> invalid response")
             completed.add(route_id)
     return events_path
+
+
+def execute_routes(
+    observations: list[dict[str, Any]],
+    registry: dict[str, Any],
+    output_dir: Path,
+    *,
+    lab_config: Path,
+    campaign_report_sha256: str,
+    folds: int = DEFAULT_FOLDS,
+    seed: int = DEFAULT_SEED,
+    resume: bool = False,
+) -> Path:
+    output_dir = _private_path(output_dir, REPO_ROOT, "Output directory")
+    secure_private_directory(output_dir.parent)
+    lock_path = output_dir.parent / f".{output_dir.name}.router.lock"
+    with _exclusive_wave_lock(lock_path):
+        return _execute_routes_locked(
+            observations,
+            registry,
+            output_dir,
+            lab_config=lab_config,
+            campaign_report_sha256=campaign_report_sha256,
+            folds=folds,
+            seed=seed,
+            resume=resume,
+        )
 
 
 def _cluster_interval(
@@ -1342,8 +1422,24 @@ def write_report(
         },
         "router_execution_provenance": {
             key: manifest.get(key)
-            for key in ("router_model", "candidate_ids", "router_code_sha256", "git_branch", "git_commit", "campaign_report_sha256", "registry_sha256", "fold_count", "seed", "lane_id")
+            for key in ("router_protocol_version", "router_model", "candidate_ids", "router_code_sha256", "git_branch", "git_commit", "campaign_report_sha256", "registry_sha256", "fold_count", "seed", "lane_id")
         },
+        "router_code_revisions": [
+            {
+                "phase": "wave_start",
+                "router_code_sha256": manifest.get("router_code_sha256"),
+                "git_commit": manifest.get("git_commit"),
+            },
+            *[
+                {
+                    "phase": "resume",
+                    "router_code_sha256": row.get("router_code_sha256"),
+                    "git_commit": row.get("git_commit"),
+                }
+                for row in events
+                if row.get("event") == "router_resumed"
+            ],
+        ],
         "actual_paired_experiment": {
             "attempt_count": source_campaign_report.get("attempt_count"),
             "ground_truth_scored_attempts": source_campaign_report.get("ground_truth_scored_attempts"),
@@ -1434,7 +1530,7 @@ def main() -> int:
     parser.add_argument("--bootstrap-replicates", type=int, default=2000)
     parser.add_argument("--dry-run", action="store_true", help="Validate pairing and print the route schedule without API calls")
     parser.add_argument("--execute", action="store_true", help="Make the held-out Responses and Decisions API calls")
-    parser.add_argument("--resume", action="store_true", help="Continue only if every prior started request finished successfully")
+    parser.add_argument("--resume", action="store_true", help="Continue an exact wave only when every started API request has a durable successful result; ambiguous requests are never retried")
     args = parser.parse_args()
     if args.execute and args.dry_run:
         parser.error("Choose either --dry-run or --execute")

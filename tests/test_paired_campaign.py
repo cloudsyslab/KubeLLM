@@ -3,6 +3,7 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 
 from data_analysis.run_paired_campaign import (
+    CAMPAIGN_PROTOCOL_VERSION,
     MINIMUM_ATTEMPT_FREE_BYTES,
     MINIMUM_STARTUP_FREE_BYTES,
     PILOT_MAX_SCHEDULED_ATTEMPTS,
@@ -13,6 +14,7 @@ from data_analysis.run_paired_campaign import (
     _cost_success_frontier,
     _model_summary,
     _attempt_disk_stop_reason,
+    _harness_hashes,
     _startup_disk_error,
     _storage_policy,
     _write_report,
@@ -20,6 +22,10 @@ from data_analysis.run_paired_campaign import (
 
 
 class PairedCampaignTests(unittest.TestCase):
+    def test_campaign_resume_fingerprint_separates_protocol_from_driver_plumbing(self):
+        self.assertEqual(CAMPAIGN_PROTOCOL_VERSION, "paired-debug-v1")
+        self.assertNotIn("data_analysis/run_paired_campaign.py", _harness_hashes())
+
     def test_storage_guard_enforces_startup_and_between_attempt_floors(self):
         self.assertIsNone(_startup_disk_error(MINIMUM_STARTUP_FREE_BYTES))
         self.assertIn(

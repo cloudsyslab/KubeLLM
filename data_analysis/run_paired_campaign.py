@@ -8,6 +8,7 @@ unchanged for every DebugAgent candidate. Raw traces remain under repository .lo
 from __future__ import annotations
 
 import argparse
+import fcntl
 import hashlib
 import json
 import os
@@ -16,6 +17,7 @@ import shutil
 import subprocess
 import sys
 from collections import defaultdict
+from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -35,6 +37,8 @@ MINIMUM_STARTUP_FREE_BYTES = 20_000_000_000
 MINIMUM_ATTEMPT_FREE_BYTES = 10_000_000_000
 PILOT_STARTUP_FREE_BYTES = 12_000_000_000
 PILOT_MAX_SCHEDULED_ATTEMPTS = 18
+# Bump only when schedule, prompts, or measurement semantics change; resume plumbing may evolve within this protocol.
+CAMPAIGN_PROTOCOL_VERSION = "paired-debug-v1"
 
 
 def _slug(value: str) -> str:
@@ -144,6 +148,382 @@ def _preflight_failed(run_dir: Path, test_name: str) -> bool:
     return False
 
 
+@contextmanager
+def _exclusive_lock(path: Path):
+    path.parent.mkdir(parents=True, exist_ok=True)
+    descriptor = os.open(path, os.O_CREAT | os.O_RDWR, 0o600)
+    stream = os.fdopen(descriptor, "r+")
+    try:
+        os.fchmod(stream.fileno(), 0o600)
+        try:
+            fcntl.flock(stream.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError as exc:
+            raise ValueError(f"Another campaign process holds the run lock: {path}") from exc
+        yield stream
+    finally:
+        # Closing releases our reference; a runner child that inherited this
+        # open file description keeps the lock until its own exit.
+        stream.close()
+
+
+def _summary_attempt_result(
+    summary: dict,
+    *,
+    attempt_key: str,
+    pair_id: str,
+    test_name: str,
+    debug_model: str,
+    mode: str,
+    candidate_order: list[str],
+    candidate_order_index: int,
+    exit_code: int,
+    preflight_failed: bool,
+    run_dir: Path,
+    artifact_path: Path,
+    storage_free_before_bytes: int | None,
+    storage_free_after_bytes: int | None,
+    shared_knowledge_cost_for_pair: float | None,
+    recovered: bool = False,
+    recovered_storage_free_bytes: int | None = None,
+    finished_at_utc: str | None = None,
+    campaign_driver_sha256: str | None = None,
+) -> dict:
+    metrics = summary.get("metrics") or {}
+    resolved_models = {
+        role: (metrics.get(role) or {}).get("model")
+        for role in ("api", "debug", "verification")
+    }
+    environment_context = summary.get("environment_context") or {}
+    ollama_revisions = {
+        row.get("name"): row.get("digest")
+        for row in environment_context.get("ollama_model_revisions", [])
+    }
+    warmup_record = environment_context.get("debug_model_warmup") or {}
+    model_revision = (
+        warmup_record.get("model_digest_after") or ollama_revisions.get(debug_model)
+        if _is_local_model(debug_model) else None
+    )
+    warm_at_agent_start = (
+        warmup_record.get("ready") is True if _is_local_model(debug_model) else None
+    )
+    api_metrics = metrics.get("api") or {}
+    debug_metrics = metrics.get("debug") or {}
+    verification_metrics = metrics.get("verification") or {}
+    api_cost = float(api_metrics.get("cost") or 0.0)
+    source_knowledge_cost = api_cost if mode == "capture" else None
+    shared_cost = source_knowledge_cost if mode == "capture" else shared_knowledge_cost_for_pair
+    debug_cost = float(debug_metrics.get("cost") or 0.0)
+    verification_cost = float(verification_metrics.get("cost") or 0.0)
+    result = {
+        "event": "attempt_finished",
+        "attempt_key": attempt_key,
+        "pair_id": pair_id,
+        "test_name": test_name,
+        "debug_model": debug_model,
+        "mode": mode,
+        "candidate_order": candidate_order,
+        "candidate_order_index": candidate_order_index,
+        "exit_code": exit_code,
+        "preflight_failed": preflight_failed,
+        "run_dir": str(run_dir),
+        "storage_free_before_bytes": storage_free_before_bytes,
+        "storage_free_after_bytes": storage_free_after_bytes,
+        "status": summary.get("status"),
+        "ground_truth_configured": bool(summary.get("ground_truth_configured")),
+        "ground_truth_passed": summary.get("ground_truth_passed"),
+        "ground_truth_after_debug_passed": summary.get("ground_truth_after_debug_passed"),
+        "ground_truth_after_verification_passed": summary.get("ground_truth_after_verification_passed"),
+        "ground_truth_integrity_match": summary.get("ground_truth_integrity_match"),
+        "verifier_judgment": summary.get("verified"),
+        "verifier_agrees_with_debug_ground_truth": (
+            summary.get("verified") == summary.get("ground_truth_after_debug_passed")
+            if summary.get("verified") is not None
+            and summary.get("ground_truth_after_debug_passed") is not None
+            else None
+        ),
+        "api_cost": api_cost,
+        "source_knowledge_cost": source_knowledge_cost,
+        "shared_knowledge_cost_for_pair": shared_cost,
+        "debug_cost": debug_cost,
+        "verification_cost": verification_cost,
+        "effective_cost_with_shared_knowledge_call": float(shared_cost or 0.0) + debug_cost + verification_cost,
+        "api_input_tokens": api_metrics.get("input_tokens"),
+        "api_output_tokens": api_metrics.get("output_tokens"),
+        "debug_input_tokens": debug_metrics.get("input_tokens"),
+        "debug_output_tokens": debug_metrics.get("output_tokens"),
+        "verification_input_tokens": verification_metrics.get("input_tokens"),
+        "verification_output_tokens": verification_metrics.get("output_tokens"),
+        "api_duration_s": float(api_metrics.get("duration_s") or 0.0),
+        "debug_duration_s": float(debug_metrics.get("duration_s") or 0.0),
+        "verification_duration_s": float(verification_metrics.get("duration_s") or 0.0),
+        "response_sha256": None,
+        "knowledge_prompt_sha256": None,
+        "debug_prompt_sha256": None,
+        "resolved_models": resolved_models,
+        "debug_model_revision": model_revision,
+        "debug_model_warm_at_agent_start": warm_at_agent_start,
+        "debug_model_warmup_status": warmup_record.get("status") if _is_local_model(debug_model) else None,
+        "debug_model_warmup_reason": warmup_record.get("reason") if _is_local_model(debug_model) else None,
+        "debug_model_warmup_duration_s": warmup_record.get("duration_s") if _is_local_model(debug_model) else None,
+        "debug_model_load_duration_s": warmup_record.get("load_duration_s") if _is_local_model(debug_model) else None,
+        "debug_model_warmup": warmup_record if _is_local_model(debug_model) else None,
+        "environment_context": environment_context,
+        "finished_at_utc": finished_at_utc or datetime.now(timezone.utc).isoformat(),
+        "recovered_after_interruption": recovered,
+        "campaign_driver_sha256": campaign_driver_sha256,
+    }
+    meta_path = artifact_path.with_suffix(artifact_path.suffix + ".json")
+    if meta_path.is_file():
+        artifact_meta = json.loads(meta_path.read_text(encoding="utf-8"))
+        result["response_sha256"] = artifact_meta.get("response_sha256")
+        result["knowledge_prompt_sha256"] = artifact_meta.get("prompt_sha256")
+    debug_prompt_meta = run_dir / test_name / "debug_prompt.meta.json"
+    if debug_prompt_meta.is_file():
+        result["debug_prompt_sha256"] = json.loads(
+            debug_prompt_meta.read_text(encoding="utf-8")
+        ).get("sha256")
+    if recovered:
+        result["recovered_at_utc"] = datetime.now(timezone.utc).isoformat()
+        result["recovered_storage_free_bytes"] = recovered_storage_free_bytes
+    return result
+
+
+def _recover_completed_attempt(
+    started: dict,
+    *,
+    root: Path,
+    config: dict,
+    shared_knowledge_cost_for_pair: float | None,
+    recovered_storage_free_bytes: int,
+) -> dict:
+    key = started.get("attempt_key", "<unknown>")
+    pair_id = started.get("pair_id")
+    case = started.get("test_name")
+    model = started.get("debug_model")
+    order = started.get("candidate_order")
+    order_index = started.get("candidate_order_index")
+    mode = started.get("mode")
+    if (
+        not isinstance(pair_id, str)
+        or not isinstance(case, str)
+        or not isinstance(model, str)
+        or not isinstance(order, list)
+        or not isinstance(order_index, int)
+        or order_index < 0
+        or order_index >= len(order)
+        or order[order_index] != model
+    ):
+        raise ValueError(f"Cannot recover {key}: attempt-start record is incomplete or inconsistent")
+    try:
+        pair_case, replicate_text = pair_id.rsplit("__plan_", 1)
+        replicate = int(replicate_text)
+    except (ValueError, AttributeError) as exc:
+        raise ValueError(f"Cannot recover {key}: malformed paired plan identifier") from exc
+    if (
+        pair_case != case
+        or replicate < 1
+        or replicate > config.get("plan_replicates", 0)
+        or case not in config.get("cases", [])
+        or model not in config.get("debug_models", [])
+        or key != f"{pair_id}__{_slug(model)}"
+        or config.get("candidate_order_by_pair", {}).get(pair_id) != order
+    ):
+        raise ValueError(f"Cannot recover {key}: pair, task, model, or candidate order disagrees with the manifest")
+    expected_mode = "capture" if order_index == 0 else "replay"
+    if mode != expected_mode:
+        raise ValueError(f"Cannot recover {key}: capture/replay mode does not match candidate order")
+    artifact_path = root / "plans" / _slug(case) / f"plan_{replicate:03d}.txt"
+    recorded_artifact = started.get("artifact_path")
+    if recorded_artifact and Path(recorded_artifact).resolve() != artifact_path.resolve():
+        raise ValueError(f"Cannot recover {key}: attempt-start points at a different plan artifact")
+    run_dir = root / "runs" / pair_id / f"{order_index:02d}_{_slug(model)}"
+    if Path(started.get("run_dir", "")).resolve() != run_dir.resolve():
+        raise ValueError(f"Cannot recover {key}: runner output path differs from the scheduled attempt")
+    summary_path = run_dir / case / "summary.json"
+    aggregate_path = run_dir / "aggregate.json"
+    run_config_path = run_dir / "run_config.json"
+    progress_path = run_dir / case / "progress.log"
+    if not all(path.is_file() for path in (summary_path, aggregate_path, run_config_path, progress_path)):
+        raise ValueError(
+            f"Cannot recover {key}: summary, aggregate, run configuration, or progress log is missing; "
+            "the attempt outcome remains unknown and must not be retried"
+        )
+    summary = json.loads(summary_path.read_text(encoding="utf-8"))
+    aggregate = json.loads(aggregate_path.read_text(encoding="utf-8"))
+    run_config = json.loads(run_config_path.read_text(encoding="utf-8"))
+    expected_knowledge = {"mode": mode, "artifact_path": str(artifact_path.resolve())}
+    if (
+        summary.get("test_name") != case
+        or summary.get("technique") != "allStepsAtOnce"
+        or summary.get("interrupted") is not False
+        or summary.get("teardown_status") != "passed"
+        or run_config.get("test_names") != [case]
+        or run_config.get("technique") != "allStepsAtOnce"
+        or run_config.get("jobs") != 1
+        or run_config.get("teardown_after_run") is not True
+        or (run_config.get("overrides") or {}).get("debug-agent.model") != model
+        or run_config.get("knowledge_response") != expected_knowledge
+        or aggregate.get("run_uuid") != run_config.get("run_uuid")
+        or aggregate.get("run_config") != run_config
+    ):
+        raise ValueError(
+            f"Cannot recover {key}: runner completion does not match the scheduled model, task, mode, or teardown"
+        )
+    progress_rows = _read_jsonl(progress_path)
+    progress_events = [row.get("event") for row in progress_rows]
+    if (
+        not progress_rows
+        or progress_rows[-1].get("event") != "run_end"
+        or progress_rows[-1].get("test_name") != case
+        or not isinstance(progress_rows[-1].get("exit_code"), int)
+        or progress_events.count("run_end") != 1
+        or "summary_written" not in progress_events
+        or "aggregate_written" not in progress_events
+        or progress_events.index("summary_written") > progress_events.index("aggregate_written")
+        or progress_events.index("aggregate_written") > progress_events.index("run_end")
+        or any(
+            progress_rows[index].get("test_name") != case
+            for index, event in enumerate(progress_events)
+            if event in {"summary_written", "aggregate_written", "run_end"}
+        )
+    ):
+        raise ValueError(f"Cannot recover {key}: final runner completion markers are missing or inconsistent")
+    aggregate_tests = aggregate.get("tests")
+    if not isinstance(aggregate_tests, list) or len(aggregate_tests) != 1:
+        raise ValueError(f"Cannot recover {key}: aggregate does not contain exactly the scheduled task")
+    aggregate_test = aggregate_tests[0]
+    if aggregate_test.get("name") != case or any(
+        aggregate_test.get(field) != summary.get(field)
+        for field in (
+            "status",
+            "verified",
+            "ground_truth_passed",
+            "ground_truth_after_debug_passed",
+            "ground_truth_after_verification_passed",
+            "ground_truth_integrity_match",
+            "ground_truth_configured",
+        )
+    ):
+        raise ValueError(f"Cannot recover {key}: aggregate and summary outcomes disagree")
+    if _preflight_failed(run_dir, case):
+        raise ValueError(f"Cannot recover {key}: the recorded runner includes a failed lane preflight")
+    meta_path = artifact_path.with_suffix(artifact_path.suffix + ".json")
+    if not artifact_path.is_file() or not meta_path.is_file():
+        raise ValueError(f"Cannot recover {key}: shared KnowledgeAgent plan or metadata is missing")
+    artifact_meta = json.loads(meta_path.read_text(encoding="utf-8"))
+    response_hash = _sha256_file(artifact_path)
+    if (
+        artifact_meta.get("test_name") != case
+        or artifact_meta.get("response_sha256") != response_hash
+        or not re.fullmatch(r"[0-9a-fA-F]{64}", str(artifact_meta.get("prompt_sha256", "")))
+    ):
+        raise ValueError(f"Cannot recover {key}: shared KnowledgeAgent plan metadata failed integrity checks")
+    if _success_value(summary) is not None:
+        prompt_meta_path = run_dir / case / "debug_prompt.meta.json"
+        if not prompt_meta_path.is_file():
+            raise ValueError(f"Cannot recover {key}: scored attempt is missing its DebugAgent prompt trace")
+        prompt_meta = json.loads(prompt_meta_path.read_text(encoding="utf-8"))
+        if not re.fullmatch(r"[0-9a-fA-F]{64}", str(prompt_meta.get("sha256", ""))):
+            raise ValueError(f"Cannot recover {key}: DebugAgent prompt trace metadata is invalid")
+    result = _summary_attempt_result(
+        summary,
+        attempt_key=key,
+        pair_id=pair_id,
+        test_name=case,
+        debug_model=model,
+        mode=mode,
+        candidate_order=order,
+        candidate_order_index=order_index,
+        exit_code=progress_rows[-1]["exit_code"],
+        preflight_failed=False,
+        run_dir=run_dir,
+        artifact_path=artifact_path,
+        storage_free_before_bytes=started.get("storage_free_before_bytes"),
+        storage_free_after_bytes=None,
+        shared_knowledge_cost_for_pair=shared_knowledge_cost_for_pair,
+        recovered=True,
+        recovered_storage_free_bytes=recovered_storage_free_bytes,
+        finished_at_utc=progress_rows[-1].get("timestamp"),
+        campaign_driver_sha256=started.get("campaign_driver_sha256"),
+    )
+    return result
+
+
+def _completed_attempt_stop_reason(
+    result: dict,
+    summary: dict,
+    *,
+    config: dict,
+    rows: list[dict],
+    root: Path,
+    attempt_key: str,
+) -> str | None:
+    model = result["debug_model"]
+    pair_id = result["pair_id"]
+    mode = result["mode"]
+    if result.get("preflight_failed"):
+        return f"private-lane preflight failed during {attempt_key}"
+    if _is_local_model(model) and result.get("debug_model_warm_at_agent_start") is not True:
+        reason = (
+            result.get("debug_model_warmup_reason")
+            or result.get("debug_model_warmup_status")
+            or "missing warm-up record"
+        )
+        return f"local candidate {model} failed DebugAgent-entry warm-up ({reason})"
+    if _success_value(result) is not None and not result.get("debug_prompt_sha256"):
+        return f"debug prompt trace missing from scored attempt {attempt_key}"
+    if result.get("ground_truth_configured") and result.get("ground_truth_after_debug_passed") is None:
+        return f"post-debug Ground Truth is unknown for {attempt_key}"
+    if result.get("ground_truth_configured") and result.get("ground_truth_after_verification_passed") is None:
+        return f"post-verification Ground Truth is unknown for {attempt_key}"
+    if result.get("ground_truth_integrity_match") is False:
+        return f"Ground Truth changed across observational verification for {attempt_key}"
+    if _is_local_model(model) and result.get("debug_model_revision") != config.get("ollama_model_revision_pins", {}).get(model):
+        return f"local model digest changed or was missing during {attempt_key}"
+    siblings = [row for row in rows if row.get("pair_id") == pair_id]
+    for field in ("response_sha256", "knowledge_prompt_sha256", "debug_prompt_sha256"):
+        observed = {row.get(field) for row in siblings}
+        observed.discard(None)
+        if len(observed) > 1:
+            return f"paired candidates for {pair_id} used different {field} values"
+    for role in ("api", "verification"):
+        observed = {row.get("resolved_models", {}).get(role) for row in rows}
+        observed.discard(None)
+        if len(observed) > 1:
+            return f"campaign attempts used different fixed {role} models"
+    resolved_debug = (result.get("resolved_models") or {}).get("debug")
+    if resolved_debug and resolved_debug != model:
+        prior_candidates = {
+            row.get("resolved_models", {}).get("debug")
+            for row in rows
+            if row.get("debug_model") == model
+        }
+        if prior_candidates and resolved_debug not in prior_candidates:
+            return f"candidate {model} resolved to a changed runtime model ID"
+    if summary.get("teardown_status") != "passed":
+        return f"fixture teardown failed during {attempt_key}"
+    try:
+        pair_case, replicate_text = pair_id.rsplit("__plan_", 1)
+        artifact_path = root / "plans" / _slug(pair_case) / f"plan_{int(replicate_text):03d}.txt"
+        replicate = int(replicate_text)
+    except (ValueError, AttributeError):
+        return f"paired plan identifier is malformed for {attempt_key}"
+    if pair_case != result.get("test_name") or replicate < 1:
+        return f"paired plan identifier disagrees with {attempt_key}"
+    meta_path = artifact_path.with_suffix(artifact_path.suffix + ".json")
+    if not artifact_path.is_file() or not meta_path.is_file():
+        return f"shared KnowledgeAgent plan artifact or metadata is missing for {attempt_key}"
+    artifact_meta = json.loads(meta_path.read_text(encoding="utf-8"))
+    if (
+        artifact_meta.get("test_name") != pair_case
+        or artifact_meta.get("response_sha256") != _sha256_file(artifact_path)
+        or artifact_meta.get("response_sha256") != result.get("response_sha256")
+        or artifact_meta.get("prompt_sha256") != result.get("knowledge_prompt_sha256")
+    ):
+        return f"shared KnowledgeAgent plan integrity check failed for {attempt_key}"
+    return None
+
+
 def _task_hashes(cases: list[str]) -> dict[str, str]:
     hashes = {}
     for case in cases:
@@ -191,7 +571,6 @@ def _harness_hashes() -> dict[str, str]:
         "debug_assistant_latest/utils.py",
         "debug_assistant_latest/provenance.py",
         "runtime_config.py",
-        "data_analysis/run_paired_campaign.py",
         "data_analysis/task_family_map.csv",
     )
     return {name: _sha256_file(REPO_ROOT / name) for name in files}
@@ -661,7 +1040,7 @@ def _gpu_cost_assumptions(args) -> dict:
     return {key: value for key, value in {"shared_service": shared_service, "batch_rental": batch_rental}.items() if value}
 
 
-def run_campaign(args: argparse.Namespace) -> int:
+def _run_campaign_locked(args: argparse.Namespace, campaign_lock_fd: int | None) -> int:
     cases = match_pattern(args.cases)
     if not cases:
         raise ValueError(f"No task cases match {args.cases!r}")
@@ -682,7 +1061,8 @@ def run_campaign(args: argparse.Namespace) -> int:
 
     lane_path = args.lab_config or os.environ.get("KUBELLM_LAB_CONFIG")
     config = {
-        "schema_version": 4,
+        "schema_version": 5,
+        "campaign_protocol_version": CAMPAIGN_PROTOCOL_VERSION,
         "campaign_id": args.campaign_id or root.name,
         "cases": cases,
         "task_and_fixture_sha256": _task_hashes(cases),
@@ -783,10 +1163,11 @@ def run_campaign(args: argparse.Namespace) -> int:
         previous_report_path = root / "campaign_report.json"
         if previous_report_path.is_file():
             previous_report = json.loads(previous_report_path.read_text(encoding="utf-8"))
-            if previous_report.get("stop_reason"):
+            previous_stop = previous_report.get("stop_reason")
+            if previous_stop and not str(previous_stop).startswith("disk safety floor reached before "):
                 raise ValueError(
-                    "Campaign previously stopped with a recorded stop reason: "
-                    f"{previous_report['stop_reason']}. Inspect it and start a new campaign wave after recovery."
+                    "Campaign previously stopped for a non-storage reason: "
+                    f"{previous_stop}. Preserve the recorded outcomes and investigate before continuing."
                 )
     else:
         if root.exists() and any(root.iterdir()):
@@ -797,13 +1178,98 @@ def run_campaign(args: argparse.Namespace) -> int:
 
     event_records = _read_jsonl(events_path)
     completed_rows, completed_keys, interrupted_keys = _load_attempts(event_records)
-    if interrupted_keys:
-        raise ValueError(
-            "Campaign contains started but unfinished attempts. Inspect their run directories and resolve them before resuming: "
-            + ", ".join(sorted(interrupted_keys))
-        )
     completed_by_key = {row["attempt_key"]: row for row in completed_rows}
     stop_reason = None
+    if interrupted_keys:
+        if not args.resume:
+            raise ValueError(
+                "Campaign contains started but unfinished attempts; use --resume only after the campaign lock is released"
+            )
+        started_rows = [
+            record for record in event_records
+            if record.get("event") == "attempt_started" and record.get("attempt_key") in interrupted_keys
+        ]
+        started_by_key = {record["attempt_key"]: record for record in started_rows}
+        if (
+            len(interrupted_keys) != 1
+            or set(started_by_key) != interrupted_keys
+            or len(started_rows) != len(interrupted_keys)
+        ):
+            raise ValueError(
+                "Campaign contains multiple or malformed unfinished attempts; preserve them as unknown and inspect manually"
+            )
+        key = next(iter(interrupted_keys))
+        started = started_by_key[key]
+        capture = next(
+            (
+                row for row in completed_rows
+                if row.get("pair_id") == started.get("pair_id") and row.get("mode") == "capture"
+            ),
+            None,
+        )
+        recovered_row = _recover_completed_attempt(
+            started,
+            root=root,
+            config=config,
+            shared_knowledge_cost_for_pair=(
+                capture.get("source_knowledge_cost") if capture else None
+            ),
+            recovered_storage_free_bytes=_disk_free_bytes(REPO_ROOT),
+        )
+        recovered_summary = _read_summary(Path(recovered_row["run_dir"]), recovered_row["test_name"])
+        assert recovered_summary is not None
+        _jsonl_append(events_path, recovered_row)
+        completed_rows.append(recovered_row)
+        completed_keys.add(key)
+        completed_by_key[key] = recovered_row
+        interrupted_keys.remove(key)
+        stop_reason = _completed_attempt_stop_reason(
+            recovered_row,
+            recovered_summary,
+            config=config,
+            rows=completed_rows,
+            root=root,
+            attempt_key=key,
+        )
+        _write_report(root, config, completed_rows, models, stop_reason)
+        if stop_reason:
+            print(f"Recovered completed attempt but stopped on its recorded integrity condition: {stop_reason}")
+
+    if stop_reason:
+        print(f"Campaign report: {root / 'campaign_report.md'}")
+        return 1
+
+    if args.resume and completed_rows:
+        last_finished_key = next(
+            (
+                record.get("attempt_key")
+                for record in reversed(event_records)
+                if record.get("event") == "attempt_finished"
+            ),
+            None,
+        )
+        last_finished = completed_by_key.get(last_finished_key) if last_finished_key else None
+        if last_finished:
+            last_summary = _read_summary(Path(last_finished["run_dir"]), last_finished["test_name"])
+            if last_summary is None:
+                stop_reason = (
+                    f"runner produced no summary for {last_finished_key} "
+                    f"(exit {last_finished.get('exit_code')})"
+                )
+            else:
+                stop_reason = _completed_attempt_stop_reason(
+                    last_finished,
+                    last_summary,
+                    config=config,
+                    rows=completed_rows,
+                    root=root,
+                    attempt_key=last_finished_key,
+                )
+            if stop_reason:
+                _write_report(root, config, completed_rows, models, stop_reason)
+                print(f"Campaign stopped on the last recorded attempt: {stop_reason}")
+                print(f"Campaign report: {root / 'campaign_report.md'}")
+                return 1
 
     for case_index, case in enumerate(cases, start=1):
         for replicate in range(1, args.plan_replicates + 1):
@@ -866,6 +1332,8 @@ def run_campaign(args: argparse.Namespace) -> int:
                         "candidate_order_index": model_index,
                         "command": command,
                         "run_dir": str(run_dir),
+                        "artifact_path": str(artifact_path.resolve()),
+                        "campaign_driver_sha256": _sha256_file(Path(__file__)),
                         "storage_free_before_bytes": storage_free_before_bytes,
                         "started_at_utc": datetime.now(timezone.utc).isoformat(),
                     },
@@ -876,6 +1344,7 @@ def run_campaign(args: argparse.Namespace) -> int:
                     check=False,
                     stdout=subprocess.DEVNULL,
                     stderr=subprocess.DEVNULL,
+                    pass_fds=(campaign_lock_fd,) if campaign_lock_fd is not None else (),
                 )
                 storage_free_after_bytes = _disk_free_bytes(REPO_ROOT)
                 summary = _read_summary(run_dir, case)
@@ -911,95 +1380,26 @@ def run_campaign(args: argparse.Namespace) -> int:
                     completed_by_key[attempt_key] = result
                     break
 
-                metrics = summary.get("metrics", {})
-                resolved_models = {role: (metrics.get(role) or {}).get("model") for role in ("api", "debug", "verification")}
-                environment_context = summary.get("environment_context") or {}
-                ollama_revisions = {
-                    row.get("name"): row.get("digest")
-                    for row in environment_context.get("ollama_model_revisions", [])
-                }
-                warmup_record = environment_context.get("debug_model_warmup") or {}
-                model_revision = (
-                    warmup_record.get("model_digest_after") or ollama_revisions.get(model)
-                    if _is_local_model(model) else None
+                result = _summary_attempt_result(
+                    summary,
+                    attempt_key=attempt_key,
+                    pair_id=pair_id,
+                    test_name=case,
+                    debug_model=model,
+                    mode=mode,
+                    candidate_order=candidate_order,
+                    candidate_order_index=model_index,
+                    exit_code=completed.returncode,
+                    preflight_failed=preflight_failed,
+                    run_dir=run_dir,
+                    artifact_path=artifact_path,
+                    storage_free_before_bytes=storage_free_before_bytes,
+                    storage_free_after_bytes=storage_free_after_bytes,
+                    shared_knowledge_cost_for_pair=shared_api_cost,
+                    campaign_driver_sha256=_sha256_file(Path(__file__)),
                 )
-                model_warm_at_agent_start = (
-                    warmup_record.get("ready") is True if _is_local_model(model) else None
-                )
-                source_knowledge_cost = None
-                api_cost = float((metrics.get("api") or {}).get("cost") or 0.0)
                 if mode == "capture":
-                    source_knowledge_cost = float((metrics.get("api") or {}).get("cost") or 0.0)
-                    shared_api_cost = source_knowledge_cost
-                debug_cost = float((metrics.get("debug") or {}).get("cost") or 0.0)
-                verification_cost = float((metrics.get("verification") or {}).get("cost") or 0.0)
-                effective_cost = float(shared_api_cost or 0.0) + debug_cost + verification_cost
-                result = {
-                    "event": "attempt_finished",
-                    "attempt_key": attempt_key,
-                    "pair_id": pair_id,
-                    "test_name": case,
-                    "debug_model": model,
-                    "mode": mode,
-                    "candidate_order": candidate_order,
-                    "candidate_order_index": model_index,
-                    "exit_code": completed.returncode,
-                    "preflight_failed": preflight_failed,
-                    "run_dir": str(run_dir),
-                    "storage_free_before_bytes": storage_free_before_bytes,
-                    "storage_free_after_bytes": storage_free_after_bytes,
-                    "status": summary.get("status"),
-                    "ground_truth_configured": bool(summary.get("ground_truth_configured")),
-                    "ground_truth_passed": summary.get("ground_truth_passed"),
-                    "ground_truth_after_debug_passed": summary.get("ground_truth_after_debug_passed"),
-                    "ground_truth_after_verification_passed": summary.get("ground_truth_after_verification_passed"),
-                    "ground_truth_integrity_match": summary.get("ground_truth_integrity_match"),
-                    "verifier_judgment": summary.get("verified"),
-                    "verifier_agrees_with_debug_ground_truth": (
-                        summary.get("verified") == summary.get("ground_truth_after_debug_passed")
-                        if summary.get("verified") is not None
-                        and summary.get("ground_truth_after_debug_passed") is not None
-                        else None
-                    ),
-                    "api_cost": api_cost,
-                    "source_knowledge_cost": source_knowledge_cost,
-                    "shared_knowledge_cost_for_pair": shared_api_cost,
-                    "debug_cost": debug_cost,
-                    "verification_cost": verification_cost,
-                    "effective_cost_with_shared_knowledge_call": effective_cost,
-                    "api_input_tokens": (metrics.get("api") or {}).get("input_tokens"),
-                    "api_output_tokens": (metrics.get("api") or {}).get("output_tokens"),
-                    "debug_input_tokens": (metrics.get("debug") or {}).get("input_tokens"),
-                    "debug_output_tokens": (metrics.get("debug") or {}).get("output_tokens"),
-                    "verification_input_tokens": (metrics.get("verification") or {}).get("input_tokens"),
-                    "verification_output_tokens": (metrics.get("verification") or {}).get("output_tokens"),
-                    "api_duration_s": float((metrics.get("api") or {}).get("duration_s") or 0.0),
-                    "debug_duration_s": float((metrics.get("debug") or {}).get("duration_s") or 0.0),
-                    "verification_duration_s": float((metrics.get("verification") or {}).get("duration_s") or 0.0),
-                    "response_sha256": None,
-                    "knowledge_prompt_sha256": None,
-                    "debug_prompt_sha256": None,
-                    "resolved_models": resolved_models,
-                    "debug_model_revision": model_revision,
-                    "debug_model_warm_at_agent_start": model_warm_at_agent_start,
-                    "debug_model_warmup_status": warmup_record.get("status") if _is_local_model(model) else None,
-                    "debug_model_warmup_reason": warmup_record.get("reason") if _is_local_model(model) else None,
-                    "debug_model_warmup_duration_s": warmup_record.get("duration_s") if _is_local_model(model) else None,
-                    "debug_model_load_duration_s": warmup_record.get("load_duration_s") if _is_local_model(model) else None,
-                    "debug_model_warmup": warmup_record if _is_local_model(model) else None,
-                    "environment_context": environment_context,
-                    "finished_at_utc": datetime.now(timezone.utc).isoformat(),
-                }
-                meta_path = artifact_path.with_suffix(artifact_path.suffix + ".json")
-                if meta_path.is_file():
-                    artifact_meta = json.loads(meta_path.read_text(encoding="utf-8"))
-                    result["response_sha256"] = artifact_meta.get("response_sha256")
-                    result["knowledge_prompt_sha256"] = artifact_meta.get("prompt_sha256")
-                debug_prompt_meta = run_dir / case / "debug_prompt.meta.json"
-                if debug_prompt_meta.is_file():
-                    result["debug_prompt_sha256"] = json.loads(
-                        debug_prompt_meta.read_text(encoding="utf-8")
-                    ).get("sha256")
+                    shared_api_cost = result["source_knowledge_cost"]
                 _jsonl_append(events_path, result)
                 completed_rows.append(result)
                 completed_keys.add(attempt_key)
@@ -1077,6 +1477,21 @@ def run_campaign(args: argparse.Namespace) -> int:
     return 1 if stop_reason else 0
 
 
+
+def run_campaign(args: argparse.Namespace) -> int:
+    if args.dry_run:
+        return _run_campaign_locked(args, None)
+    root = args.output_root.expanduser().resolve()
+    private_root = (REPO_ROOT / ".local").resolve()
+    try:
+        root.relative_to(private_root)
+    except ValueError as exc:
+        raise ValueError("Campaign output must be under repository .local to protect raw run artifacts") from exc
+    lock_path = root.parent / f".{root.name}.campaign.lock"
+    with _exclusive_lock(lock_path) as lock_stream:
+        return _run_campaign_locked(args, lock_stream.fileno())
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--cases", default="all", help="Task names, glob pattern, comma list, or 'all'")
@@ -1102,7 +1517,7 @@ def main() -> int:
             f"{_format_gigabytes(MINIMUM_ATTEMPT_FREE_BYTES)}"
         ),
     )
-    parser.add_argument("--resume", action="store_true", help="Resume only when campaign.json exactly matches this schedule")
+    parser.add_argument("--resume", action="store_true", help="Resume an exact schedule; recover only runner-complete attempts and never retry ambiguous outcomes")
     parser.add_argument("--dry-run", action="store_true", help="Print planned coverage without executing")
     args = parser.parse_args()
     try:
