@@ -8,6 +8,7 @@ import pytest
 
 from data_analysis.run_paired_campaign import (
     _completed_attempt_stop_reason,
+    _is_recorded_provider_overload,
     _exclusive_lock,
     _recover_completed_attempt,
 )
@@ -173,6 +174,65 @@ def test_recovery_accepts_only_a_fully_finished_runner(tmp_path):
         root=root,
         attempt_key=result["attempt_key"],
     ) == f"shared KnowledgeAgent plan integrity check failed for {result['attempt_key']}"
+
+
+def test_recorded_provider_overload_is_kept_as_error_and_only_explicitly_continued(tmp_path):
+    root, started, _ = _completed_runner_artifacts(tmp_path)
+    run_dir = Path(started["run_dir"])
+    aggregate = json.loads((run_dir / "aggregate.json").read_text(encoding="utf-8"))
+    aggregate["tests"][0].update(
+        {
+            "status": "ERROR",
+            "verified": None,
+            "ground_truth_passed": None,
+            "ground_truth_after_debug_passed": None,
+            "ground_truth_after_verification_passed": None,
+            "ground_truth_integrity_match": None,
+            "error": "Error code: 503 server_is_overloaded",
+        }
+    )
+    _write_json(run_dir / "aggregate.json", aggregate)
+    result = {
+        **started,
+        "event": "attempt_finished",
+        "status": "ERROR",
+        "exit_code": 1,
+        "ground_truth_configured": True,
+        "ground_truth_passed": None,
+        "ground_truth_after_debug_passed": None,
+        "ground_truth_after_verification_passed": None,
+        "ground_truth_integrity_match": None,
+        "run_dir": str(run_dir),
+        "response_sha256": hashlib.sha256(b"captured plan").hexdigest(),
+        "knowledge_prompt_sha256": "a" * 64,
+        "debug_prompt_sha256": None,
+        "resolved_models": {"api": "gpt-5-mini", "debug": None, "verification": "gpt-5-mini"},
+    }
+    assert _is_recorded_provider_overload(result)
+    args = {
+        "ollama_model_revision_pins": {},
+        "plan_replicates": 1,
+        "cases": ["case_a"],
+        "debug_models": ["gpt-6-luna"],
+        "candidate_order_by_pair": {"case_a__plan_001": ["gpt-6-luna"]},
+    }
+    assert _completed_attempt_stop_reason(
+        result,
+        {"teardown_status": "passed"},
+        config=args,
+        rows=[result],
+        root=root,
+        attempt_key=result["attempt_key"],
+    ) == f"post-debug Ground Truth is unknown for {result['attempt_key']}"
+    assert _completed_attempt_stop_reason(
+        result,
+        {"teardown_status": "passed"},
+        config=args,
+        rows=[result],
+        root=root,
+        attempt_key=result["attempt_key"],
+        continue_after_provider_overload=True,
+    ) is None
 
 
 def test_recovery_preserves_an_incomplete_runner_attempt_as_unknown(tmp_path):

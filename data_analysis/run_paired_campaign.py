@@ -449,6 +449,38 @@ def _recover_completed_attempt(
     return result
 
 
+def _is_recorded_provider_overload(result: dict) -> bool:
+    """Recognize an explicit OpenAI 503; never retry or rewrite its outcome."""
+    if result.get("status") != "ERROR":
+        return False
+    aggregate_path = Path(str(result.get("run_dir") or "")) / "aggregate.json"
+    try:
+        aggregate = json.loads(aggregate_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return False
+    tests = aggregate.get("tests")
+    if not isinstance(tests, list):
+        return False
+    test_name = result.get("test_name")
+    test = next((row for row in tests if isinstance(row, dict) and row.get("name") == test_name), None)
+    error = test.get("error") if test else None
+    if not isinstance(error, str):
+        return False
+    normalized = error.lower()
+    return "error code: 503" in normalized and "server_is_overloaded" in normalized
+
+
+def _is_recorded_provider_overload_stop(stop_reason: str | None, events: list[dict]) -> bool:
+    prefix = "post-debug Ground Truth is unknown for "
+    if not isinstance(stop_reason, str) or not stop_reason.startswith(prefix):
+        return False
+    attempt_key = stop_reason[len(prefix):]
+    for event in reversed(events):
+        if event.get("event") == "attempt_finished" and event.get("attempt_key") == attempt_key:
+            return _is_recorded_provider_overload(event)
+    return False
+
+
 def _completed_attempt_stop_reason(
     result: dict,
     summary: dict,
@@ -457,10 +489,12 @@ def _completed_attempt_stop_reason(
     rows: list[dict],
     root: Path,
     attempt_key: str,
+    continue_after_provider_overload: bool = False,
 ) -> str | None:
     model = result["debug_model"]
     pair_id = result["pair_id"]
     mode = result["mode"]
+    provider_overload = continue_after_provider_overload and _is_recorded_provider_overload(result)
     if result.get("preflight_failed"):
         return f"private-lane preflight failed during {attempt_key}"
     if _is_local_model(model) and result.get("debug_model_warm_at_agent_start") is not True:
@@ -472,9 +506,17 @@ def _completed_attempt_stop_reason(
         return f"local candidate {model} failed DebugAgent-entry warm-up ({reason})"
     if _success_value(result) is not None and not result.get("debug_prompt_sha256"):
         return f"debug prompt trace missing from scored attempt {attempt_key}"
-    if result.get("ground_truth_configured") and result.get("ground_truth_after_debug_passed") is None:
+    if (
+        result.get("ground_truth_configured")
+        and result.get("ground_truth_after_debug_passed") is None
+        and not provider_overload
+    ):
         return f"post-debug Ground Truth is unknown for {attempt_key}"
-    if result.get("ground_truth_configured") and result.get("ground_truth_after_verification_passed") is None:
+    if (
+        result.get("ground_truth_configured")
+        and result.get("ground_truth_after_verification_passed") is None
+        and not provider_overload
+    ):
         return f"post-verification Ground Truth is unknown for {attempt_key}"
     if result.get("ground_truth_integrity_match") is False:
         return f"Ground Truth changed across observational verification for {attempt_key}"
@@ -1165,10 +1207,16 @@ def _run_campaign_locked(args: argparse.Namespace, campaign_lock_fd: int | None)
             previous_report = json.loads(previous_report_path.read_text(encoding="utf-8"))
             previous_stop = previous_report.get("stop_reason")
             if previous_stop and not str(previous_stop).startswith("disk safety floor reached before "):
-                raise ValueError(
-                    "Campaign previously stopped for a non-storage reason: "
-                    f"{previous_stop}. Preserve the recorded outcomes and investigate before continuing."
+                events = _read_jsonl(events_path)
+                accepted_overload = (
+                    args.continue_after_provider_overload
+                    and _is_recorded_provider_overload_stop(previous_stop, events)
                 )
+                if not accepted_overload:
+                    raise ValueError(
+                        "Campaign previously stopped for a non-storage reason: "
+                        f"{previous_stop}. Preserve the recorded outcomes and investigate before continuing."
+                    )
     else:
         if root.exists() and any(root.iterdir()):
             raise ValueError(f"Campaign output already exists and is non-empty: {root}; use --resume after inspection")
@@ -1230,6 +1278,7 @@ def _run_campaign_locked(args: argparse.Namespace, campaign_lock_fd: int | None)
             rows=completed_rows,
             root=root,
             attempt_key=key,
+            continue_after_provider_overload=args.continue_after_provider_overload,
         )
         _write_report(root, config, completed_rows, models, stop_reason)
         if stop_reason:
@@ -1264,6 +1313,7 @@ def _run_campaign_locked(args: argparse.Namespace, campaign_lock_fd: int | None)
                     rows=completed_rows,
                     root=root,
                     attempt_key=last_finished_key,
+                    continue_after_provider_overload=args.continue_after_provider_overload,
                 )
             if stop_reason:
                 _write_report(root, config, completed_rows, models, stop_reason)
@@ -1420,10 +1470,21 @@ def _run_campaign_locked(args: argparse.Namespace, campaign_lock_fd: int | None)
                 if _success_value(result) is not None and not result["debug_prompt_sha256"]:
                     stop_reason = f"debug prompt trace missing from scored attempt {attempt_key}"
                     break
-                if result["ground_truth_configured"] and result["ground_truth_after_debug_passed"] is None:
+                provider_overload = (
+                    args.continue_after_provider_overload and _is_recorded_provider_overload(result)
+                )
+                if (
+                    result["ground_truth_configured"]
+                    and result["ground_truth_after_debug_passed"] is None
+                    and not provider_overload
+                ):
                     stop_reason = f"post-debug Ground Truth is unknown for {attempt_key}"
                     break
-                if result["ground_truth_configured"] and result["ground_truth_after_verification_passed"] is None:
+                if (
+                    result["ground_truth_configured"]
+                    and result["ground_truth_after_verification_passed"] is None
+                    and not provider_overload
+                ):
                     stop_reason = f"post-verification Ground Truth is unknown for {attempt_key}"
                     break
                 if result["ground_truth_integrity_match"] is False:
@@ -1518,6 +1579,14 @@ def main() -> int:
         ),
     )
     parser.add_argument("--resume", action="store_true", help="Resume an exact schedule; recover only runner-complete attempts and never retry ambiguous outcomes")
+    parser.add_argument(
+        "--continue-after-provider-overload",
+        action="store_true",
+        help=(
+            "Keep an explicit recorded OpenAI 503 as an error and continue later "
+            "scheduled attempts without retrying it"
+        ),
+    )
     parser.add_argument("--dry-run", action="store_true", help="Print planned coverage without executing")
     args = parser.parse_args()
     try:
