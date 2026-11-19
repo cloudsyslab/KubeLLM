@@ -660,6 +660,29 @@ def _validate_resume_manifest(existing: dict[str, Any], current: dict[str, Any])
             raise ValueError(f"Resume configuration differs from the original router wave ({key})")
 
 
+RESUMABLE_API_ERROR_HTTP_STATUSES = frozenset({502, 503, 504})
+
+
+def _validate_resumable_api_errors(events: list[dict[str, Any]]) -> None:
+    starts = {
+        row.get("route_id")
+        for row in events
+        if row.get("event") == "router_started" and row.get("route_id")
+    }
+    errors = [
+        row
+        for row in events
+        if row.get("event") == "router_finished" and row.get("status") == "api_error"
+    ]
+    route_ids = [row.get("route_id") for row in errors]
+    if any(not route_id or route_id not in starts for route_id in route_ids):
+        raise ValueError("A recorded router API error has no matching started request")
+    if len(route_ids) != len(set(route_ids)):
+        raise ValueError("A router request has duplicate terminal API error records")
+    if any(row.get("http_status") not in RESUMABLE_API_ERROR_HTTP_STATUSES for row in errors):
+        raise ValueError("This router wave contains a non-resumable API error; the failed request was not retried")
+
+
 def _event_state(events: list[dict[str, Any]]) -> tuple[set[str], set[str], set[str]]:
     starts: set[str] = set()
     finished: set[str] = set()
@@ -755,7 +778,7 @@ def _execute_routes_locked(
         if interrupted:
             raise ValueError("A router request was started but not durably finished; do not retry it in this wave")
         if errors:
-            raise ValueError("This router wave contains an API error; resolve it and start a fresh wave")
+            _validate_resumable_api_errors(events)
         completed = finished
         append_jsonl(
             events_path,
@@ -1390,6 +1413,7 @@ def write_report(
     os.chmod(output_dir, 0o700)
     finished = [row for row in events if row.get("event") == "router_finished"]
     successful = [row for row in finished if row.get("status") == "success"]
+    api_errors = [row for row in finished if row.get("status") == "api_error"]
     expected_keys = {
         (observation["pair_id"], variant["name"])
         for observation in observations
@@ -1397,12 +1421,8 @@ def write_report(
     }
     finished_keys = [(row.get("pair_id"), row.get("variant")) for row in finished]
     expected = len(expected_keys)
-    if (
-        len(finished) != expected
-        or set(finished_keys) != expected_keys
-        or any(row.get("status") == "api_error" for row in finished)
-    ):
-        raise ValueError(f"Need all {expected} router requests to finish without an API error or duplicate")
+    if len(finished) != expected or set(finished_keys) != expected_keys:
+        raise ValueError(f"Need all {expected} router requests to finish exactly once")
     baselines, policies = _fixed_and_policy_scores(observations, finished, registry, bootstrap_replicates)
     manifest_path = output_dir / "router_campaign.json"
     manifest = json.loads(manifest_path.read_text(encoding="utf-8")) if manifest_path.is_file() else {}
@@ -1416,6 +1436,11 @@ def write_report(
         "router_request_count": len(finished),
         "router_decision_count": len(successful),
         "invalid_router_response_count": sum(row.get("status") == "invalid_response" for row in finished),
+        "api_error_count": len(api_errors),
+        "api_error_http_status_counts": {
+            str(status): sum(row.get("http_status") == status for row in api_errors)
+            for status in sorted({row.get("http_status") for row in api_errors if row.get("http_status") is not None})
+        },
         "invalid_response_reason_counts": {
             code: sum(row.get("status") == "invalid_response" and row.get("error_code") == code for row in finished)
             for code in sorted({row.get("error_code") for row in finished if row.get("status") == "invalid_response" and row.get("error_code")})
@@ -1454,6 +1479,7 @@ def write_report(
             "Equal-scenario success is averaged over scenarios with at least one known outcome; clustered bootstrap intervals resample scenarios.",
             "Estimated routed-pipeline cost is the captured shared KnowledgeAgent cost plus selected DebugAgent cost plus measured router cost; benchmark-only Verification cost is excluded.",
             "Router choice probabilities and confidence, when returned, describe choice preference and are not interpreted as repair-success probabilities.",
+            "Recorded API errors are retained as no-decision outcomes; failed requests are not retried.",
             "Oracle uses held-out Ground Truth and is not an executable routing policy.",
             "Actual paired-campaign experiment spend is reported separately in the source campaign report; counterfactual routed-pipeline cost does not represent the spend of running every candidate.",
         ],
@@ -1464,7 +1490,7 @@ def write_report(
     lines = [
         "# Model Router v0 experiment",
         "",
-        f"Scenarios: {report['scenario_count']} | paired plans: {report['plan_count']} | route variants: {report['router_variant_count']} | held-out decisions: {report['router_decision_count']}",
+        f"Scenarios: {report['scenario_count']} | paired plans: {report['plan_count']} | route variants: {report['router_variant_count']} | held-out decisions: {report['router_decision_count']} | API errors: {report['api_error_count']}",
         "",
         "This report evaluates a selector after a fixed KnowledgeAgent plan and before one DebugAgent. It does not evaluate whole-pipeline routing.",
         "",
@@ -1530,7 +1556,7 @@ def main() -> int:
     parser.add_argument("--bootstrap-replicates", type=int, default=2000)
     parser.add_argument("--dry-run", action="store_true", help="Validate pairing and print the route schedule without API calls")
     parser.add_argument("--execute", action="store_true", help="Make the held-out Responses and Decisions API calls")
-    parser.add_argument("--resume", action="store_true", help="Continue an exact wave only when every started API request has a durable successful result; ambiguous requests are never retried")
+    parser.add_argument("--resume", action="store_true", help="Continue an exact wave only when every started API request has a durable terminal record; recorded 502/503/504 errors are skipped, never retried")
     args = parser.parse_args()
     if args.execute and args.dry_run:
         parser.error("Choose either --dry-run or --execute")

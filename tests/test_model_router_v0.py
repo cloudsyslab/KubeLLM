@@ -224,6 +224,25 @@ def test_score_rows_keeps_unknown_outcomes_out_of_success_denominator():
 
 
 
+
+
+def test_resume_allows_only_recorded_gateway_errors_without_reissuing_routes():
+    events = [
+        {"event": "router_started", "route_id": "pair-a::variant-a"},
+        {"event": "router_finished", "route_id": "pair-a::variant-a", "status": "api_error", "http_status": 504},
+    ]
+    router._validate_resumable_api_errors(events)
+    interrupted, finished, errors = router._event_state(events)
+    assert interrupted == set()
+    assert finished == {"pair-a::variant-a"}
+    assert errors == {"pair-a::variant-a"}
+    with pytest.raises(ValueError, match="non-resumable API error"):
+        router._validate_resumable_api_errors([
+            events[0],
+            {"event": "router_finished", "route_id": "pair-a::variant-a", "status": "api_error", "http_status": 400},
+        ])
+
+
 def test_report_creates_private_aggregate_figures_without_raw_inputs(tmp_path, monkeypatch):
     repo, report_path, source_report, registry, _ = make_campaign(tmp_path)
     loaded, wave = router.validate_campaign(report_path, registry, repo_root=repo)
@@ -253,6 +272,13 @@ def test_report_creates_private_aggregate_figures_without_raw_inputs(tmp_path, m
                 event.pop("selected_model")
                 event.pop("choice_probabilities")
                 event.pop("choice_confidence")
+            elif len(events) == 1:
+                event["status"] = "api_error"
+                event["http_status"] = 504
+                event.pop("selected_model")
+                event.pop("choice_probabilities")
+                event.pop("choice_confidence")
+                event.pop("estimated_router_cost_usd")
             events.append(event)
     out = repo / ".local" / "router-output"
     result = router.write_report(
@@ -263,8 +289,10 @@ def test_report_creates_private_aggregate_figures_without_raw_inputs(tmp_path, m
         source_report,
         bootstrap_replicates=50,
     )
-    assert result["router_decision_count"] == 16 * len(observations) - 1
+    assert result["router_decision_count"] == 16 * len(observations) - 2
     assert result["invalid_router_response_count"] == 1
+    assert result["api_error_count"] == 1
+    assert result["api_error_http_status_counts"] == {"504": 1}
     first_policy = result["router_policies"][0]
     assert first_policy["router_decision_coverage"] == pytest.approx((len(observations) - 1) / len(observations))
     assert first_policy["router_requests_attempted"] == len(observations)
