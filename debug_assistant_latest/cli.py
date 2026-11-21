@@ -685,6 +685,12 @@ Examples:
         help="Request-level Ollama keep-alive for warm-up and DebugAgent requests (default: 10m).",
     )
     parser.add_argument(
+        "--ollama-debug-num-ctx",
+        type=int,
+        default=None,
+        help="Set a fixed Ollama DebugAgent context window; recorded in run config.",
+    )
+    parser.add_argument(
         "--dry-run",
         action="store_true",
         help="Show what would be executed without running",
@@ -773,7 +779,10 @@ Examples:
         args.ollama_debug_warmup_digest
         or args.ollama_debug_warmup_allow_models
         or args.ollama_debug_keep_alive
+        or args.ollama_debug_num_ctx is not None
     )
+    if args.ollama_debug_num_ctx is not None and args.ollama_debug_num_ctx < 1:
+        parser.error("--ollama-debug-num-ctx must be a positive integer")
     if args.ollama_debug_warmup or warmup_values_present:
         if not args.ollama_debug_warmup:
             parser.error("Ollama warm-up settings require --ollama-debug-warmup")

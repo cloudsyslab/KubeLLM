@@ -1,3 +1,5 @@
+import hashlib
+import json
 import unittest
 from pathlib import Path
 from tempfile import TemporaryDirectory
@@ -16,6 +18,10 @@ from data_analysis.run_paired_campaign import (
     _startup_disk_error,
     _storage_policy,
     _write_report,
+    _validate_recovery_record,
+    _validate_initial_campaign_root,
+    _tier_fit,
+    _paired_routing_potential,
 )
 
 
@@ -50,6 +56,51 @@ class PairedCampaignTests(unittest.TestCase):
         self.assertEqual(pilot["maximum_scheduled_attempts"], PILOT_MAX_SCHEDULED_ATTEMPTS)
         with self.assertRaisesRegex(ValueError, "limited to 18 scheduled candidate attempts"):
             _storage_policy(True, PILOT_MAX_SCHEDULED_ATTEMPTS + 1)
+
+    def test_recovery_record_is_bound_to_stop_reason_lane_and_attempt_ledger(self):
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            events = root / "attempts.jsonl"
+            events.write_text('{"event":"attempt_finished","attempt_key":"case-a"}\n', encoding="utf-8")
+            record = {
+                "schema_version": 1,
+                "campaign_id": "campaign-a",
+                "prior_stop_reason": "fixture teardown failed",
+                "resolved_cause": "selected lane teardown completed",
+                "lane_fingerprint": "lane-sha",
+                "preflight_passed": True,
+                "teardown_completed": True,
+                "attempt_ledger_sha256": hashlib.sha256(events.read_bytes()).hexdigest(),
+                "verified_at_utc": "2026-11-21T23:30:00Z",
+            }
+            recovery = root / "recovery.json"
+            recovery.write_text(json.dumps(record), encoding="utf-8")
+            parsed, digest = _validate_recovery_record(
+                recovery,
+                campaign_id="campaign-a",
+                stop_reason="fixture teardown failed",
+                events_path=events,
+                lane_fingerprint="lane-sha",
+            )
+            self.assertEqual(parsed, record)
+            self.assertEqual(digest, hashlib.sha256(recovery.read_bytes()).hexdigest())
+            with self.assertRaisesRegex(ValueError, "recorded stop reason"):
+                _validate_recovery_record(
+                    recovery,
+                    campaign_id="campaign-a",
+                    stop_reason="different stop reason",
+                    events_path=events,
+                    lane_fingerprint="lane-sha",
+                )
+            events.write_text(events.read_text(encoding="utf-8") + " ", encoding="utf-8")
+            with self.assertRaisesRegex(ValueError, "Attempt ledger changed"):
+                _validate_recovery_record(
+                    recovery,
+                    campaign_id="campaign-a",
+                    stop_reason="fixture teardown failed",
+                    events_path=events,
+                    lane_fingerprint="lane-sha",
+                )
 
     def test_report_records_storage_headroom_for_each_attempt(self):
         config = {
@@ -132,6 +183,7 @@ class PairedCampaignTests(unittest.TestCase):
             api_model="fixed-api",
             verification_model="fixed-verifier",
             lab_config=Path("/tmp/private-lane.json"),
+            ollama_num_ctx=8192,
         )
         self.assertEqual(Path(command[1]), RUNNER)
         self.assertIn("candidate-z", command)
@@ -139,6 +191,8 @@ class PairedCampaignTests(unittest.TestCase):
         self.assertIn("fixed-api", command)
         self.assertIn("fixed-verifier", command)
         self.assertIn(str(Path("/tmp/private-lane.json").resolve()), command)
+        self.assertIn("--ollama-debug-num-ctx", command)
+        self.assertIn("8192", command)
 
     def test_local_candidate_command_opts_into_debug_entry_warmup(self):
         command = _build_command(
@@ -204,6 +258,69 @@ class PairedCampaignTests(unittest.TestCase):
             set(models),
         )
         self.assertTrue(all(set(order) == set(models) for order in first.values()))
+
+    def test_local_tier_fit_uses_private_ollama_process_vram(self):
+        model = "gemma4:e4b-it-q4_K_M"
+        reported_api_vram = 313_775_881
+        process_vram = 4_783 * 1024**2
+        fit = _tier_fit(
+            model,
+            {
+                "status": "ok",
+                "models": [{
+                    "name": model,
+                    "size_bytes": reported_api_vram,
+                    "size_vram_bytes": reported_api_vram,
+                    "gpu_residency_fraction": 1.0,
+                }],
+            },
+            {
+                "ollama_gpu_process_peak_bytes_by_model": {model: process_vram},
+                "peak_used_mib": 4_803,
+                "peak_delta_mib": 4_803,
+            },
+        )
+        self.assertEqual(fit["model_gpu_bytes"], process_vram)
+        self.assertEqual(fit["ollama_reported_gpu_bytes"], reported_api_vram)
+        self.assertEqual(fit["measurement_source"], "nvidia-smi compute-app memory scoped to the selected private Ollama server")
+        self.assertTrue(fit["within_vram_budget"])
+        self.assertEqual(fit["gpu_residency_fraction"], 1.0)
+
+    def test_paired_routing_report_handles_a_complete_four_model_pair(self):
+        models = ["gpt-5-nano", "gpt-6-luna", "gemma4:e4b-it-q4_K_M", "qwen3.5:9b-q4_K_M"]
+        pair_id = "case-a__plan_001"
+        rows = [
+            {
+                "pair_id": pair_id,
+                "test_name": "case-a",
+                "debug_model": model,
+                "ground_truth_passed": model in {"gpt-5-nano", "gemma4:e4b-it-q4_K_M"},
+            }
+            for model in models
+        ]
+        result = _paired_routing_potential(rows, models, {pair_id: "usable"})
+        all_pairs = result["all_reviewed_and_unreviewed_pairs"]
+        self.assertEqual(all_pairs["complete_all_model_pairs"], 1)
+        self.assertEqual(all_pairs["outcome_patterns"], {"model_outcomes_differ": 1})
+        self.assertEqual(result["by_plan_review_label"]["usable"]["complete_all_model_pairs"], 1)
+
+    def test_initial_campaign_accepts_only_known_pre_run_evidence(self):
+        with TemporaryDirectory() as directory:
+            root = Path(directory) / "campaign"
+            _validate_initial_campaign_root(root)
+            root.mkdir()
+            _validate_initial_campaign_root(root)
+            for name in (
+                "plan_review.jsonl",
+                "plan_review_summary.json",
+                "lab_cleanup_manifest.json",
+            ):
+                (root / name).write_text("{}\n", encoding="utf-8")
+            _validate_initial_campaign_root(root)
+            (root / "unexpected.log").write_text("raw data\n", encoding="utf-8")
+            with self.assertRaisesRegex(ValueError, "unexpected.log"):
+                _validate_initial_campaign_root(root)
+
 
 
 if __name__ == "__main__":

@@ -1208,6 +1208,10 @@ def cmd_run_single(args, test_name: str):
                 if value.strip()
             ],
             "keep_alive": args.ollama_debug_keep_alive or "10m",
+            "options": (
+                {"num_ctx": args.ollama_debug_num_ctx}
+                if getattr(args, "ollama_debug_num_ctx", None) is not None else {}
+            ),
         }
         run_config["ollama_debug_warmup"] = warmup_policy
     save_run_config(run_config, output_dir)

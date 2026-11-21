@@ -15,7 +15,11 @@ import re
 import shutil
 import subprocess
 import sys
-from collections import defaultdict
+import threading
+import time
+import urllib.request
+from urllib.parse import urlsplit
+from collections import Counter, defaultdict
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -28,6 +32,11 @@ from test_discovery import match_pattern  # noqa: E402
 from lab_context import LaneConfigurationError, bootstrap_from_argv, load_lane_config  # noqa: E402
 from runtime_config import OLLAMA_PROVIDER, infer_chat_provider  # noqa: E402
 from provenance import _ollama_model_revisions  # noqa: E402
+from data_analysis.frozen_plan_inputs import (  # noqa: E402
+    build_current_knowledge_prompts,
+    load_and_validate_frozen_plans,
+    stage_frozen_plans,
+)
 
 RUNNER = REPO_ROOT / "debug_assistant_latest" / "runner.py"
 DEFAULT_ROOT = REPO_ROOT / ".local" / "prediction_campaigns"
@@ -35,6 +44,286 @@ MINIMUM_STARTUP_FREE_BYTES = 20_000_000_000
 MINIMUM_ATTEMPT_FREE_BYTES = 10_000_000_000
 PILOT_STARTUP_FREE_BYTES = 12_000_000_000
 PILOT_MAX_SCHEDULED_ATTEMPTS = 18
+
+
+LOCAL_MODEL_TIERS = {
+    "gemma4:e4b-it-q4_K_M": {"tier": "8GB", "target_vram_bytes": 8 * 1024**3},
+    "qwen3.5:9b-q4_K_M": {"tier": "12GB", "target_vram_bytes": 12 * 1024**3},
+}
+LOCAL_MODEL_CONTEXT_TOKENS = 8192
+
+
+def _gpu_memory_sample(gpu_index: int) -> tuple[int, int] | None:
+    try:
+        result = subprocess.run(
+            [
+                "nvidia-smi",
+                f"--id={gpu_index}",
+                "--query-gpu=memory.used,memory.total",
+                "--format=csv,noheader,nounits",
+            ],
+            capture_output=True,
+            text=True,
+            timeout=5,
+            check=True,
+        )
+        values = [int(value.strip()) for value in result.stdout.splitlines()[0].split(",")]
+        if len(values) != 2:
+            return None
+        return values[0], values[1]
+    except (OSError, subprocess.SubprocessError, IndexError, ValueError):
+        return None
+
+
+def _ollama_gpu_process_memory(gpu_index: int) -> dict[str, Any]:
+    """Measure compute memory used by descendants of the selected private Ollama server."""
+    host = os.environ.get("OLLAMA_HOST")
+    if not host:
+        return {"status": "missing_host", "gpu_index": gpu_index, "models": {}}
+    try:
+        parsed = urlsplit(host if "://" in host else "http://" + host)
+        port = parsed.port or 11434
+        listeners = subprocess.run(["ss", "-ltnp"], capture_output=True, text=True, timeout=5, check=True)
+        server_pids = set()
+        for line in listeners.stdout.splitlines():
+            fields = line.split()
+            if len(fields) >= 4 and fields[3].endswith(f":{port}"):
+                server_pids.update(int(value) for value in re.findall(r"pid=(\d+)", line))
+        if not server_pids:
+            return {"status": "listener_not_found", "gpu_index": gpu_index, "models": {}}
+
+        process_tree = subprocess.run(["ps", "-eo", "pid=,ppid="], capture_output=True, text=True, timeout=5, check=True)
+        children: dict[int, list[int]] = defaultdict(list)
+        for line in process_tree.stdout.splitlines():
+            fields = line.split()
+            if len(fields) == 2:
+                pid, parent = int(fields[0]), int(fields[1])
+                children[parent].append(pid)
+        descendants = set(server_pids)
+        pending = list(server_pids)
+        while pending:
+            parent = pending.pop()
+            for child in children.get(parent, []):
+                if child not in descendants:
+                    descendants.add(child)
+                    pending.append(child)
+
+        apps = subprocess.run(
+            [
+                "nvidia-smi", f"--id={gpu_index}",
+                "--query-compute-apps=pid,used_gpu_memory",
+                "--format=csv,noheader,nounits",
+            ],
+            capture_output=True, text=True, timeout=5, check=True,
+        )
+        app_memory: dict[int, int] = {}
+        for line in apps.stdout.splitlines():
+            fields = [value.strip() for value in line.split(",", 1)]
+            if len(fields) == 2:
+                match = re.match(r"(\d+)", fields[1])
+                if match and int(fields[0]) in descendants:
+                    app_memory[int(fields[0])] = int(match.group(1)) * 1024**2
+        snapshot = _ollama_process_snapshot()
+        resident_names = [
+            row.get("name") for row in snapshot.get("models", [])
+            if row.get("name")
+        ]
+        per_model: dict[str, int] = {}
+        residency_by_model = {
+            row["name"]: row.get("gpu_residency_fraction")
+            for row in snapshot.get("models", [])
+            if row.get("name") and row.get("gpu_residency_fraction") is not None
+        }
+        if len(resident_names) == 1:
+            per_model[resident_names[0]] = sum(app_memory.values())
+        return {
+            "status": "ok",
+            "gpu_index": gpu_index,
+            "ollama_server_pids": sorted(server_pids),
+            "gpu_process_pids": sorted(app_memory),
+            "gpu_process_vram_bytes": sum(app_memory.values()),
+            "resident_model_names": resident_names,
+            "models": per_model,
+            "gpu_residency_fraction_by_model": residency_by_model,
+        }
+    except Exception as exc:
+        return {
+            "status": "query_failed",
+            "gpu_index": gpu_index,
+            "error_type": type(exc).__name__,
+            "models": {},
+            "gpu_residency_fraction_by_model": {},
+        }
+
+
+class _GpuMemorySampler:
+    def __init__(self, gpu_index: int, interval_s: float = 1.0):
+        self.gpu_index = gpu_index
+        self.interval_s = interval_s
+        self.samples: list[tuple[int, int]] = []
+        self.process_samples: list[dict[str, Any]] = []
+        self._last_process_sample = 0.0
+        self._stop = threading.Event()
+        self._thread: threading.Thread | None = None
+
+    def _sample_process(self) -> None:
+        self.process_samples.append(_ollama_gpu_process_memory(self.gpu_index))
+        self._last_process_sample = time.monotonic()
+
+    def _sample_loop(self) -> None:
+        while not self._stop.wait(self.interval_s):
+            sample = _gpu_memory_sample(self.gpu_index)
+            if sample is not None:
+                self.samples.append(sample)
+            if time.monotonic() - self._last_process_sample >= 5.0:
+                self._sample_process()
+
+    def start(self) -> None:
+        initial = _gpu_memory_sample(self.gpu_index)
+        if initial is not None:
+            self.samples.append(initial)
+        self._sample_process()
+        self._thread = threading.Thread(target=self._sample_loop, daemon=True)
+        self._thread.start()
+
+    def stop(self) -> dict[str, Any]:
+        self._stop.set()
+        if self._thread is not None:
+            self._thread.join(timeout=max(5.0, self.interval_s * 2))
+        final = _gpu_memory_sample(self.gpu_index)
+        if final is not None:
+            self.samples.append(final)
+        self._sample_process()
+        used = [sample[0] for sample in self.samples]
+        total = [sample[1] for sample in self.samples]
+        process_peaks: dict[str, int] = {}
+        residency_samples: dict[str, list[float]] = defaultdict(list)
+        for sample in self.process_samples:
+            for name, memory_bytes in sample.get("models", {}).items():
+                process_peaks[name] = max(process_peaks.get(name, 0), memory_bytes)
+            for name, fraction in sample.get("gpu_residency_fraction_by_model", {}).items():
+                if fraction is not None:
+                    residency_samples[name].append(float(fraction))
+        return {
+            "gpu_index": self.gpu_index,
+            "sample_count": len(used),
+            "baseline_used_mib": used[0] if used else None,
+            "peak_used_mib": max(used) if used else None,
+            "peak_delta_mib": max(used) - used[0] if used else None,
+            "total_mib": max(total) if total else None,
+            "sampling_interval_s": self.interval_s,
+            "ollama_process_sample_count": len(self.process_samples),
+            "ollama_gpu_process_peak_bytes_by_model": process_peaks,
+            "ollama_gpu_process_sample_statuses": sorted({row.get("status", "unknown") for row in self.process_samples}),
+            "ollama_gpu_residency_fraction_min_by_model": {
+                name: min(values) for name, values in residency_samples.items() if values
+            },
+        }
+
+
+def _gpu_inventory() -> list[dict[str, Any]]:
+    result = subprocess.run(
+        [
+            "nvidia-smi",
+            "--query-gpu=index,name,memory.total",
+            "--format=csv,noheader,nounits",
+        ],
+        capture_output=True,
+        text=True,
+        timeout=10,
+        check=True,
+    )
+    devices = []
+    for line in result.stdout.splitlines():
+        fields = [part.strip() for part in line.split(",", 2)]
+        if len(fields) == 3:
+            devices.append(
+                {"index": int(fields[0]), "name": fields[1], "total_mib": int(fields[2])}
+            )
+    return devices
+
+
+def _ollama_process_snapshot() -> dict[str, Any]:
+    host = os.environ.get("OLLAMA_HOST")
+    if not host:
+        return {"status": "missing_host", "models": []}
+    if "://" not in host:
+        host = "http://" + host
+    url = host.rstrip("/") + "/api/ps"
+    try:
+        with urllib.request.urlopen(url, timeout=5) as response:
+            payload = json.loads(response.read().decode("utf-8"))
+    except Exception as exc:
+        return {"status": "query_failed", "error_type": type(exc).__name__, "models": []}
+    models = []
+    for row in payload.get("models", []):
+        size = row.get("size")
+        size_vram = row.get("size_vram")
+        try:
+            size = int(size) if size is not None else None
+            size_vram = int(size_vram) if size_vram is not None else None
+        except (TypeError, ValueError):
+            size = size_vram = None
+        models.append(
+            {
+                "name": row.get("name") or row.get("model"),
+                "size_bytes": size,
+                "size_vram_bytes": size_vram,
+                "context_length": row.get("context_length"),
+                "quantization_level": (row.get("details") or {}).get("quantization_level"),
+                "gpu_residency_fraction": (
+                    min(1.0, size_vram / size) if size and size_vram is not None else None
+                ),
+            }
+        )
+    return {"status": "ok", "resident_model_count": len(models), "models": models}
+
+
+def _tier_fit(
+    model: str,
+    snapshot: dict[str, Any],
+    gpu_memory: dict[str, Any] | None = None,
+) -> dict[str, Any] | None:
+    tier = LOCAL_MODEL_TIERS.get(model)
+    if tier is None:
+        return None
+    resident = next(
+        (row for row in snapshot.get("models", []) if row.get("name") in {model, model.split(":")[0]}),
+        None,
+    )
+    reported_vram = resident.get("size_vram_bytes") if resident else None
+    process_vram = (gpu_memory or {}).get("ollama_gpu_process_peak_bytes_by_model", {}).get(model)
+    device_peak_mib = (gpu_memory or {}).get("peak_used_mib")
+    device_peak_bytes = device_peak_mib * 1024**2 if device_peak_mib is not None else None
+    device_delta_mib = (gpu_memory or {}).get("peak_delta_mib")
+    device_delta_bytes = device_delta_mib * 1024**2 if device_delta_mib is not None else None
+    if process_vram is not None:
+        measured_vram = process_vram
+        measurement_source = "nvidia-smi compute-app memory scoped to the selected private Ollama server"
+    elif device_delta_bytes is not None and device_delta_bytes > 0:
+        measured_vram = device_delta_bytes
+        measurement_source = "unattributed nvidia-smi device peak delta (conservative fallback)"
+    else:
+        measured_vram = reported_vram
+        measurement_source = "Ollama /api/ps estimate" if reported_vram is not None else None
+    budget = tier["target_vram_bytes"]
+    return {
+        "tier": tier["tier"],
+        "target_vram_bytes": budget,
+        "model_gpu_bytes": measured_vram,
+        "ollama_reported_gpu_bytes": reported_vram,
+        "private_ollama_gpu_process_bytes": process_vram,
+        "device_peak_used_bytes": device_peak_bytes,
+        "measurement_source": measurement_source,
+        "within_vram_budget": measured_vram <= budget if measured_vram is not None else None,
+        "resident_model_found": resident is not None or bool(process_vram),
+        "gpu_residency_fraction": (
+            resident.get("gpu_residency_fraction") if resident
+            else (gpu_memory or {}).get("ollama_gpu_residency_fraction_min_by_model", {}).get(model)
+        ),
+        "max_context_tokens": LOCAL_MODEL_CONTEXT_TOKENS,
+    }
+
 
 
 def _slug(value: str) -> str:
@@ -81,6 +370,32 @@ def _startup_disk_error(
     )
 
 
+INITIAL_CAMPAIGN_ALLOWED_FILES = {
+    "plan_review.jsonl",
+    "plan_review_summary.json",
+    "lab_cleanup_manifest.json",
+}
+
+
+def _validate_initial_campaign_root(root: Path) -> None:
+    """Allow only known pre-run evidence beside a new campaign manifest."""
+    if not root.exists():
+        return
+    unexpected = [
+        path.name
+        for path in root.iterdir()
+        if path.name not in INITIAL_CAMPAIGN_ALLOWED_FILES
+        or path.is_symlink()
+        or not path.is_file()
+    ]
+    if unexpected:
+        raise ValueError(
+            f"Campaign output already exists with unexpected entries: {root}: "
+            + ", ".join(sorted(unexpected))
+            + "; inspect them before starting a new campaign"
+        )
+
+
 def _storage_policy(pilot_storage: bool, planned_attempts: int) -> dict[str, Any]:
     if pilot_storage and planned_attempts > PILOT_MAX_SCHEDULED_ATTEMPTS:
         raise ValueError(
@@ -125,6 +440,35 @@ def _read_jsonl(path: Path) -> list[dict]:
         except json.JSONDecodeError as exc:
             raise ValueError(f"Invalid JSONL at {path}:{number}; inspect before resuming") from exc
     return records
+
+
+def _validate_recovery_record(
+    path: Path,
+    *,
+    campaign_id: str,
+    stop_reason: str,
+    events_path: Path,
+    lane_fingerprint: str,
+) -> tuple[dict[str, Any], str]:
+    """Require an evidence-bound recovery acknowledgement before resuming a stopped run."""
+    record = json.loads(path.read_text(encoding="utf-8"))
+    if not isinstance(record, dict) or record.get("schema_version") != 1:
+        raise ValueError("Recovery record must be a JSON object with schema_version 1")
+    if record.get("campaign_id") != campaign_id:
+        raise ValueError("Recovery record campaign_id does not match this campaign")
+    if record.get("prior_stop_reason") != stop_reason:
+        raise ValueError("Recovery record does not acknowledge the campaign's recorded stop reason")
+    if record.get("attempt_ledger_sha256") != _sha256_file(events_path):
+        raise ValueError("Attempt ledger changed after recovery was recorded; inspect and prepare a new recovery record")
+    if record.get("lane_fingerprint") != lane_fingerprint:
+        raise ValueError("Recovery record does not match the selected private lane")
+    if record.get("preflight_passed") is not True or record.get("teardown_completed") is not True:
+        raise ValueError("Recovery record requires successful private-lane preflight and completed teardown")
+    if not str(record.get("resolved_cause") or "").strip():
+        raise ValueError("Recovery record must describe the resolved cause")
+    if not str(record.get("verified_at_utc") or "").strip():
+        raise ValueError("Recovery record must include verified_at_utc")
+    return record, _sha256_file(path)
 
 
 def _read_summary(run_dir: Path, test_name: str) -> dict | None:
@@ -288,6 +632,10 @@ def _model_summary(
                     "mean_effective_cost_per_success": None,
                     "total_effective_cost_with_shared_knowledge_call": sum(costs),
                     "mean_debug_model_warmup_duration_s": mean_warmup_duration,
+                    "mean_attempt_wall_duration_s": (
+                        sum(float(row.get("attempt_wall_duration_s") or 0.0) for row in attempt_rows)
+                        / len(attempt_rows) if attempt_rows else None
+                    ),
                 }
             )
             continue
@@ -300,6 +648,7 @@ def _model_summary(
         ]
         passed = sum(bool(_success_value(row)) for row in rows)
         debug_phase_seconds = sum(float(row.get("debug_duration_s") or 0.0) for row in attempt_rows)
+        attempt_wall_seconds = sum(float(row.get("attempt_wall_duration_s") or 0.0) for row in attempt_rows)
         local_candidate = _is_local_model(model)
         shared_assumption = gpu_cost_assumptions.get("shared_service")
         batch_assumption = gpu_cost_assumptions.get("batch_rental")
@@ -357,6 +706,7 @@ def _model_summary(
                     row.get("ground_truth_integrity_match") is False for row in rows
                 ),
                 "mean_debug_duration_s": debug_phase_seconds / len(attempt_rows),
+                "mean_attempt_wall_duration_s": attempt_wall_seconds / len(attempt_rows),
                 "mean_debug_model_warmup_duration_s": mean_warmup_duration,
                 "shared_service_gpu_cost_per_attempt": shared_gpu_per_task,
                 "shared_service_mean_cost_per_attempt": (
@@ -379,6 +729,124 @@ def _model_summary(
             }
         )
     return results
+
+
+def _paired_routing_potential(
+    attempts: list[dict],
+    models: list[str],
+    review_labels: dict[str, str] | None = None,
+) -> dict[str, Any]:
+    review_labels = review_labels or {}
+    pairs: dict[str, dict[str, dict]] = defaultdict(dict)
+    pair_cases: dict[str, str] = {}
+    for row in attempts:
+        pair_id = row.get("pair_id")
+        model = row.get("debug_model")
+        if pair_id and model in models:
+            pairs[pair_id][model] = row
+            pair_cases[pair_id] = row.get("test_name")
+
+    def summarize(selected_pair_ids: list[str]) -> dict[str, Any]:
+        complete = {
+            pair_id: {
+                model: _success_value(pairs[pair_id][model])
+                for model in models
+            }
+            for pair_id in selected_pair_ids
+            if set(pairs[pair_id]) >= set(models)
+            and all(_success_value(pairs[pair_id][model]) is not None for model in models)
+        }
+        if not complete:
+            return {
+                "plan_pairs": len(selected_pair_ids),
+                "complete_all_model_pairs": 0,
+                "best_single_model": None,
+                "best_single_model_success_rate": None,
+                "perfect_information_oracle_success_rate": None,
+                "oracle_minus_best_static_percentage_points": None,
+                "outcome_patterns": {},
+                "matched_model_comparisons_vs_gpt_5_nano": {},
+            }
+        rates = {
+            model: sum(bool(values[model]) for values in complete.values()) / len(complete)
+            for model in models
+        }
+        best_model = max(models, key=lambda model: (rates[model], model))
+        outcome_patterns = Counter()
+        for values in complete.values():
+            successes = sum(bool(values[model]) for model in models)
+            outcome_patterns[
+                "all_models_succeeded" if successes == len(models)
+                else "no_model_succeeded" if successes == 0
+                else "model_outcomes_differ"
+            ] += 1
+        oracle_rate = sum(
+            any(bool(values[model]) for model in models) for values in complete.values()
+        ) / len(complete)
+        baseline = "gpt-5-nano"
+        comparisons = {}
+        if baseline in models:
+            for model in models:
+                if model == baseline:
+                    continue
+                wins = losses = ties = 0
+                for values in complete.values():
+                    candidate = bool(values[model])
+                    base = bool(values[baseline])
+                    if candidate and not base:
+                        wins += 1
+                    elif base and not candidate:
+                        losses += 1
+                    else:
+                        ties += 1
+                comparisons[model] = {
+                    "candidate_wins": wins,
+                    "baseline_wins": losses,
+                    "ties": ties,
+                }
+        return {
+            "plan_pairs": len(selected_pair_ids),
+            "complete_all_model_pairs": len(complete),
+            "best_single_model": best_model,
+            "best_single_model_success_rate": rates[best_model],
+            "single_model_success_rates": rates,
+            "perfect_information_oracle_success_rate": oracle_rate,
+            "oracle_minus_best_static_percentage_points": round((oracle_rate - rates[best_model]) * 100, 3),
+            "outcome_patterns": dict(sorted(outcome_patterns.items())),
+            "matched_model_comparisons_vs_gpt_5_nano": comparisons,
+        }
+
+    all_pairs = sorted(pairs)
+    by_label = {}
+    for label in ("usable", "incomplete", "wrong", "uncertain", "unreviewed"):
+        selected = [
+            pair_id for pair_id in all_pairs
+            if (review_labels.get(pair_id) or "unreviewed") == label
+        ]
+        if selected:
+            by_label[label] = summarize(selected)
+    return {
+        "interpretation": "The perfect-information oracle is a descriptive upper bound that chooses the successful model after observing outcomes; it is not a deployable router result.",
+        "all_reviewed_and_unreviewed_pairs": summarize(all_pairs),
+        "by_plan_review_label": by_label,
+    }
+
+
+def _load_plan_review_labels(root: Path, config: dict) -> tuple[dict[str, str], dict[str, Any] | None]:
+    path = root / "plan_review.jsonl"
+    if not path.is_file():
+        return {}, None
+    labels = {}
+    for row in _read_jsonl(path):
+        if row.get("plan_manifest_sha256") != (config.get("frozen_plan_manifest") or {}).get("manifest_sha256"):
+            continue
+        pair_id = row.get("pair_id")
+        label = row.get("label")
+        if pair_id and label in {"usable", "incomplete", "wrong", "uncertain"}:
+            labels[pair_id] = label
+    summary_path = root / "plan_review_summary.json"
+    summary = json.loads(summary_path.read_text(encoding="utf-8")) if summary_path.is_file() else None
+    return labels, summary
 
 
 def _cost_success_frontier(
@@ -425,6 +893,13 @@ def _write_report(root: Path, config: dict, attempts: list[dict], models: list[s
         + float(row.get("verification_cost") or 0.0)
         for row in attempts
     )
+    review_labels, plan_review_summary = _load_plan_review_labels(root, config)
+    paired_routing_potential = _paired_routing_potential(attempts, models, review_labels)
+    attempt_wall_values = [
+        float(row["attempt_wall_duration_s"])
+        for row in attempts
+        if row.get("attempt_wall_duration_s") is not None
+    ]
     report = {
         "schema_version": 1,
         "campaign": config,
@@ -438,7 +913,34 @@ def _write_report(root: Path, config: dict, attempts: list[dict], models: list[s
         "ground_truth_integrity_mismatches": sum(
             row.get("ground_truth_integrity_match") is False for row in attempts
         ),
+        "mean_attempt_wall_duration_s": (
+            sum(attempt_wall_values) / len(attempt_wall_values) if attempt_wall_values else None
+        ),
+        "plan_review_summary": plan_review_summary,
+        "paired_routing_potential": paired_routing_potential,
+        "local_gpu_tier_fit": {
+            model: {
+                "attempts": sum(row.get("debug_model") == model for row in attempts),
+                "within_vram_budget": (
+                    sum(row.get("debug_model") == model and (row.get("local_model_tier_fit") or {}).get("within_vram_budget") is True for row in attempts)
+                ),
+                "missing_measurement": (
+                    sum(row.get("debug_model") == model and (row.get("local_model_tier_fit") or {}).get("within_vram_budget") is None for row in attempts)
+                ),
+                "max_observed_model_vram_bytes": max(
+                    (
+                        (row.get("local_model_tier_fit") or {}).get("model_gpu_bytes")
+                        for row in attempts
+                        if row.get("debug_model") == model
+                        and (row.get("local_model_tier_fit") or {}).get("model_gpu_bytes") is not None
+                    ),
+                    default=None,
+                ),
+            }
+            for model in config.get("local_compute_tiers", {})
+        },
         "stop_reason": stop_reason,
+        "recovery_history": _read_jsonl(root / "recovery_history.jsonl"),
         "candidate_summary": candidate_summary,
         "static_model_cost_success_frontier": _cost_success_frontier(candidate_summary),
         "shared_service_cost_success_frontier": (
@@ -460,6 +962,7 @@ def _write_report(root: Path, config: dict, attempts: list[dict], models: list[s
         f"Recorded provider cost: ${recorded_provider_cost:.4f}  |  modeled selected-pipeline cost: ${report['modeled_selected_pipeline_cost_usd']:.4f}",
         f"Post-verification GT integrity mismatches: {report['ground_truth_integrity_mismatches']}",
         f"Stop reason: {stop_reason or 'campaign schedule completed'}",
+        f"Recorded recoveries: {len(report['recovery_history'])}",
         (
             "Storage guard: "
         f"profile {config['disk_guard']['profile']}, "
@@ -469,7 +972,9 @@ def _write_report(root: Path, config: dict, attempts: list[dict], models: list[s
             "Free bytes are recorded before and after each completed runner attempt."
         ),
         "",
-        "Prediction success is Ground Truth immediately after DebugAgent. VerificationAgent judgment accuracy is scored against that label; a second Ground Truth checkpoint after verification audits whether the observational verifier left task state unchanged. Unknown labels are excluded, never treated as failures. Pooled rate weights every scored attempt; equal-task rate averages each task's rate equally. Modeled candidate cost includes the shared KnowledgeAgent call, DebugAgent, and verifier per selected production attempt, including spending on failed attempts. Recorded provider cost counts the actual KnowledgeAgent capture once per pair and every candidate's recorded DebugAgent and verifier costs. GPU costs are added only when explicit assumptions are supplied.",
+        "Prediction success is Ground Truth immediately after DebugAgent. VerificationAgent judgment accuracy is scored against that label; a second Ground Truth checkpoint after verification audits whether the observational verifier left task state unchanged. Unknown labels are excluded, never treated as failures. Pooled rate weights every scored attempt; equal-task rate averages each task's rate equally. "
+        + ("This wave replays frozen KnowledgeAgent plans and does not make a KnowledgeAgent API call; recorded and modeled costs cover only each candidate's DebugAgent and fixed verifier execution. The prior plan-generation cost is outside this wave." if config.get("plan_source") == "frozen_knowledge_agent_plans" else "Modeled candidate cost includes the shared KnowledgeAgent call, DebugAgent, and verifier per selected production attempt, including spending on failed attempts. Recorded provider cost counts the actual KnowledgeAgent capture once per pair and every candidate's recorded DebugAgent and verifier costs.")
+        + " GPU costs are added only when explicit assumptions are supplied.",
         "",
         "| Debug model | GT attempts | Pooled GT success | Equal-task GT success | Mean modeled cost | Cost per success | Verifier accuracy | Mean warm-up (s) | Perfect tasks |",
         "|---|---:|---:|---:|---:|---:|---:|---:|---:|",
@@ -502,6 +1007,82 @@ def _write_report(root: Path, config: dict, attempts: list[dict], models: list[s
                 tasks=row["tasks_with_any_attempt"],
             )
         )
+    review_summary = report.get("plan_review_summary")
+    if review_summary:
+        label_counts = review_summary.get("label_counts", {})
+        lines.extend(
+            [
+                "",
+                "## Frozen KnowledgeAgent plan review",
+                "",
+                f"Blind review completed before v1 outcomes with {review_summary.get('review_model', 'unknown reviewer')}; "
+                f"{review_summary.get('reviewed_count', 0)}/{review_summary.get('plan_count', 0)} plans were reviewed.",
+                "",
+                "| Plan label | Count |",
+                "|---|---:|",
+            ]
+        )
+        for label in ("usable", "incomplete", "wrong", "uncertain"):
+            lines.append(f"| {label} | {label_counts.get(label, 0)} |")
+
+    potential = report.get("paired_routing_potential", {})
+    overall = potential.get("all_reviewed_and_unreviewed_pairs", {})
+    lines.extend(
+        [
+            "",
+            "## Matched-model outcomes and routing upper bound",
+            "",
+            f"Complete all-model plan pairs: {overall.get('complete_all_model_pairs', 0)}. "
+            f"Best static candidate: {overall.get('best_single_model') or '—'} "
+            f"({overall.get('best_single_model_success_rate') if overall.get('best_single_model_success_rate') is not None else '—'}).",
+            f"Perfect-information oracle success: {overall.get('perfect_information_oracle_success_rate') if overall.get('perfect_information_oracle_success_rate') is not None else '—'}; "
+            f"uplift over the best static candidate: {overall.get('oracle_minus_best_static_percentage_points') if overall.get('oracle_minus_best_static_percentage_points') is not None else '—'} percentage points.",
+            "This oracle selects a model after observing the actual outcomes and is an upper bound, not evidence that a learned or Decisions API router achieves that performance.",
+        ]
+    )
+    if potential.get("by_plan_review_label"):
+        lines.extend(
+            [
+                "",
+                "| Plan-review label | Complete pairs | Best static success | Oracle success | Oracle uplift (pp) |",
+                "|---|---:|---:|---:|---:|",
+            ]
+        )
+        for label, values in potential["by_plan_review_label"].items():
+            lines.append(
+                f"| {label} | {values.get('complete_all_model_pairs', 0)} | "
+                f"{values.get('best_single_model_success_rate') if values.get('best_single_model_success_rate') is not None else '—'} | "
+                f"{values.get('perfect_information_oracle_success_rate') if values.get('perfect_information_oracle_success_rate') is not None else '—'} | "
+                f"{values.get('oracle_minus_best_static_percentage_points') if values.get('oracle_minus_best_static_percentage_points') is not None else '—'} |"
+            )
+
+    if report.get("local_gpu_tier_fit"):
+        lines.extend(
+            [
+                "",
+                "## Local model VRAM fit",
+                "",
+                "| Model | Tier budget (bytes) | Attempts | Within budget | Missing measurements | Peak model VRAM (bytes) |",
+                "|---|---:|---:|---:|---:|---:|",
+            ]
+        )
+        for model, values in report["local_gpu_tier_fit"].items():
+            budget = config.get("local_compute_tiers", {}).get(model, {}).get("target_vram_bytes")
+            lines.append(
+                f"| {model} | {budget if budget is not None else '—'} | {values.get('attempts', 0)} | "
+                f"{values.get('within_vram_budget', 0)} | {values.get('missing_measurement', 0)} | "
+                f"{values.get('max_observed_model_vram_bytes') if values.get('max_observed_model_vram_bytes') is not None else '—'} |"
+            )
+
+    if report.get("mean_attempt_wall_duration_s") is not None:
+        lines.extend(
+            [
+                "",
+                f"Mean end-to-end attempt wall time: {report['mean_attempt_wall_duration_s']:.3f} seconds. "
+                "This includes setup, model warm-up, execution, verification, and teardown.",
+            ]
+        )
+
     measured_attempts = [
         row for row in attempts
         if row.get("storage_free_before_bytes") is not None or row.get("storage_free_after_bytes") is not None
@@ -601,6 +1182,7 @@ def _build_command(
     warmup_digest: str | None = None,
     warmup_allow_models: list[str] | None = None,
     warmup_keep_alive: str | None = None,
+    ollama_num_ctx: int | None = None,
 ) -> list[str]:
     command = [sys.executable, str(RUNNER), test_name, "--debug-model", debug_model, "--output-dir", str(run_dir)]
     if api_model:
@@ -621,6 +1203,8 @@ def _build_command(
                 warmup_keep_alive or "10m",
             ]
         )
+    if ollama_num_ctx is not None:
+        command.extend(["--ollama-debug-num-ctx", str(ollama_num_ctx)])
     flag = "--capture-knowledge-response" if mode == "capture" else "--replay-knowledge-response"
     command.extend([flag, str(artifact_path)])
     return command
@@ -679,10 +1263,27 @@ def run_campaign(args: argparse.Namespace) -> int:
     gpu_cost_assumptions = _gpu_cost_assumptions(args)
     candidate_orders = _candidate_orders(cases, args.plan_replicates, models, args.candidate_order_seed)
     local_models = [model for model in models if _is_local_model(model)]
+    frozen_plans = None
+    frozen_plan_manifest = None
+    prompt_map = None
+    if args.frozen_plans_dir:
+        if not args.frozen_plan_source_root:
+            raise ValueError("--frozen-plan-source-root is required with --frozen-plans-dir")
+        prompt_map = build_current_knowledge_prompts(cases, REPO_ROOT)
+        frozen_plans, frozen_plan_manifest = load_and_validate_frozen_plans(
+            source_dir=args.frozen_plans_dir,
+            cases=cases,
+            replicates=args.plan_replicates,
+            source_root=args.frozen_plan_source_root,
+            target_root=str(REPO_ROOT),
+            current_prompts=prompt_map,
+        )
+    elif args.frozen_plan_source_root:
+        raise ValueError("--frozen-plan-source-root requires --frozen-plans-dir")
 
     lane_path = args.lab_config or os.environ.get("KUBELLM_LAB_CONFIG")
     config = {
-        "schema_version": 4,
+        "schema_version": 5,
         "campaign_id": args.campaign_id or root.name,
         "cases": cases,
         "task_and_fixture_sha256": _task_hashes(cases),
@@ -694,16 +1295,24 @@ def run_campaign(args: argparse.Namespace) -> int:
         "api_model_override": args.api_model,
         "verification_model_override": args.verification_model,
         "plan_replicates": args.plan_replicates,
+        "plan_source": "frozen_knowledge_agent_plans" if frozen_plan_manifest else "captured_knowledge_agent_plans",
+        "frozen_plan_manifest": frozen_plan_manifest,
         "technique": "allStepsAtOnce",
         "jobs": 1,
         "success_label": "ground_truth_after_debug_passed",
         "task_family_map_sha256": _sha256_file(REPO_ROOT / "data_analysis" / "task_family_map.csv"),
         "cost_basis": "recorded provider cost plus modeled selected-pipeline token cost; optional shared-service and batch GPU assumptions are explicit",
         "gpu_cost_assumptions": gpu_cost_assumptions,
+        "local_compute_tiers": {
+            model: LOCAL_MODEL_TIERS.get(model, {"tier": "unassigned", "target_vram_bytes": None})
+            for model in local_models
+        },
         "ollama_debug_warmup": {
             "enabled_for_local_candidates": True,
             "method": "empty_generate_with_zero_prediction_tokens",
             "keep_alive": "10m",
+            "num_ctx": LOCAL_MODEL_CONTEXT_TOKENS,
+            "max_loaded_models": 1,
             "required_at": "immediately_before_debug_agent_run",
             "allowed_resident_models": local_models,
             "unrelated_resident_models": "defer_candidate_without_unloading",
@@ -727,7 +1336,8 @@ def run_campaign(args: argparse.Namespace) -> int:
         if local_models:
             print("Local model handling: attempt-scoped warm-up at DebugAgent entry; keep-alive 10m")
         for case in cases:
-            print(f"  {case}: {args.plan_replicates} shared plans x {len(models)} candidates")
+            plan_kind = "frozen" if frozen_plan_manifest else "captured"
+            print(f"  {case}: {args.plan_replicates} {plan_kind} plans x {len(models)} candidates")
         return 0
     if config["lane_fingerprint"] is None:
         raise ValueError("Execution requires an explicitly selected private lane via --lab-config or KUBELLM_LAB_CONFIG")
@@ -746,6 +1356,10 @@ def run_campaign(args: argparse.Namespace) -> int:
         raise ValueError(startup_disk_error)
     selected_lane_path = str(Path(lane_path).expanduser().resolve())
     bootstrap_from_argv(["--lab-config", selected_lane_path])
+    if local_models:
+        config["gpu_inventory"] = _gpu_inventory()
+        if not any(row["index"] == 0 for row in config["gpu_inventory"]):
+            raise ValueError("Selected local candidates require NVIDIA GPU 0 for memory measurements")
     available_revisions = {row["name"]: row["digest"] for row in _ollama_model_revisions()}
     missing_revisions = [model for model in local_models if model not in available_revisions]
     if missing_revisions:
@@ -783,16 +1397,50 @@ def run_campaign(args: argparse.Namespace) -> int:
         previous_report_path = root / "campaign_report.json"
         if previous_report_path.is_file():
             previous_report = json.loads(previous_report_path.read_text(encoding="utf-8"))
-            if previous_report.get("stop_reason"):
-                raise ValueError(
-                    "Campaign previously stopped with a recorded stop reason: "
-                    f"{previous_report['stop_reason']}. Inspect it and start a new campaign wave after recovery."
+            prior_stop_reason = previous_report.get("stop_reason")
+            if prior_stop_reason:
+                if not args.resume_after_recovery:
+                    raise ValueError(
+                        "Campaign previously stopped with a recorded stop reason: "
+                        f"{prior_stop_reason}. Resolve it, then provide --resume-after-recovery with an evidence-bound record."
+                    )
+                recovery_record, recovery_sha256 = _validate_recovery_record(
+                    args.resume_after_recovery,
+                    campaign_id=config["campaign_id"],
+                    stop_reason=prior_stop_reason,
+                    events_path=events_path,
+                    lane_fingerprint=config["lane_fingerprint"],
                 )
+                recovery_history_path = root / "recovery_history.jsonl"
+                history = _read_jsonl(recovery_history_path)
+                if any(row.get("recovery_record_sha256") == recovery_sha256 for row in history):
+                    raise ValueError("This recovery record has already been used")
+                stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%fZ")
+                for suffix in ("json", "md"):
+                    source = root / f"campaign_report.{suffix}"
+                    if source.is_file():
+                        shutil.copy2(source, root / f"campaign_report_stopped_{stamp}.{suffix}")
+                event = {
+                    "schema_version": 1,
+                    "recovery_record_sha256": recovery_sha256,
+                    "recovery_record": str(args.resume_after_recovery.resolve()),
+                    "prior_stop_reason": prior_stop_reason,
+                    "resolved_cause": recovery_record["resolved_cause"],
+                    "verified_at_utc": recovery_record["verified_at_utc"],
+                    "attempt_ledger_sha256": recovery_record["attempt_ledger_sha256"],
+                }
+                with recovery_history_path.open("a", encoding="utf-8") as stream:
+                    stream.write(json.dumps(event, sort_keys=True) + "\n")
+            elif args.resume_after_recovery:
+                raise ValueError("--resume-after-recovery was supplied, but the campaign has no recorded stop reason")
+        elif args.resume_after_recovery:
+            raise ValueError("--resume-after-recovery requires a campaign report with a recorded stop reason")
     else:
-        if root.exists() and any(root.iterdir()):
-            raise ValueError(f"Campaign output already exists and is non-empty: {root}; use --resume after inspection")
+        _validate_initial_campaign_root(root)
         root.mkdir(parents=True, exist_ok=True)
         manifest_path.write_text(json.dumps(config, indent=2) + "\n", encoding="utf-8")
+    if frozen_plans is not None:
+        stage_frozen_plans(frozen_plans, root / "plans")
     _secure_directories(root)
 
     event_records = _read_jsonl(events_path)
@@ -825,7 +1473,12 @@ def run_campaign(args: argparse.Namespace) -> int:
                     stop_reason = disk_stop_reason
                     print(f"Stopping before attempt: {stop_reason}")
                     break
-                if model_index == 0:
+                if frozen_plans is not None:
+                    mode = "replay"
+                    if not artifact_path.is_file() or not artifact_path.with_suffix(artifact_path.suffix + ".json").is_file():
+                        stop_reason = f"missing frozen plan before candidate {model} for {pair_id}"
+                        break
+                elif model_index == 0:
                     mode = "capture"
                 else:
                     mode = "replay"
@@ -851,6 +1504,7 @@ def run_campaign(args: argparse.Namespace) -> int:
                     ),
                     warmup_allow_models=local_models,
                     warmup_keep_alive=config["ollama_debug_warmup"]["keep_alive"],
+                    ollama_num_ctx=config["ollama_debug_warmup"]["num_ctx"] if _is_local_model(model) else None,
                 )
                 print(f"[{case_index}/{len(cases)}] {pair_id}: {model} ({mode})")
                 _jsonl_append(
@@ -870,13 +1524,23 @@ def run_campaign(args: argparse.Namespace) -> int:
                         "started_at_utc": datetime.now(timezone.utc).isoformat(),
                     },
                 )
-                completed = subprocess.run(
-                    command,
-                    cwd=REPO_ROOT,
-                    check=False,
-                    stdout=subprocess.DEVNULL,
-                    stderr=subprocess.DEVNULL,
-                )
+                gpu_sampler = _GpuMemorySampler(0) if _is_local_model(model) else None
+                if gpu_sampler:
+                    gpu_sampler.start()
+                attempt_wall_started = time.perf_counter()
+                try:
+                    completed = subprocess.run(
+                        command,
+                        cwd=REPO_ROOT,
+                        check=False,
+                        stdout=subprocess.DEVNULL,
+                        stderr=subprocess.DEVNULL,
+                    )
+                finally:
+                    gpu_memory = gpu_sampler.stop() if gpu_sampler else None
+                attempt_wall_duration_s = round(time.perf_counter() - attempt_wall_started, 3)
+                ollama_snapshot = _ollama_process_snapshot() if _is_local_model(model) else None
+                tier_fit = _tier_fit(model, ollama_snapshot or {}, gpu_memory) if _is_local_model(model) else None
                 storage_free_after_bytes = _disk_free_bytes(REPO_ROOT)
                 summary = _read_summary(run_dir, case)
                 preflight_failed = _preflight_failed(run_dir, case)
@@ -894,6 +1558,7 @@ def run_campaign(args: argparse.Namespace) -> int:
                         "run_dir": str(run_dir),
                         "storage_free_before_bytes": storage_free_before_bytes,
                         "storage_free_after_bytes": storage_free_after_bytes,
+                        "attempt_wall_duration_s": attempt_wall_duration_s,
                         "ground_truth_configured": False,
                         "ground_truth_passed": None,
                         "ground_truth_after_debug_passed": None,
@@ -903,6 +1568,13 @@ def run_campaign(args: argparse.Namespace) -> int:
                         "debug_model_warmup_status": None,
                         "debug_model_warmup_reason": None,
                         "debug_model_warmup_duration_s": None,
+                        "gpu_memory": gpu_memory,
+                        "ollama_process_snapshot": ollama_snapshot,
+                        "ollama_gpu_process_memory": {
+                            "peak_bytes_by_model": (gpu_memory or {}).get("ollama_gpu_process_peak_bytes_by_model", {}),
+                            "sample_statuses": (gpu_memory or {}).get("ollama_gpu_process_sample_statuses", []),
+                        } if _is_local_model(model) else None,
+                        "local_model_tier_fit": tier_fit,
                         "finished_at_utc": datetime.now(timezone.utc).isoformat(),
                     }
                     _jsonl_append(events_path, result)
@@ -948,6 +1620,7 @@ def run_campaign(args: argparse.Namespace) -> int:
                     "run_dir": str(run_dir),
                     "storage_free_before_bytes": storage_free_before_bytes,
                     "storage_free_after_bytes": storage_free_after_bytes,
+                    "attempt_wall_duration_s": attempt_wall_duration_s,
                     "status": summary.get("status"),
                     "ground_truth_configured": bool(summary.get("ground_truth_configured")),
                     "ground_truth_passed": summary.get("ground_truth_passed"),
@@ -987,6 +1660,13 @@ def run_campaign(args: argparse.Namespace) -> int:
                     "debug_model_warmup_duration_s": warmup_record.get("duration_s") if _is_local_model(model) else None,
                     "debug_model_load_duration_s": warmup_record.get("load_duration_s") if _is_local_model(model) else None,
                     "debug_model_warmup": warmup_record if _is_local_model(model) else None,
+                    "gpu_memory": gpu_memory,
+                    "ollama_process_snapshot": ollama_snapshot,
+                    "ollama_gpu_process_memory": {
+                        "peak_bytes_by_model": (gpu_memory or {}).get("ollama_gpu_process_peak_bytes_by_model", {}),
+                        "sample_statuses": (gpu_memory or {}).get("ollama_gpu_process_sample_statuses", []),
+                    } if _is_local_model(model) else None,
+                    "local_model_tier_fit": tier_fit,
                     "environment_context": environment_context,
                     "finished_at_utc": datetime.now(timezone.utc).isoformat(),
                 }
@@ -1016,6 +1696,16 @@ def run_campaign(args: argparse.Namespace) -> int:
                         or "missing warm-up record"
                     )
                     stop_reason = f"local candidate {model} failed DebugAgent-entry warm-up ({reason})"
+                    break
+                if _is_local_model(model) and (
+                    not tier_fit
+                    or not tier_fit.get("private_ollama_gpu_process_bytes")
+                    or tier_fit.get("gpu_residency_fraction") is None
+                ):
+                    stop_reason = f"local candidate {model} GPU residency could not be verified after {attempt_key}"
+                    break
+                if _is_local_model(model) and tier_fit.get("gpu_residency_fraction", 0.0) < 0.98:
+                    stop_reason = f"local candidate {model} was not fully GPU-resident during {attempt_key}"
                     break
                 if _success_value(result) is not None and not result["debug_prompt_sha256"]:
                     stop_reason = f"debug prompt trace missing from scored attempt {attempt_key}"
@@ -1082,6 +1772,8 @@ def main() -> int:
     parser.add_argument("--cases", default="all", help="Task names, glob pattern, comma list, or 'all'")
     parser.add_argument("--debug-models", required=True, help="Comma-separated, runtime-audited DebugAgent model IDs")
     parser.add_argument("--plan-replicates", type=int, default=3, help="Independent KnowledgeAgent plans per task (default: 3)")
+    parser.add_argument("--frozen-plans-dir", type=Path, help="Private source directory of frozen KnowledgeAgent plan artifacts to replay")
+    parser.add_argument("--frozen-plan-source-root", help="Old absolute worktree root to normalize in frozen prompts/responses")
     parser.add_argument("--api-model", help="Optional fixed KnowledgeAgent model override")
     parser.add_argument("--verification-model", help="Optional fixed verifier model override")
     parser.add_argument("--campaign-id", help="Human-readable campaign identifier (defaults to output directory name)")
@@ -1103,8 +1795,15 @@ def main() -> int:
         ),
     )
     parser.add_argument("--resume", action="store_true", help="Resume only when campaign.json exactly matches this schedule")
+    parser.add_argument(
+        "--resume-after-recovery",
+        type=Path,
+        help="Resume a stopped campaign only with a recovery record matching its stop reason, lane, and attempt ledger",
+    )
     parser.add_argument("--dry-run", action="store_true", help="Print planned coverage without executing")
     args = parser.parse_args()
+    if args.resume_after_recovery and not args.resume:
+        parser.error("--resume-after-recovery requires --resume")
     try:
         return run_campaign(args)
     except (OSError, ValueError, json.JSONDecodeError) as exc:

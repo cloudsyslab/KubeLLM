@@ -46,7 +46,11 @@ class AgentDebug(Agent):
         try:
             model_name = self.agentProperties["model"]
             warmup_policy = self.runtime_context.get("ollama_debug_warmup")
-            model_kwargs = {"keep_alive": warmup_policy["keep_alive"]} if warmup_policy else None
+            model_kwargs = None
+            if warmup_policy:
+                model_kwargs = {"keep_alive": warmup_policy["keep_alive"]}
+                if warmup_policy.get("options"):
+                    model_kwargs["options"] = dict(warmup_policy["options"])
             self.agent = build_llm_agent(
                 model_name,
                 instructions=[x for x in self.agentProperties["instructions"]],
@@ -74,6 +78,7 @@ class AgentDebug(Agent):
             expected_digest=policy["expected_digest"],
             allowed_model_ids=policy["allowed_model_ids"],
             keep_alive=policy["keep_alive"],
+            options=policy.get("options"),
         )
         environment_context = self.runtime_context.get("environment_context")
         if isinstance(environment_context, dict):

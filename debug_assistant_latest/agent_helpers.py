@@ -50,7 +50,7 @@ def build_llm_agent(
     if model_kwargs:
         if infer_chat_provider(model_name) != OLLAMA_PROVIDER:
             raise ValueError("Provider-specific model options are only supported for Ollama DebugAgents.")
-        unsupported = set(model_kwargs) - {"keep_alive"}
+        unsupported = set(model_kwargs) - {"keep_alive", "options"}
         if unsupported:
             raise ValueError("Unsupported Ollama DebugAgent model options: " + ", ".join(sorted(unsupported)))
         for name, value in model_kwargs.items():

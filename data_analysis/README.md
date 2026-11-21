@@ -19,6 +19,16 @@ configurations and their export-integrity status. The analysis intentionally
 includes incomplete observations and reports missing evidence; it does not
 filter them to improve a score.
 
+## Consumer-tier model-router screen (v1)
+
+The follow-up screen replays the existing five KnowledgeAgent plans for each of
+27 scenarios across two local consumer-tier models and two hosted OpenAI
+baselines. It runs the full DebugAgent tool loop and independent verification
+on the selected lab lane, while holding KnowledgeAgent plans fixed. The design,
+memory budgets, normalization checks, and interpretation limits are in
+[MODEL_ROUTER_CONSUMER_V1.md](MODEL_ROUTER_CONSUMER_V1.md). The 135 plan-quality
+labels are reviewed before execution and are not passed into any agent or router.
+
 ## Current model-router study
 
 The current v0 research direction is documented in [MODEL_ROUTER_V0.md](MODEL_ROUTER_V0.md).

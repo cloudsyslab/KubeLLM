@@ -57,6 +57,7 @@ def warm_debug_model(
     expected_digest: str,
     allowed_model_ids: list[str],
     keep_alive: str,
+    options: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Warm the exact candidate through its model client's endpoint and verify it stayed resident.
 
@@ -71,6 +72,7 @@ def warm_debug_model(
         "model_id": model_id,
         "expected_digest": expected_digest,
         "keep_alive": keep_alive,
+        "options": dict(options or {}),
         "preloaded": False,
         "resident_models_before": [],
         "resident_models_after": [],
@@ -123,7 +125,7 @@ def warm_debug_model(
             prompt="",
             stream=False,
             keep_alive=keep_alive,
-            options={"num_predict": 0},
+            options={"num_predict": 0, **dict(options or {})},
         )
         result["preloaded"] = True
         result["load_duration_s"] = _seconds_from_nanos(_value(response, "load_duration"))

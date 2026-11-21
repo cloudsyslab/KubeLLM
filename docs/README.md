@@ -15,6 +15,7 @@ are linked below.
 - [Benchmark export catalog](../data/README.md)
 - [Offline prediction audit](../data_analysis/PREDICTION_PILOT.md)
 - [Paired prediction experiment protocol](../data_analysis/PREDICTION_EXPERIMENT_PROTOCOL.md)
+- [Model Router consumer-tier screen v1](../data_analysis/MODEL_ROUTER_CONSUMER_V1.md)
 - [Prediction selector pilot evidence](../data/exploratory/prediction-pilot-2026-10/README.md)
 - [GPT-5 mini KAO vs SingleAgent data pack and reports](../data/exploratory/kao-singleagent-gpt5mini-2026-10/README.md)
 - [Branch and prototype preservation record](BRANCH_ARCHIVE.md)

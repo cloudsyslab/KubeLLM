@@ -44,13 +44,14 @@ class FakeModel:
         return self.client
 
 
-def _warm(client, *, allowed=None, digest=DIGEST):
+def _warm(client, *, allowed=None, digest=DIGEST, options=None):
     return warm_debug_model(
         model=FakeModel(client),
         model_id=MODEL_ID,
         expected_digest=digest,
         allowed_model_ids=allowed or [MODEL_ID],
         keep_alive="10m",
+        options=options,
     )
 
 
@@ -75,6 +76,16 @@ def test_cold_candidate_uses_empty_zero_token_request_and_checks_residency():
             "options": {"num_predict": 0},
         }
     ]
+
+
+def test_context_window_is_applied_during_zero_token_warmup():
+    client = FakeClient(after_residents=[MODEL_ID])
+
+    record = _warm(client, options={"num_ctx": 8192})
+
+    assert record["ready"] is True
+    assert record["options"] == {"num_ctx": 8192}
+    assert client.generate_calls[0]["options"] == {"num_predict": 0, "num_ctx": 8192}
 
 
 def test_already_resident_candidate_still_refreshes_keep_alive():
