@@ -213,7 +213,11 @@ def _cleanup_command(
         return None
 
     if result.returncode != 0:
-        failures.append(f"{operation} exited with status {result.returncode}")
+        detail = (result.stderr or result.stdout or "").strip()
+        failure = f"{operation} exited with status {result.returncode}"
+        if detail:
+            failure += f": {detail[-1000:]}"
+        failures.append(failure)
     return result
 
 
@@ -409,6 +413,8 @@ def _recovery_category(operation: str) -> str:
         return "transient_resource_delete_timeout_confirmed"
     if operation.startswith("remove case image"):
         return "case_image_delete_timeout_confirmed"
+    if operation.startswith("delete case manifest") and "nonzero_exit" in operation:
+        return "case_manifest_delete_nonzero_retry_confirmed"
     if operation.startswith("delete case manifest"):
         return "case_manifest_delete_timeout_confirmed"
     return "unsupported_delete"
@@ -564,13 +570,41 @@ def teardown_environment(test_env_name: str) -> list[str]:
             for manifest in config["k8s_manifests"]:
                 manifest_path = TROUBLESHOOTING_DIR / test_env_name / manifest.format(name=test_env_name)
                 manifest_paths.append(manifest_path)
-                _cleanup_command(
-                    f"delete case manifest {manifest}",
-                    ["kubectl", "delete", "-f", str(manifest_path), "--grace-period=5", "--ignore-not-found=true"],
+                operation = f"delete case manifest {manifest}"
+                command = [
+                    "kubectl", "delete", "-f", str(manifest_path),
+                    "--grace-period=5", "--ignore-not-found=true",
+                ]
+                first_failures: list[str] = []
+                result = _cleanup_command(
+                    operation,
+                    command,
                     CASE_MANIFEST_DELETE_TIMEOUT_S,
-                    failures,
+                    first_failures,
                     recoverable_timeouts,
                 )
+                if result is not None and result.returncode != 0:
+                    # This delete is idempotent (--ignore-not-found). Retry once after
+                    # a short delay, then require read-only postconditions below before
+                    # treating either nonzero result as recovered.
+                    failures.extend(first_failures)
+                    recoverable_timeouts.append(f"{operation} nonzero_exit_first")
+                    time.sleep(0.5)
+                    retry_failures: list[str] = []
+                    retry_result = _cleanup_command(
+                        f"{operation} retry",
+                        command,
+                        CASE_MANIFEST_DELETE_TIMEOUT_S,
+                        retry_failures,
+                    )
+                    if retry_result is None:
+                        recoverable_timeouts.append(f"{operation} retry_timeout")
+                        failures.extend(retry_failures)
+                    elif retry_result.returncode != 0:
+                        recoverable_timeouts.append(f"{operation} nonzero_exit_retry")
+                        failures.extend(retry_failures)
+                else:
+                    failures.extend(first_failures)
     finally:
         # Restore local inputs even when lab cleanup times out or lane validation fails.
         if (FIXTURE_BASELINES_DIR / test_env_name).is_dir():

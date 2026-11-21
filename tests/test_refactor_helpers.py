@@ -1767,6 +1767,49 @@ class TeardownTests(unittest.TestCase):
                 with self.assertRaisesRegex(teardown.TeardownFailure, "timed out"):
                     teardown.teardown_environment("wrong_port")
 
+    def test_teardown_retries_nonzero_manifest_delete_and_requires_clean_postconditions(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            case_dir = root / "wrong_port"
+            case_dir.mkdir()
+            (case_dir / "wrong_port.yaml").write_text("agent-edited\n")
+            baseline_root = root / "baselines"
+            baseline_dir = baseline_root / "wrong_port"
+            baseline_dir.mkdir(parents=True)
+            (baseline_dir / "wrong_port.yaml").write_text("committed-baseline\n")
+            commands = []
+            delete_attempts = 0
+
+            def fake_run(command, **kwargs):
+                nonlocal delete_attempts
+                commands.append(command)
+                if command[:3] == ["kubectl", "delete", "-f"]:
+                    delete_attempts += 1
+                    if delete_attempts == 1:
+                        return subprocess.CompletedProcess(command, 1, stdout="", stderr="temporary API error")
+                    return subprocess.CompletedProcess(command, 0, stdout="pod/wrong-port-app deleted\n", stderr="")
+                return subprocess.CompletedProcess(command, 0, stdout="", stderr="")
+
+            with patch.object(teardown, "TROUBLESHOOTING_DIR", root), patch.object(
+                teardown, "FIXTURE_BASELINES_DIR", baseline_root
+            ), patch.object(teardown, "is_lane_active", return_value=True), patch.object(
+                teardown, "active_lane_config", return_value={"minikube_profile": "minh-lane"}
+            ), patch.object(teardown, "assert_lane_target"), patch.object(
+                teardown, "TEARDOWN_RECOVERY_WINDOW_S", 1
+            ), patch("debug_assistant_latest.teardown.time.sleep"), patch(
+                "debug_assistant_latest.teardown.subprocess.run", side_effect=fake_run
+            ), patch.dict(
+                teardown.TEARDOWN_CONFIG,
+                {"wrong_port": {"docker_images": [], "k8s_manifests": ["{name}.yaml"]}},
+                clear=False,
+            ):
+                recoveries = teardown.teardown_environment("wrong_port")
+
+            self.assertEqual(delete_attempts, 2)
+            self.assertEqual(recoveries, ["case_manifest_delete_nonzero_retry_confirmed"])
+            self.assertEqual((case_dir / "wrong_port.yaml").read_text(), "committed-baseline\n")
+            self.assertTrue(any(command[:3] == ["kubectl", "get", "-f"] for command in commands))
+
     def test_teardown_treats_absent_minikube_image_as_idempotent(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             commands = []
@@ -1822,7 +1865,7 @@ class TeardownTests(unittest.TestCase):
                 {"wrong_interface": {"docker_images": ["kube-wrong-interface-app"], "k8s_manifests": []}},
                 clear=False,
             ):
-                with self.assertRaisesRegex(teardown.TeardownFailure, "status 1"):
+                with self.assertRaisesRegex(teardown.TeardownFailure, "remove failed"):
                     teardown.teardown_environment("wrong_interface")
 
             self.assertIn(
