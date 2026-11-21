@@ -1632,7 +1632,9 @@ class TeardownTests(unittest.TestCase):
             baseline_root = Path(tmpdir) / "baselines"
             baseline_dir = baseline_root / "wrong_port"
             baseline_dir.mkdir(parents=True)
-            (baseline_dir / "wrong_port.yaml").write_text("restored\n")
+            (baseline_dir / "wrong_port.yaml").write_text(
+                "apiVersion: v1\nkind: Pod\nmetadata:\n  name: baseline-resource\n"
+            )
 
             recorded_calls = []
 
@@ -1655,8 +1657,13 @@ class TeardownTests(unittest.TestCase):
             ):
                 teardown.teardown_environment("wrong_port")
 
-            self.assertEqual((case_dir / "wrong_port.yaml").read_text(), "restored\n")
-            self.assertTrue(any("kubectl" in call[0][0][0] for call in recorded_calls if call[0]))
+            self.assertEqual(
+                (case_dir / "wrong_port.yaml").read_text(),
+                "apiVersion: v1\nkind: Pod\nmetadata:\n  name: baseline-resource\n",
+            )
+            delete_calls = [call[0][0] for call in recorded_calls if call[0] and call[0][0][:3] == ["kubectl", "delete", "-f"]]
+            self.assertEqual(len(delete_calls), 1)
+            self.assertEqual(delete_calls[0][3], str(baseline_dir / "wrong_port.yaml"))
 
     def test_teardown_restores_fixture_even_when_manifest_delete_times_out(self):
         with tempfile.TemporaryDirectory() as tmpdir:

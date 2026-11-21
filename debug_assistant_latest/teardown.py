@@ -568,7 +568,18 @@ def teardown_environment(test_env_name: str) -> list[str]:
                     _cleanup_command(f"remove case image {image}", ["docker", "rmi", "-f", image], 120, failures)
 
             for manifest in config["k8s_manifests"]:
-                manifest_path = TROUBLESHOOTING_DIR / test_env_name / manifest.format(name=test_env_name)
+                manifest_name = manifest.format(name=test_env_name)
+                working_manifest = TROUBLESHOOTING_DIR / test_env_name / manifest_name
+                baseline_manifest = FIXTURE_BASELINES_DIR / test_env_name / manifest_name
+                if baseline_manifest.exists() or baseline_manifest.is_symlink():
+                    if baseline_manifest.is_symlink() or not baseline_manifest.is_file():
+                        failures.append(f"fixture baseline manifest is not a regular file: {manifest}")
+                        continue
+                    manifest_path = baseline_manifest
+                else:
+                    # Some legacy cases have no fixture baseline. Keep their existing
+                    # teardown path while using immutable baselines whenever available.
+                    manifest_path = working_manifest
                 manifest_paths.append(manifest_path)
                 operation = f"delete case manifest {manifest}"
                 command = [
