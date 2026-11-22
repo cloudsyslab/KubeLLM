@@ -92,6 +92,31 @@ class PairedCampaignTests(unittest.TestCase):
         self.assertFalse(rows[0]["ground_truth_passed"])
         self.assertTrue(rows[0]["outcome_reconciled"])
 
+    def test_retry_authorization_reopens_only_the_failed_attempt_key(self):
+        key = "case-a__plan_001__model-x"
+        events = [
+            {"event": "attempt_started", "attempt_key": key},
+            {"event": "attempt_finished", "attempt_key": key, "status": "ERROR", "exit_code": 1},
+            {"event": "attempt_retry_authorized", "attempt_key": key, "reason": "dependency mismatch"},
+        ]
+        rows, completed, started = _load_attempts(events)
+        self.assertEqual(rows, [])
+        self.assertNotIn(key, completed)
+        self.assertNotIn(key, started)
+        events.extend([
+            {"event": "attempt_started", "attempt_key": key},
+            {"event": "attempt_finished", "attempt_key": key, "status": "PASS", "exit_code": 0},
+        ])
+        rows, completed, started = _load_attempts(events)
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]["status"], "PASS")
+        self.assertEqual(completed, {key})
+        self.assertEqual(started, set())
+
+    def test_retry_authorization_requires_a_prior_finished_attempt(self):
+        with self.assertRaisesRegex(ValueError, "does not match a completed attempt"):
+            _load_attempts([{"event": "attempt_retry_authorized", "attempt_key": "missing"}])
+
     def test_incomplete_cost_recording_is_not_reported_as_zero(self):
         rows = [
             {

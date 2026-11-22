@@ -1441,6 +1441,11 @@ def _load_attempts(records: list[dict]) -> tuple[list[dict], set[str], set[str]]
         elif record.get("event") == "attempt_finished":
             completed[key] = record
             started.discard(key)
+        elif record.get("event") == "attempt_retry_authorized":
+            if key not in completed:
+                raise ValueError(f"Retry authorization does not match a completed attempt: {key}")
+            completed.pop(key)
+            started.discard(key)
         elif record.get("event") == "attempt_outcome_reconciled" and key in completed:
             overrides = record.get("overrides")
             if isinstance(overrides, dict):
