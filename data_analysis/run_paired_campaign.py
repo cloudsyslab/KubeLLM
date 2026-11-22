@@ -1458,6 +1458,13 @@ def _load_attempts(records: list[dict]) -> tuple[list[dict], set[str], set[str]]
     return list(completed.values()), set(completed), started
 
 
+def _attempt_run_dir(
+    root: Path, pair_id: str, candidate_index: int, model: str, retry_count: int = 0,
+) -> Path:
+    base = root / "runs" / pair_id / f"{candidate_index:02d}_{_slug(model)}"
+    return base if retry_count == 0 else base / f"retry_{retry_count:03d}"
+
+
 def _build_command(
     *,
     test_name: str,
@@ -1741,6 +1748,10 @@ def run_campaign(args: argparse.Namespace) -> int:
             + ", ".join(sorted(interrupted_keys))
         )
     completed_by_key = {row["attempt_key"]: row for row in completed_rows}
+    retry_counts = Counter(
+        record.get("attempt_key") for record in event_records
+        if record.get("event") == "attempt_retry_authorized" and record.get("attempt_key")
+    )
     stop_reason = None
 
     for case_index, case in enumerate(cases, start=1):
@@ -1775,7 +1786,7 @@ def run_campaign(args: argparse.Namespace) -> int:
                     if not artifact_path.is_file() or not artifact_path.with_suffix(artifact_path.suffix + ".json").is_file():
                         stop_reason = f"missing captured plan before candidate {model} for {pair_id}"
                         break
-                run_dir = root / "runs" / pair_id / f"{model_index:02d}_{_slug(model)}"
+                run_dir = _attempt_run_dir(root, pair_id, model_index, model, retry_counts.get(attempt_key, 0))
                 if run_dir.exists() and any(run_dir.iterdir()):
                     raise ValueError(f"Unrecorded run output exists; inspect before continuing: {run_dir}")
                 run_dir.mkdir(parents=True, exist_ok=True)

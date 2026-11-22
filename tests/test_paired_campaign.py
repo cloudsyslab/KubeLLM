@@ -10,6 +10,7 @@ from data_analysis.run_paired_campaign import (
     PILOT_MAX_SCHEDULED_ATTEMPTS,
     PILOT_STARTUP_FREE_BYTES,
     RUNNER,
+    _attempt_run_dir,
     _build_command,
     _candidate_orders,
     _cost_success_frontier,
@@ -318,6 +319,16 @@ class PairedCampaignTests(unittest.TestCase):
         self.assertAlmostEqual(summary[0]["mean_effective_cost_per_success"], 15.0)
         self.assertAlmostEqual(summary[0]["total_effective_cost_with_shared_knowledge_call"], 30.0)
         self.assertEqual(summary[1]["attempts_with_ground_truth"], 0)
+
+    def test_retried_attempt_gets_a_fresh_run_directory(self):
+        root = Path("/tmp/campaign")
+        original = _attempt_run_dir(root, "case-a__plan_001", 1, "model-x")
+        retry_one = _attempt_run_dir(root, "case-a__plan_001", 1, "model-x", 1)
+        retry_two = _attempt_run_dir(root, "case-a__plan_001", 1, "model-x", 2)
+        self.assertEqual(original, root / "runs" / "case-a__plan_001" / "01_model-x")
+        self.assertEqual(retry_one, original / "retry_001")
+        self.assertEqual(retry_two, original / "retry_002")
+        self.assertEqual(len({original, retry_one, retry_two}), 3)
 
     def test_command_uses_canonical_runner_and_capture_replay_flag(self):
         command = _build_command(
