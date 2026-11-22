@@ -20,7 +20,7 @@ from prompt_helpers import (
     get_durable_fix_guidance,
     get_minikube_image_guidance,
 )
-from timeout_helpers import timeout, withTimeout
+from timeout_helpers import TimeoutError as AgentTimeoutError, timeout, withTimeout
 from prompt_trace import write_prompt_trace
 
 
@@ -151,6 +151,8 @@ class AgentDebug(Agent):
                 "total_tokens": 0,
                 "task_status": 0,
             }
+        except AgentTimeoutError:
+            raise
         except Exception as e:
             raise RuntimeError(f"Error asking question to debug agent: {e}") from e
 
@@ -257,6 +259,8 @@ class AgentDebugStepByStep(Agent):
                 "total_tokens": 0,
                 "task_status": 0,
             }
+        except AgentTimeoutError:
+            raise
         except Exception as e:
             raise RuntimeError(f"Failed to execute problem steps: {e}") from e
 
@@ -400,5 +404,7 @@ class SingleAgent(Agent):
                 "total_tokens": 0,
                 "task_status": 0,
             }
+        except AgentTimeoutError:
+            raise
         except Exception as e:
             raise RuntimeError(f"Error asking question to knowledge agent: {e}") from e

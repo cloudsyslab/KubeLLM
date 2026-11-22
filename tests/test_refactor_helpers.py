@@ -1259,6 +1259,34 @@ class GroundTruthTests(unittest.TestCase):
             self.assertEqual(len(data["ground_truth_schema_sha256"]), 64)
 
 
+class DebugAgentTimeoutPropagationTests(unittest.TestCase):
+    def test_debug_agent_timeout_reaches_timeout_wrapper(self):
+        from debug_assistant_latest.debug_agents import AgentDebug
+
+        class TimeoutAgent:
+            def run(self, *args, **kwargs):
+                raise timeout_helpers.TimeoutError("Timed Out")
+
+        debug = AgentDebug.__new__(AgentDebug)
+        debug.agentAPIResponse = "frozen repair plan"
+        debug.config = {
+            "test-directory": "/tmp/",
+            "yaml-file-name": "case.yaml",
+            "test-name": "case",
+        }
+        debug.runtime_context = {}
+        debug.agentProperties = {"model": "gemma4:e4b-it-q4_K_M"}
+        debug.agent = TimeoutAgent()
+        debug._last_timeout = False
+        with patch("debug_assistant_latest.debug_agents.write_prompt_trace"), patch(
+            "debug_assistant_latest.debug_agents.get_case_specific_guidance", return_value=""
+        ), patch.object(debug, "_warm_debug_model_at_entry"):
+            result = debug.askQuestion()
+
+        self.assertFalse(result)
+        self.assertTrue(debug._last_timeout)
+
+
 class MainMetricsLineageTests(unittest.TestCase):
     def test_debug_timeout_metrics_include_run_lineage(self):
         from debug_assistant_latest import main as main_mod

@@ -19,6 +19,8 @@ from data_analysis.run_paired_campaign import (
     _storage_policy,
     _write_report,
     _validate_recovery_record,
+    _summary_indicates_debug_agent_timeout,
+    _debug_timeout_has_scored_ground_truth,
     _validate_initial_campaign_root,
     _tier_fit,
     _paired_routing_potential,
@@ -26,6 +28,28 @@ from data_analysis.run_paired_campaign import (
 
 
 class PairedCampaignTests(unittest.TestCase):
+    def test_debug_agent_timeout_requires_primary_ground_truth_and_clean_teardown_to_continue(self):
+        summary = {
+            "status": "ERROR",
+            "error_message": "Error asking question to debug agent: 'Timed Out'",
+            "error_context": "Traceback from debug_assistant_latest/debug_agents.py",
+        }
+        self.assertTrue(_summary_indicates_debug_agent_timeout(summary))
+        self.assertFalse(_summary_indicates_debug_agent_timeout({"error_message": "API request timeout"}))
+        self.assertFalse(_summary_indicates_debug_agent_timeout(None))
+
+        result = {
+            "debug_agent_timed_out": True,
+            "ground_truth_after_debug_passed": False,
+            "teardown_status": "passed",
+        }
+        self.assertTrue(_debug_timeout_has_scored_ground_truth(result))
+        result["teardown_status"] = "failed"
+        self.assertFalse(_debug_timeout_has_scored_ground_truth(result))
+        result["teardown_status"] = "passed"
+        result["ground_truth_after_debug_passed"] = None
+        self.assertFalse(_debug_timeout_has_scored_ground_truth(result))
+
     def test_storage_guard_enforces_startup_and_between_attempt_floors(self):
         self.assertIsNone(_startup_disk_error(MINIMUM_STARTUP_FREE_BYTES))
         self.assertIn(

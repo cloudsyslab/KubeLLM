@@ -478,6 +478,31 @@ def _read_summary(run_dir: Path, test_name: str) -> dict | None:
     return json.loads(path.read_text(encoding="utf-8"))
 
 
+def _summary_indicates_debug_agent_timeout(summary: dict | None) -> bool:
+    if not isinstance(summary, dict):
+        return False
+    message = str(summary.get("error_message") or "").lower()
+    context = str(summary.get("error_context") or "").lower()
+    text = f"{message}\n{context}"
+    timed_out = "timed out" in text or "timeout" in text
+    metrics = summary.get("metrics")
+    debug_metrics = metrics.get("debug") if isinstance(metrics, dict) else None
+    debug_stage = (
+        "debug agent" in message
+        or "debug_agents.py" in context
+        or ("agent execution exceeded 480s" in message and isinstance(debug_metrics, dict))
+    )
+    return timed_out and debug_stage
+
+
+def _debug_timeout_has_scored_ground_truth(result: dict) -> bool:
+    return (
+        result.get("debug_agent_timed_out") is True
+        and result.get("ground_truth_after_debug_passed") is not None
+        and result.get("teardown_status") == "passed"
+    )
+
+
 def _preflight_failed(run_dir: Path, test_name: str) -> bool:
     progress = run_dir / test_name / "progress.log"
     if not progress.is_file():
@@ -900,11 +925,19 @@ def _write_report(root: Path, config: dict, attempts: list[dict], models: list[s
         for row in attempts
         if row.get("attempt_wall_duration_s") is not None
     ]
+    timeout_rows = 0
+    for row in attempts:
+        timed_out = row.get("debug_agent_timed_out")
+        if timed_out is None and row.get("run_dir") and row.get("test_name"):
+            old_summary = _read_summary(Path(row["run_dir"]), row["test_name"])
+            timed_out = _summary_indicates_debug_agent_timeout(old_summary)
+        timeout_rows += timed_out is True
     report = {
         "schema_version": 1,
         "campaign": config,
         "created_at_utc": datetime.now(timezone.utc).isoformat(),
         "attempt_count": len(attempts),
+        "debug_agent_timeout_attempts": timeout_rows,
         "ground_truth_scored_attempts": len(scored),
         "recorded_provider_cost_usd": recorded_provider_cost,
         "modeled_selected_pipeline_cost_usd": sum(
@@ -962,6 +995,7 @@ def _write_report(root: Path, config: dict, attempts: list[dict], models: list[s
         f"Recorded provider cost: ${recorded_provider_cost:.4f}  |  modeled selected-pipeline cost: ${report['modeled_selected_pipeline_cost_usd']:.4f}",
         f"Post-verification GT integrity mismatches: {report['ground_truth_integrity_mismatches']}",
         f"Stop reason: {stop_reason or 'campaign schedule completed'}",
+        f"DebugAgent timeouts: {report['debug_agent_timeout_attempts']}",
         f"Recorded recoveries: {len(report['recovery_history'])}",
         (
             "Storage guard: "
@@ -1622,6 +1656,8 @@ def run_campaign(args: argparse.Namespace) -> int:
                     "storage_free_after_bytes": storage_free_after_bytes,
                     "attempt_wall_duration_s": attempt_wall_duration_s,
                     "status": summary.get("status"),
+                    "debug_agent_timed_out": _summary_indicates_debug_agent_timeout(summary),
+                    "teardown_status": summary.get("teardown_status"),
                     "ground_truth_configured": bool(summary.get("ground_truth_configured")),
                     "ground_truth_passed": summary.get("ground_truth_passed"),
                     "ground_truth_after_debug_passed": summary.get("ground_truth_after_debug_passed"),
@@ -1713,7 +1749,11 @@ def run_campaign(args: argparse.Namespace) -> int:
                 if result["ground_truth_configured"] and result["ground_truth_after_debug_passed"] is None:
                     stop_reason = f"post-debug Ground Truth is unknown for {attempt_key}"
                     break
-                if result["ground_truth_configured"] and result["ground_truth_after_verification_passed"] is None:
+                if (
+                    result["ground_truth_configured"]
+                    and result["ground_truth_after_verification_passed"] is None
+                    and not _debug_timeout_has_scored_ground_truth(result)
+                ):
                     stop_reason = f"post-verification Ground Truth is unknown for {attempt_key}"
                     break
                 if result["ground_truth_integrity_match"] is False:
