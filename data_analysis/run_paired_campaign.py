@@ -13,6 +13,7 @@ import json
 import os
 import re
 import shutil
+import signal
 import subprocess
 import sys
 import threading
@@ -42,6 +43,7 @@ RUNNER = REPO_ROOT / "debug_assistant_latest" / "runner.py"
 DEFAULT_ROOT = REPO_ROOT / ".local" / "prediction_campaigns"
 MINIMUM_STARTUP_FREE_BYTES = 20_000_000_000
 MINIMUM_ATTEMPT_FREE_BYTES = 10_000_000_000
+DEBUG_PHASE_TIMEOUT_SECONDS = 480.0
 PILOT_STARTUP_FREE_BYTES = 12_000_000_000
 PILOT_MAX_SCHEDULED_ATTEMPTS = 18
 
@@ -356,6 +358,14 @@ def _attempt_disk_stop_reason(free_bytes: int, attempt_key: str) -> str | None:
     )
 
 
+def _startup_minimum_free_bytes(storage_policy: dict, *, resume: bool) -> int:
+    """A resumed campaign uses its per-attempt floor; only a new campaign needs startup reserve."""
+    return (
+        storage_policy["minimum_before_attempt_free_bytes"]
+        if resume else storage_policy["minimum_startup_free_bytes"]
+    )
+
+
 def _startup_disk_error(
     free_bytes: int,
     minimum_free_bytes: int = MINIMUM_STARTUP_FREE_BYTES,
@@ -493,6 +503,223 @@ def _summary_indicates_debug_agent_timeout(summary: dict | None) -> bool:
         or ("agent execution exceeded 480s" in message and isinstance(debug_metrics, dict))
     )
     return timed_out and debug_stage
+
+
+def _active_debug_phase_elapsed_s(run_dir: Path, test_name: str) -> float | None:
+    progress = run_dir / test_name / "progress.log"
+    if not progress.is_file():
+        return None
+    active = False
+    elapsed = 0.0
+    try:
+        content = progress.read_text(encoding="utf-8")
+    except OSError:
+        return None
+    lines = content.splitlines()
+    if content and not content.endswith(("\n", "\r")) and lines:
+        lines.pop()  # Ignore the event that is still being appended by the runner.
+    events = []
+    for number, line in enumerate(lines, start=1):
+        if not line.strip():
+            continue
+        try:
+            events.append(json.loads(line))
+        except json.JSONDecodeError:
+            raise ValueError(f"Invalid completed progress event at {progress}:{number}")
+    for event in events:
+        if event.get("event") == "phase_start" and event.get("phase") == "debug":
+            active = True
+            elapsed = 0.0
+        elif active and event.get("event") == "phase_heartbeat" and event.get("phase") == "debug":
+            try:
+                elapsed = max(elapsed, float(event.get("elapsed_s") or 0.0))
+            except (TypeError, ValueError):
+                pass
+        elif active and event.get("event") == "phase_end" and event.get("phase") == "debug":
+            active = False
+    return elapsed if active else None
+
+
+def _run_with_debug_phase_deadline(
+    command: list[str], run_dir: Path, test_name: str,
+    timeout_s: float = 480.0,
+) -> tuple[subprocess.CompletedProcess, float | None]:
+    """Run one isolated runner process and enforce the DebugAgent wall deadline externally."""
+    process = subprocess.Popen(
+        command,
+        cwd=REPO_ROOT,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        start_new_session=True,
+    )
+    timed_out_elapsed = None
+    while True:
+        try:
+            return_code = process.wait(timeout=1.0)
+            break
+        except subprocess.TimeoutExpired:
+            elapsed = _active_debug_phase_elapsed_s(run_dir, test_name)
+            if elapsed is None or elapsed < timeout_s:
+                continue
+            timed_out_elapsed = elapsed
+            try:
+                os.killpg(process.pid, signal.SIGTERM)
+            except ProcessLookupError:
+                pass
+            try:
+                return_code = process.wait(timeout=5.0)
+            except subprocess.TimeoutExpired:
+                return_code = None
+            # Kill remaining descendants even if the runner leader exited on SIGTERM.
+            try:
+                os.killpg(process.pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+            if return_code is None:
+                return_code = process.wait(timeout=5.0)
+            break
+    return subprocess.CompletedProcess(command, return_code), timed_out_elapsed
+
+
+def _recover_external_debug_timeout(
+    run_dir: Path, test_name: str, lane_config: Path, timeout_phase_s: float,
+) -> dict[str, Any]:
+    """Score the stopped task with independent Ground Truth, then clean only its selected-lane fixture."""
+    script = r'''import json, pathlib, sys
+repo = pathlib.Path(sys.argv[1])
+test_name = sys.argv[2]
+lane_path = sys.argv[3]
+run_dir = pathlib.Path(sys.argv[4])
+timeout_phase_s = float(sys.argv[5])
+sys.path.insert(0, str(repo / "debug_assistant_latest"))
+from lab_context import bootstrap_from_argv
+lane = bootstrap_from_argv(["--lab-config", lane_path])
+from ground_truth import run_all_checks
+from provenance import build_environment_context
+from teardown import teardown_environment
+config_path = run_dir / test_name / "config_effective.json"
+run_config_path = run_dir / "run_config.json"
+config = json.loads(config_path.read_text(encoding="utf-8"))
+run_config = json.loads(run_config_path.read_text(encoding="utf-8")) if run_config_path.is_file() else {}
+gt_record = None
+gt_error = None
+try:
+    result = run_all_checks(config)
+    if result is None:
+        gt_error = "no_result"
+    else:
+        gt_record = result.to_dict()
+except Exception as exc:
+    gt_error = type(exc).__name__
+try:
+    teardown_recoveries = teardown_environment(test_name)
+    teardown_status = "passed"
+    teardown_error = None
+except Exception as exc:
+    teardown_recoveries = []
+    teardown_status = "failed"
+    teardown_error = type(exc).__name__
+try:
+    environment_context = build_environment_context()
+except Exception:
+    environment_context = {}
+progress = run_dir / test_name / "progress.log"
+warmup_event = None
+if progress.is_file():
+    for line in progress.read_text(encoding="utf-8").splitlines():
+        try:
+            event = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if event.get("event") == "debug_model_warmup_end":
+            warmup_event = event
+if warmup_event:
+    policy = run_config.get("ollama_debug_warmup") or {}
+    revision = next((item.get("digest") for item in environment_context.get("ollama_model_revisions", []) if item.get("name") == warmup_event.get("model_id")), None)
+    environment_context["debug_model_warmup"] = {
+        "model_id": warmup_event.get("model_id"),
+        "expected_digest": policy.get("expected_digest"),
+        "model_digest_before": revision,
+        "model_digest_after": revision,
+        "status": warmup_event.get("status"),
+        "ready": warmup_event.get("ready"),
+        "reason": warmup_event.get("reason"),
+        "duration_s": warmup_event.get("duration_s"),
+        "keep_alive": policy.get("keep_alive"),
+        "options": policy.get("options") or {},
+        "preloaded": True,
+        "resident_models_before": None,
+        "resident_models_after": [warmup_event.get("model_id")],
+    }
+gt_path = run_dir / test_name / "ground_truth_after_external_timeout.json"
+if gt_record is not None:
+    gt_record["measurement_context"] = {
+        "source": "independent Ground Truth after campaign watchdog stopped the DebugAgent process",
+        "lane_id": lane.get("lane_id"),
+        "minikube_profile": lane.get("minikube_profile"),
+        "debug_phase_timeout_s": timeout_phase_s,
+    }
+    gt_path.write_text(json.dumps(gt_record, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+recovery = {
+    "schema_version": 1,
+    "recovery_type": "campaign_external_debug_deadline",
+    "test_name": test_name,
+    "lane_id": lane.get("lane_id"),
+    "minikube_profile": lane.get("minikube_profile"),
+    "debug_phase_timeout_s": timeout_phase_s,
+    "ground_truth_artifact": str(gt_path) if gt_record is not None else None,
+    "ground_truth_passed": gt_record.get("passed") if gt_record is not None else None,
+    "ground_truth_summary": gt_record.get("summary") if gt_record is not None else None,
+    "ground_truth_error": gt_error,
+    "teardown_status": teardown_status,
+    "teardown_error": teardown_error,
+    "teardown_recoveries": teardown_recoveries,
+    "environment_context": environment_context,
+    "verified_at_utc": __import__("datetime").datetime.now(__import__("datetime").timezone.utc).isoformat(),
+}
+recovery_path = run_dir / test_name / "campaign_timeout_recovery.json"
+recovery_path.write_text(json.dumps(recovery, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+print("KUBELLM_TIMEOUT_RECOVERY=" + json.dumps(recovery, ensure_ascii=False))
+if gt_error or teardown_status != "passed":
+    raise SystemExit(3)
+'''
+    helper = subprocess.Popen(
+        [sys.executable, "-c", script, str(REPO_ROOT), test_name, str(lane_config), str(run_dir), str(timeout_phase_s)],
+        cwd=REPO_ROOT,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        start_new_session=True,
+    )
+    try:
+        helper_stdout, helper_stderr = helper.communicate(timeout=240)
+    except subprocess.TimeoutExpired:
+        try:
+            os.killpg(helper.pid, signal.SIGTERM)
+        except ProcessLookupError:
+            pass
+        try:
+            helper.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            pass
+        try:
+            os.killpg(helper.pid, signal.SIGKILL)
+        except ProcessLookupError:
+            pass
+        helper_stdout, helper_stderr = helper.communicate()
+        raise RuntimeError("external timeout recovery helper exceeded its 240-second deadline")
+    completed = subprocess.CompletedProcess(helper.args, helper.returncode, helper_stdout, helper_stderr)
+    marker = next((line for line in reversed(completed.stdout.splitlines()) if line.startswith("KUBELLM_TIMEOUT_RECOVERY=")), None)
+    if marker is None:
+        detail = "timeout recovery helper did not produce a result"
+        if completed.stderr:
+            detail += f" ({completed.stderr.splitlines()[-1][:200]})"
+        raise RuntimeError(detail)
+    recovery = json.loads(marker.partition("=")[2])
+    recovery["helper_exit_code"] = completed.returncode
+    recovery["helper_stdout"] = completed.stdout[-1000:]
+    recovery["helper_stderr_tail"] = completed.stderr[-1000:]
+    return recovery
 
 
 def _debug_timeout_has_scored_ground_truth(result: dict) -> bool:
@@ -641,21 +868,27 @@ def _model_summary(
             sum(warmup_durations) / len(warmup_durations) if warmup_durations else None
         )
         rows = [row for row in attempt_rows if _success_value(row) is not None]
+        cost_recording_complete = all(row.get("cost_recording_complete", True) is True for row in attempt_rows)
+        observed_costs = [
+            float(row["effective_cost_with_shared_knowledge_call"])
+            for row in attempt_rows
+            if row.get("effective_cost_with_shared_knowledge_call") is not None
+        ]
         if not rows:
-            costs = [
-                float(row.get("effective_cost_with_shared_knowledge_call") or 0.0)
-                for row in attempt_rows
-            ]
             results.append(
                 {
                     "debug_model": model,
                     "candidate_attempts": len(attempt_rows),
                     "attempts_with_ground_truth": 0,
+                    "cost_recording_complete": cost_recording_complete,
                     "mean_effective_cost_with_shared_knowledge_call": (
-                        sum(costs) / len(costs) if costs else None
+                        sum(observed_costs) / len(attempt_rows)
+                        if cost_recording_complete and attempt_rows else None
                     ),
                     "mean_effective_cost_per_success": None,
-                    "total_effective_cost_with_shared_knowledge_call": sum(costs),
+                    "total_effective_cost_with_shared_knowledge_call": (
+                        sum(observed_costs) if cost_recording_complete else None
+                    ),
                     "mean_debug_model_warmup_duration_s": mean_warmup_duration,
                     "mean_attempt_wall_duration_s": (
                         sum(float(row.get("attempt_wall_duration_s") or 0.0) for row in attempt_rows)
@@ -667,10 +900,6 @@ def _model_summary(
         per_case: dict[str, list[bool]] = defaultdict(list)
         for row in rows:
             per_case[row["test_name"]].append(bool(_success_value(row)))
-        costs = [
-            float(row.get("effective_cost_with_shared_knowledge_call") or 0.0)
-            for row in attempt_rows
-        ]
         passed = sum(bool(_success_value(row)) for row in rows)
         debug_phase_seconds = sum(float(row.get("debug_duration_s") or 0.0) for row in attempt_rows)
         attempt_wall_seconds = sum(float(row.get("attempt_wall_duration_s") or 0.0) for row in attempt_rows)
@@ -718,11 +947,16 @@ def _model_summary(
                 "tasks_with_any_attempt": len(per_case),
                 "complete_ground_truth_coverage": complete_coverage,
                 "tasks_perfect_across_attempts": sum(rate == 1.0 for rate in task_rates),
-                "mean_effective_cost_with_shared_knowledge_call": sum(costs) / len(attempt_rows),
-                "mean_effective_cost_per_success": (
-                    sum(costs) / passed if passed else None
+                "cost_recording_complete": cost_recording_complete,
+                "mean_effective_cost_with_shared_knowledge_call": (
+                    sum(observed_costs) / len(attempt_rows) if cost_recording_complete and attempt_rows else None
                 ),
-                "total_effective_cost_with_shared_knowledge_call": sum(costs),
+                "mean_effective_cost_per_success": (
+                    sum(observed_costs) / passed if cost_recording_complete and passed else None
+                ),
+                "total_effective_cost_with_shared_knowledge_call": (
+                    sum(observed_costs) if cost_recording_complete else None
+                ),
                 "verifier_judgment_attempts": len(verifier_rows),
                 "verifier_judgment_accuracy_vs_debug_ground_truth": (
                     verifier_agreements / len(verifier_rows) if verifier_rows else None
@@ -735,21 +969,21 @@ def _model_summary(
                 "mean_debug_model_warmup_duration_s": mean_warmup_duration,
                 "shared_service_gpu_cost_per_attempt": shared_gpu_per_task,
                 "shared_service_mean_cost_per_attempt": (
-                    sum(costs) / len(attempt_rows) + shared_gpu_per_task
-                    if shared_gpu_per_task is not None else None
+                    sum(observed_costs) / len(attempt_rows) + shared_gpu_per_task
+                    if cost_recording_complete and shared_gpu_per_task is not None else None
                 ),
                 "shared_service_cost_per_success": (
-                    (sum(costs) + shared_gpu_per_task * len(attempt_rows)) / passed
-                    if shared_gpu_per_task is not None and passed else None
+                    (sum(observed_costs) + shared_gpu_per_task * len(attempt_rows)) / passed
+                    if cost_recording_complete and shared_gpu_per_task is not None and passed else None
                 ),
                 "batch_rental_gpu_cost_per_attempt": batch_gpu_per_task,
                 "batch_rental_mean_cost_per_attempt": (
-                    sum(costs) / len(attempt_rows) + batch_gpu_per_task
-                    if batch_gpu_per_task is not None else None
+                    sum(observed_costs) / len(attempt_rows) + batch_gpu_per_task
+                    if cost_recording_complete and batch_gpu_per_task is not None else None
                 ),
                 "batch_rental_cost_per_success": (
-                    (sum(costs) + batch_gpu_per_task * len(attempt_rows)) / passed
-                    if batch_gpu_per_task is not None and passed else None
+                    (sum(observed_costs) + batch_gpu_per_task * len(attempt_rows)) / passed
+                    if cost_recording_complete and batch_gpu_per_task is not None and passed else None
                 ),
             }
         )
@@ -912,11 +1146,12 @@ def _write_report(root: Path, config: dict, attempts: list[dict], models: list[s
     candidate_summary = _model_summary(
         attempts, models, config["cases"], config["plan_replicates"], config.get("gpu_cost_assumptions")
     )
+    cost_incomplete_attempts = sum(row.get("cost_recording_complete", True) is not True for row in attempts)
     recorded_provider_cost = sum(
-        float(row.get("api_cost") or 0.0)
-        + float(row.get("debug_cost") or 0.0)
-        + float(row.get("verification_cost") or 0.0)
+        float(row.get(field) or 0.0)
         for row in attempts
+        for field in ("api_cost", "debug_cost", "verification_cost")
+        if row.get(field) is not None
     )
     review_labels, plan_review_summary = _load_plan_review_labels(root, config)
     paired_routing_potential = _paired_routing_potential(attempts, models, review_labels)
@@ -940,9 +1175,13 @@ def _write_report(root: Path, config: dict, attempts: list[dict], models: list[s
         "debug_agent_timeout_attempts": timeout_rows,
         "ground_truth_scored_attempts": len(scored),
         "recorded_provider_cost_usd": recorded_provider_cost,
+        "cost_recording_incomplete_attempts": cost_incomplete_attempts,
+        "recorded_provider_cost_complete": cost_incomplete_attempts == 0,
         "modeled_selected_pipeline_cost_usd": sum(
-            float(row.get("effective_cost_with_shared_knowledge_call") or 0.0) for row in attempts
+            float(row.get("effective_cost_with_shared_knowledge_call") or 0.0)
+            for row in attempts if row.get("effective_cost_with_shared_knowledge_call") is not None
         ),
+        "modeled_selected_pipeline_cost_complete": cost_incomplete_attempts == 0,
         "ground_truth_integrity_mismatches": sum(
             row.get("ground_truth_integrity_match") is False for row in attempts
         ),
@@ -992,7 +1231,8 @@ def _write_report(root: Path, config: dict, attempts: list[dict], models: list[s
         "",
         f"Cases: {len(config['cases'])}  |  plan replicates per case: {config['plan_replicates']}  |  candidates: {len(models)}",
         f"Completed attempts: {len(attempts)}  |  Ground Truth scored: {len(scored)}",
-        f"Recorded provider cost: ${recorded_provider_cost:.4f}  |  modeled selected-pipeline cost: ${report['modeled_selected_pipeline_cost_usd']:.4f}",
+        f"Recorded provider cost: ${recorded_provider_cost:.4f}  |  modeled selected-pipeline cost: ${report['modeled_selected_pipeline_cost_usd']:.4f}"
+        + (f"  |  incomplete attempt costs: {cost_incomplete_attempts}" if cost_incomplete_attempts else ""),
         f"Post-verification GT integrity mismatches: {report['ground_truth_integrity_mismatches']}",
         f"Stop reason: {stop_reason or 'campaign schedule completed'}",
         f"DebugAgent timeouts: {report['debug_agent_timeout_attempts']}",
@@ -1021,12 +1261,13 @@ def _write_report(root: Path, config: dict, attempts: list[dict], models: list[s
             continue
         cost_per_success = row["mean_effective_cost_per_success"]
         lines.append(
-            "| {model} | {n} | {pooled:.3f} | {macro:.3f} | ${cost:.4f} | {cps} | {verifier} | {warmup} | {perfect}/{tasks} |".format(
+            "| {model} | {n} | {pooled:.3f} | {macro:.3f} | {cost} | {cps} | {verifier} | {warmup} | {perfect}/{tasks} |".format(
                 model=row["debug_model"],
                 n=row["attempts_with_ground_truth"],
                 pooled=row["pooled_ground_truth_success_rate"],
                 macro=row["equal_task_ground_truth_success_rate"],
-                cost=row["mean_effective_cost_with_shared_knowledge_call"],
+                cost=("—" if row["mean_effective_cost_with_shared_knowledge_call"] is None
+                      else f"${row['mean_effective_cost_with_shared_knowledge_call']:.4f}"),
                 cps="—" if cost_per_success is None else f"${cost_per_success:.4f}",
                 verifier=(
                     "—" if row["verifier_judgment_accuracy_vs_debug_ground_truth"] is None
@@ -1200,6 +1441,15 @@ def _load_attempts(records: list[dict]) -> tuple[list[dict], set[str], set[str]]
         elif record.get("event") == "attempt_finished":
             completed[key] = record
             started.discard(key)
+        elif record.get("event") == "attempt_outcome_reconciled" and key in completed:
+            overrides = record.get("overrides")
+            if isinstance(overrides, dict):
+                completed[key] = {
+                    **completed[key],
+                    **overrides,
+                    "outcome_reconciled": True,
+                    "outcome_reconciliation": record.get("reconciliation") or {},
+                }
     return list(completed.values()), set(completed), started
 
 
@@ -1376,15 +1626,16 @@ def run_campaign(args: argparse.Namespace) -> int:
     if config["lane_fingerprint"] is None:
         raise ValueError("Execution requires an explicitly selected private lane via --lab-config or KUBELLM_LAB_CONFIG")
     startup_free_bytes = _disk_free_bytes(REPO_ROOT)
+    startup_free_floor = _startup_minimum_free_bytes(storage_policy, resume=args.resume)
     print(
         "Storage at campaign startup: "
         f"{_format_gigabytes(startup_free_bytes)} free "
-        f"(minimum {_format_gigabytes(storage_policy['minimum_startup_free_bytes'])}; "
-        f"profile {storage_policy['profile']})"
+        f"(minimum {_format_gigabytes(startup_free_floor)}; "
+        f"profile {storage_policy['profile']}; {'resume' if args.resume else 'new campaign'})"
     )
     startup_disk_error = _startup_disk_error(
         startup_free_bytes,
-        storage_policy["minimum_startup_free_bytes"],
+        startup_free_floor,
     )
     if startup_disk_error:
         raise ValueError(startup_disk_error)
@@ -1562,13 +1813,10 @@ def run_campaign(args: argparse.Namespace) -> int:
                 if gpu_sampler:
                     gpu_sampler.start()
                 attempt_wall_started = time.perf_counter()
+                external_debug_timeout_s = None
                 try:
-                    completed = subprocess.run(
-                        command,
-                        cwd=REPO_ROOT,
-                        check=False,
-                        stdout=subprocess.DEVNULL,
-                        stderr=subprocess.DEVNULL,
+                    completed, external_debug_timeout_s = _run_with_debug_phase_deadline(
+                        command, run_dir, case, DEBUG_PHASE_TIMEOUT_SECONDS
                     )
                 finally:
                     gpu_memory = gpu_sampler.stop() if gpu_sampler else None
@@ -1577,6 +1825,54 @@ def run_campaign(args: argparse.Namespace) -> int:
                 tier_fit = _tier_fit(model, ollama_snapshot or {}, gpu_memory) if _is_local_model(model) else None
                 storage_free_after_bytes = _disk_free_bytes(REPO_ROOT)
                 summary = _read_summary(run_dir, case)
+                external_timeout_recovery = None
+                if summary is None and external_debug_timeout_s is not None:
+                    try:
+                        if args.lab_config is None:
+                            raise RuntimeError("external timeout recovery requires the explicitly selected private lane")
+                        external_timeout_recovery = _recover_external_debug_timeout(
+                            run_dir, case, args.lab_config, external_debug_timeout_s
+                        )
+                    except Exception as exc:
+                        external_timeout_recovery = {
+                            "ground_truth_passed": None,
+                            "ground_truth_error": type(exc).__name__,
+                            "ground_truth_artifact": None,
+                            "teardown_status": "failed",
+                            "teardown_error": type(exc).__name__,
+                            "environment_context": {},
+                        }
+                    run_config_path = run_dir / "run_config.json"
+                    run_config = json.loads(run_config_path.read_text(encoding="utf-8")) if run_config_path.is_file() else {}
+                    overrides = run_config.get("overrides") or {}
+                    measured = external_timeout_recovery.get("ground_truth_passed")
+                    recovery_complete = (
+                        external_timeout_recovery.get("ground_truth_artifact") is not None
+                        and external_timeout_recovery.get("teardown_status") == "passed"
+                        and measured is not None
+                    )
+                    summary = {
+                        "status": "TIMEOUT",
+                        "error_message": (
+                            f"Debug agent timed out after {external_debug_timeout_s:.3f} seconds; "
+                            "campaign watchdog stopped the runner process group"
+                        ),
+                        "metrics": {
+                            "api": {"model": overrides.get("api-agent.model"), "cost": None},
+                            "debug": {"model": model, "cost": None, "duration_s": external_debug_timeout_s},
+                            "verification": {"model": overrides.get("verification-agent.model"), "cost": None},
+                        },
+                        "ground_truth_configured": True,
+                        "ground_truth_after_debug_passed": measured,
+                        "ground_truth_after_verification_passed": None,
+                        "ground_truth_passed": None,
+                        "ground_truth_integrity_match": None,
+                        "verified": None,
+                        "teardown_status": external_timeout_recovery.get("teardown_status"),
+                        "environment_context": external_timeout_recovery.get("environment_context") or {},
+                        "cost_recording_complete": False,
+                        "external_timeout_recovery_complete": recovery_complete,
+                    }
                 preflight_failed = _preflight_failed(run_dir, case)
                 if summary is None:
                     stop_reason = f"runner produced no summary for {attempt_key} (exit {completed.returncode})"
@@ -1632,14 +1928,19 @@ def run_campaign(args: argparse.Namespace) -> int:
                 model_warm_at_agent_start = (
                     warmup_record.get("ready") is True if _is_local_model(model) else None
                 )
+                cost_recording_complete = summary.get("cost_recording_complete", True) is True
                 source_knowledge_cost = None
-                api_cost = float((metrics.get("api") or {}).get("cost") or 0.0)
+                api_cost = float((metrics.get("api") or {}).get("cost") or 0.0) if cost_recording_complete else None
                 if mode == "capture":
-                    source_knowledge_cost = float((metrics.get("api") or {}).get("cost") or 0.0)
+                    source_knowledge_cost = (float((metrics.get("api") or {}).get("cost") or 0.0)
+                                             if cost_recording_complete else None)
                     shared_api_cost = source_knowledge_cost
-                debug_cost = float((metrics.get("debug") or {}).get("cost") or 0.0)
-                verification_cost = float((metrics.get("verification") or {}).get("cost") or 0.0)
-                effective_cost = float(shared_api_cost or 0.0) + debug_cost + verification_cost
+                debug_cost = float((metrics.get("debug") or {}).get("cost") or 0.0) if cost_recording_complete else None
+                verification_cost = float((metrics.get("verification") or {}).get("cost") or 0.0) if cost_recording_complete else None
+                effective_cost = (
+                    float(shared_api_cost or 0.0) + float(debug_cost or 0.0) + float(verification_cost or 0.0)
+                    if cost_recording_complete else None
+                )
                 result = {
                     "event": "attempt_finished",
                     "attempt_key": attempt_key,
@@ -1676,6 +1977,8 @@ def run_campaign(args: argparse.Namespace) -> int:
                     "debug_cost": debug_cost,
                     "verification_cost": verification_cost,
                     "effective_cost_with_shared_knowledge_call": effective_cost,
+                    "cost_recording_complete": cost_recording_complete,
+                    "external_timeout_recovery_complete": summary.get("external_timeout_recovery_complete"),
                     "api_input_tokens": (metrics.get("api") or {}).get("input_tokens"),
                     "api_output_tokens": (metrics.get("api") or {}).get("output_tokens"),
                     "debug_input_tokens": (metrics.get("debug") or {}).get("input_tokens"),

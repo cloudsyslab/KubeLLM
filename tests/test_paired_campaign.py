@@ -14,9 +14,12 @@ from data_analysis.run_paired_campaign import (
     _candidate_orders,
     _cost_success_frontier,
     _model_summary,
+    _active_debug_phase_elapsed_s,
+    _load_attempts,
     _attempt_disk_stop_reason,
     _startup_disk_error,
     _storage_policy,
+    _startup_minimum_free_bytes,
     _write_report,
     _validate_recovery_record,
     _summary_indicates_debug_agent_timeout,
@@ -50,6 +53,94 @@ class PairedCampaignTests(unittest.TestCase):
         result["ground_truth_after_debug_passed"] = None
         self.assertFalse(_debug_timeout_has_scored_ground_truth(result))
 
+    def test_active_debug_phase_elapsed_uses_latest_heartbeat_until_phase_end(self):
+        with TemporaryDirectory() as directory:
+            run_dir = Path(directory)
+            task_dir = run_dir / "case-a"
+            task_dir.mkdir()
+            progress = task_dir / "progress.log"
+            events = [
+                {"event": "phase_start", "phase": "debug"},
+                {"event": "phase_heartbeat", "phase": "debug", "elapsed_s": 481.25},
+                {"event": "phase_start", "phase": "verification"},
+            ]
+            progress.write_text("".join(json.dumps(event) + "\n" for event in events), encoding="utf-8")
+            self.assertEqual(_active_debug_phase_elapsed_s(run_dir, "case-a"), 481.25)
+            with progress.open("a", encoding="utf-8") as stream:
+                stream.write('{"event":"phase_heartbeat","phase":"debug","elapsed_s":490')
+            self.assertEqual(_active_debug_phase_elapsed_s(run_dir, "case-a"), 481.25)
+            with progress.open("a", encoding="utf-8") as stream:
+                stream.write("}\n" + json.dumps({"event": "phase_end", "phase": "debug"}) + "\n")
+            self.assertIsNone(_active_debug_phase_elapsed_s(run_dir, "case-a"))
+            self.assertIsNone(_active_debug_phase_elapsed_s(run_dir, "case-a"))
+
+    def test_reconciliation_event_overlays_outcome_without_rewriting_finished_event(self):
+        rows, completed, started = _load_attempts([
+            {"event": "attempt_started", "attempt_key": "case-a__model-x"},
+            {"event": "attempt_finished", "attempt_key": "case-a__model-x", "exit_code": -15},
+            {
+                "event": "attempt_outcome_reconciled",
+                "attempt_key": "case-a__model-x",
+                "overrides": {"status": "TIMEOUT", "ground_truth_passed": False},
+                "reconciliation": {"artifact": "ground_truth.json"},
+            },
+        ])
+        self.assertEqual(completed, {"case-a__model-x"})
+        self.assertEqual(started, set())
+        self.assertEqual(rows[0]["exit_code"], -15)
+        self.assertEqual(rows[0]["status"], "TIMEOUT")
+        self.assertFalse(rows[0]["ground_truth_passed"])
+        self.assertTrue(rows[0]["outcome_reconciled"])
+
+    def test_incomplete_cost_recording_is_not_reported_as_zero(self):
+        rows = [
+            {
+                "debug_model": "model-a",
+                "test_name": "case-a",
+                "ground_truth_passed": True,
+                "effective_cost_with_shared_knowledge_call": 2.0,
+                "api_cost": 0.5,
+                "debug_cost": 1.0,
+                "verification_cost": 0.5,
+                "cost_recording_complete": True,
+            },
+            {
+                "debug_model": "model-a",
+                "test_name": "case-a",
+                "ground_truth_passed": False,
+                "effective_cost_with_shared_knowledge_call": None,
+                "api_cost": None,
+                "debug_cost": None,
+                "verification_cost": None,
+                "cost_recording_complete": False,
+            },
+        ]
+        config = {
+            "campaign_id": "cost-test",
+            "cases": ["case-a"],
+            "plan_replicates": 2,
+            "gpu_cost_assumptions": {},
+            "disk_guard": {
+                "profile": "standard",
+                "minimum_startup_free_bytes": MINIMUM_STARTUP_FREE_BYTES,
+                "minimum_before_attempt_free_bytes": MINIMUM_ATTEMPT_FREE_BYTES,
+                "maximum_scheduled_attempts": None,
+            },
+        }
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            _write_report(root, config, rows, ["model-a"], None)
+            report = json.loads((root / "campaign_report.json").read_text(encoding="utf-8"))
+            markdown = (root / "campaign_report.md").read_text(encoding="utf-8")
+        candidate = report["candidate_summary"][0]
+        self.assertFalse(candidate["cost_recording_complete"])
+        self.assertIsNone(candidate["mean_effective_cost_with_shared_knowledge_call"])
+        self.assertIsNone(candidate["total_effective_cost_with_shared_knowledge_call"])
+        self.assertEqual(report["recorded_provider_cost_usd"], 2.0)
+        self.assertEqual(report["cost_recording_incomplete_attempts"], 1)
+        self.assertFalse(report["recorded_provider_cost_complete"])
+        self.assertIn("incomplete attempt costs: 1", markdown)
+
     def test_storage_guard_enforces_startup_and_between_attempt_floors(self):
         self.assertIsNone(_startup_disk_error(MINIMUM_STARTUP_FREE_BYTES))
         self.assertIn(
@@ -66,6 +157,12 @@ class PairedCampaignTests(unittest.TestCase):
             "attempt-2",
             _attempt_disk_stop_reason(MINIMUM_ATTEMPT_FREE_BYTES - 1, "attempt-2"),
         )
+
+    def test_resuming_campaign_uses_per_attempt_floor_without_weakening_new_start(self):
+        policy = _storage_policy(False, 540)
+        self.assertEqual(_startup_minimum_free_bytes(policy, resume=False), MINIMUM_STARTUP_FREE_BYTES)
+        self.assertEqual(_startup_minimum_free_bytes(policy, resume=True), MINIMUM_ATTEMPT_FREE_BYTES)
+        self.assertIsNone(_startup_disk_error(19_800_000_000, _startup_minimum_free_bytes(policy, resume=True)))
 
     def test_pilot_storage_policy_is_explicit_and_capped(self):
         standard = _storage_policy(False, 486)
