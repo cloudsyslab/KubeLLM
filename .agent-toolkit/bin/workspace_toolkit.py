@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import argparse
 import contextlib
+import datetime
 import hashlib
 import io
 import json
@@ -21,6 +22,7 @@ import subprocess
 import sys
 import tempfile
 import tarfile
+import uuid
 from pathlib import Path
 from typing import Any, Dict, Iterable, Iterator, List, Optional, Sequence, Set, Tuple
 from urllib.parse import unquote, urlparse
@@ -64,6 +66,7 @@ FALLBACK_SKILLS = (
     "show-me",
     "website-design",
     "website-design-build",
+    "unslop",
     "writing-session",
     "workspace-onboarding",
 )
@@ -936,6 +939,17 @@ def prior_state_is_valid(
     managed = state.get("managed")
     if not isinstance(managed, list):
         return False
+    lifecycle_decisions = lifecycle.get("decisions")
+    excluded_skill_names = {
+        decision.get("name")
+        for decision in lifecycle_decisions
+        if isinstance(decision, dict)
+        and decision.get("kind") == "skill-exclusion"
+        and decision.get("decision") == "exclude"
+        and isinstance(decision.get("name"), str)
+        and isinstance(decision.get("reason"), str)
+        and decision.get("reason", "").strip()
+    } if isinstance(lifecycle_decisions, list) else set()
     seen_skills: Set[str] = set()
     helper_count = 0
     seen_instructions: Set[str] = set()
@@ -961,6 +975,23 @@ def prior_state_is_valid(
         elif kind == "skill":
             name = item.get("name")
             target = item.get("target")
+            status = item.get("status")
+            if (
+                isinstance(name, str)
+                and name not in skill_names
+                and status == "excluded"
+                and name in excluded_skill_names
+            ):
+                if name in seen_skills or not isinstance(target, str) or not isinstance(item.get("source_sha256"), str):
+                    return False
+                try:
+                    target_path = checked_relative_path(target, f"prior target for {name}")
+                except ToolkitError:
+                    return False
+                if len(target_path.parts) < 3 or target_path.parts[:2] != (".agents", "skills"):
+                    return False
+                seen_skills.add(name)
+                continue
             if item.get("source") == "workspace-local":
                 if (
                     not isinstance(name, str)
@@ -1008,7 +1039,7 @@ def prior_state_is_valid(
     managed_upstream_skills = {
         item["name"]
         for item in managed
-        if item.get("kind") == "skill" and item.get("source") != "workspace-local"
+        if item.get("kind") == "skill" and item.get("source") != "workspace-local" and item.get("name") in skill_names
     }
     local_skills = {
         item["name"]
@@ -1276,6 +1307,22 @@ def claude_exclusions(lifecycle: Dict[str, Any]) -> Set[str]:
         and decision.get("name") in {CLAUDE_INSTRUCTION, CLAUDE_SKILLS_LINK}
         and isinstance(decision.get("reason"), str)
         and decision.get("reason", "").strip()
+    }
+
+
+def skill_exclusions(lifecycle: Dict[str, Any]) -> Dict[str, str]:
+    decisions = lifecycle.get("decisions")
+    if not isinstance(decisions, list):
+        return {}
+    return {
+        decision["name"]: decision["reason"]
+        for decision in decisions
+        if isinstance(decision, dict)
+        and decision.get("kind") == "skill-exclusion"
+        and decision.get("decision") == "exclude"
+        and isinstance(decision.get("name"), str)
+        and isinstance(decision.get("reason"), str)
+        and decision["reason"].strip()
     }
 
 
@@ -1732,7 +1779,7 @@ def refresh_repository(
                 elif kind in {"instruction", "helper"}:
                     allowed = {"adopt-upstream", "keep-workspace", "recontextualize"}
                 elif kind == "skill" and change == "removed":
-                    allowed = {"keep-as-local", "remove-upstream", "recontextualize"}
+                    allowed = {"remove-upstream", "keep-as-local", "recontextualize"}
                 elif kind == "skill" and change in {"added", "added-collision"}:
                     allowed = {"adopt-upstream", "exclude", "recontextualize"}
                 elif kind == "skill":
@@ -1841,7 +1888,22 @@ def refresh_repository(
                     updated = {**previous, "kind": "skill", "name": name, "source": item.get("upstream_source"), "target": target_value, "source_sha256": upstream_hash, "status": "current" if live_hash == upstream_hash else "tailored"}
                 updated_managed.append(updated)
             elif kind == "skill" and upstream_hash is None:
-                if decision in {"keep-as-local", "recontextualize"}:
+                exclusion_reason = skill_exclusions(lifecycle).get(name)
+                if item.get("excluded") and exclusion_reason:
+                    target_value = previous.get("target", item.get("target"))
+                    source_hash = previous.get("source_sha256", item.get("baseline_sha256"))
+                    if not isinstance(source_hash, str):
+                        raise ToolkitError(f"excluded retired skill lacks source provenance: {name}")
+                    updated_managed.append({
+                        **previous,
+                        "kind": "skill",
+                        "name": name,
+                        "source": item.get("baseline_source", previous.get("source", "workspace-local")),
+                        "target": target_value,
+                        "source_sha256": source_hash,
+                        "status": "excluded",
+                    })
+                elif decision in {"keep-as-local", "recontextualize"}:
                     target_value = previous.get("target", item.get("target"))
                     target_path = root / checked_relative_path(str(target_value), "local skill target")
                     if not target_path.is_dir() or target_path.is_symlink():
@@ -1849,8 +1911,14 @@ def refresh_repository(
                     updated_managed.append({**previous, "kind": "skill", "name": name, "source": "workspace-local", "target": target_value, "source_sha256": sha256_tree(target_path)[0], "status": "tailored"})
                 elif decision != "remove-upstream":
                     raise ToolkitError(f"record keep-as-local or remove-upstream for removed skill {item.get('target')}")
-                elif hash_materialized_entry(root, {"kind": "skill", "target": item.get("target")}) is not None:
-                    raise ToolkitError(f"remove the retired upstream skill from the workspace before completing: {item.get('target')}")
+                else:
+                    target_value = previous.get("target", item.get("target"))
+                    target_path = root / checked_relative_path(str(target_value), "retired managed skill")
+                    ensure_safe_destination(root, target_path)
+                    if target_path.is_dir() and not target_path.is_symlink():
+                        shutil.rmtree(target_path)
+                    elif target_path.exists() or target_path.is_symlink():
+                        target_path.unlink()
             elif kind == "instruction" and isinstance(upstream_hash, str):
                 staged_values.append(f"{STAGING_DIRECTORY}/{name}")
                 if item.get("excluded") or decision == "exclude":
@@ -1867,6 +1935,39 @@ def refresh_repository(
                     raise ToolkitError(f"workspace helper is missing: {HELPER_PATH}")
                 updated_managed.append({**previous, "kind": "helper", "name": name, "source": item.get("upstream_source"), "target": HELPER_PATH, "source_sha256": sha256_file(live_helper), "status": "current" if sha256_file(live_helper) == upstream_hash else "tailored"})
 
+        for item in entries:
+            if (
+                not isinstance(item, dict)
+                or item.get("kind") != "skill"
+                or item.get("change") != "workspace-only"
+                or item.get("upstream_sha256") is not None
+            ):
+                continue
+            name = str(item["name"])
+            previous = managed_by_key.get(("skill", name))
+            target_value = previous.get("target") if previous else item.get("target")
+            target_path = root / checked_relative_path(str(target_value), "workspace-local skill target")
+            live_hash = sha256_tree(target_path)[0] if target_path.is_dir() and not target_path.is_symlink() else None
+            if live_hash is None:
+                raise ToolkitError(f"workspace-local skill is missing: {target_value}")
+            updated = {
+                **(previous or {}),
+                "kind": "skill",
+                "name": name,
+                "source": "workspace-local",
+                "target": str(target_value),
+                "source_sha256": live_hash,
+                "status": "tailored",
+            }
+            replaced = False
+            for index, managed_item in enumerate(updated_managed):
+                if (managed_item.get("kind"), managed_item.get("name")) == ("skill", name):
+                    updated_managed[index] = updated
+                    replaced = True
+                    break
+            if not replaced:
+                updated_managed.append(updated)
+
         candidate_manifest_entries = [item for item in entries if isinstance(item, dict) and item.get("kind") == "skill" and isinstance(item.get("upstream_sha256"), str)]
         if candidate_skill_names != {str(item.get("name")) for item in candidate_manifest_entries}:
             raise ToolkitError("candidate skill inventory does not match the refresh plan")
@@ -1879,7 +1980,22 @@ def refresh_repository(
         next_lifecycle = dict(lifecycle)
         next_lifecycle["status"] = "ready"
         next_lifecycle["conflicts"] = [item for item in conflicts if not isinstance(item, dict) or item.get("kind") != "refresh"]
-        next_lifecycle["decisions"] = exclusion_decisions + [
+        automatic_skill_decisions = [
+            {
+                "kind": "toolkit-skill-sync",
+                "name": item.get("name"),
+                "decision": item.get("decision"),
+                "from_commit": previous_source.get("commit"),
+                "to_commit": candidate_source.get("commit"),
+                "reason": item.get("reason"),
+            }
+            for item in entries
+            if isinstance(item, dict)
+            and item.get("kind") == "skill"
+            and item.get("change") in {"added", "removed"}
+            and not item.get("excluded")
+        ]
+        next_lifecycle["decisions"] = exclusion_decisions + automatic_skill_decisions + [
             {
                 "kind": "toolkit-refresh",
                 "from_commit": previous_source.get("commit"),
@@ -1978,6 +2094,7 @@ def refresh_repository(
             key for key, item in managed_by_key.items()
             if key[0] in {"skill", "instruction"} and item.get("status") == "excluded"
         }
+        excluded.update(("skill", name) for name in skill_exclusions(lifecycle))
         all_keys = set(baseline_entries) | set(candidate_entries)
         for skill in inventory_repository(root)["skills"]:
             if skill.get("snapshot_eligible") and skill["name"] not in old_names | new_names:
@@ -2017,7 +2134,23 @@ def refresh_repository(
             already_excluded = (kind, name) in excluded
             if already_excluded and upstream_entry is not None:
                 change = "excluded"
-            decision_required = change in {"upstream-only", "both-changed", "added", "added-collision", "removed"} and not already_excluded
+            automatic_skill_membership = kind == "skill" and change in {"added", "removed"}
+            decision_required = (
+                change in {"upstream-only", "both-changed", "added", "added-collision", "removed"}
+                and not already_excluded
+                and not automatic_skill_membership
+            )
+            decision = None
+            reason = None
+            if already_excluded and kind == "skill":
+                reason = skill_exclusions(lifecycle).get(name, "Preserved the workspace's existing skill exclusion.")
+                decision = "exclude" if upstream_entry is not None else "remove-upstream"
+            elif automatic_skill_membership and change == "added":
+                decision = "adopt-upstream"
+                reason = "Added the skill because it is part of the adopted generic toolkit set."
+            elif automatic_skill_membership and change == "removed":
+                decision = "remove-upstream"
+                reason = "Removed the skill because it is no longer part of the adopted generic toolkit set."
             candidate_path: Optional[str] = None
             baseline_path: Optional[str] = None
             if baseline_entry:
@@ -2053,6 +2186,8 @@ def refresh_repository(
                 "change": change,
                 "excluded": already_excluded,
                 "decision_required": decision_required,
+                "decision": decision,
+                "reason": reason,
             }
             plan_entries.append(plan_entry)
             if decision_required:
@@ -2445,6 +2580,1495 @@ def snapshot_branch(identity: Dict[str, Any]) -> str:
     )
 
 
+def workspace_checkout_preferences_path() -> Path:
+    config_home = Path(os.environ.get("XDG_CONFIG_HOME", str(Path.home() / ".config"))).expanduser()
+    return config_home / "portable-agent-toolkit" / "workspace-checkouts.json"
+
+
+def load_workspace_checkout_preferences() -> Dict[str, str]:
+    path = workspace_checkout_preferences_path()
+    if not path.exists():
+        return {}
+    document = load_json(path)
+    if document.get("schema_version") != 1 or not isinstance(document.get("checkouts"), dict):
+        raise ToolkitError(f"invalid workspace checkout preferences: {path}")
+    preferences: Dict[str, str] = {}
+    for branch, checkout in document["checkouts"].items():
+        if not isinstance(branch, str) or not branch.startswith("workspace/"):
+            raise ToolkitError(f"invalid workspace branch in checkout preferences: {path}")
+        if not isinstance(checkout, str) or not Path(checkout).is_absolute():
+            raise ToolkitError(f"checkout preference must be an absolute path: {branch}")
+        preferences[branch] = str(Path(checkout).expanduser().resolve())
+    return preferences
+
+
+def set_workspace_checkout_preference(checkout: Path) -> Dict[str, Any]:
+    root = git_root(checkout)
+    identity = repository_identity(root)
+    branch = snapshot_branch(identity)
+    preferences = load_workspace_checkout_preferences()
+    preferences[branch] = str(root)
+    write_json(workspace_checkout_preferences_path(), {"schema_version": 1, "checkouts": preferences})
+    return {"workspace_branch": branch, "checkout": str(root), "path": str(workspace_checkout_preferences_path())}
+
+
+def remove_workspace_checkout_preference(branch: str) -> Dict[str, Any]:
+    if not branch.startswith("workspace/"):
+        raise ToolkitError("checkout preference key must be a workspace/* branch")
+    preferences = load_workspace_checkout_preferences()
+    removed = preferences.pop(branch, None)
+    if removed is not None:
+        write_json(workspace_checkout_preferences_path(), {"schema_version": 1, "checkouts": preferences})
+    return {"workspace_branch": branch, "removed": removed is not None, "checkout": removed}
+
+
+def git_common_directory(root: Path) -> Path:
+    value = Path(run_git(root, ["rev-parse", "--git-common-dir"]))
+    return (root / value).resolve() if not value.is_absolute() else value.resolve()
+
+
+def workspace_search_roots(
+    values: Optional[Sequence[Path]], replace_defaults: bool = False, existing_only: bool = True,
+) -> List[Path]:
+    defaults = [] if replace_defaults else [Path.home(), Path.home() / ".codex" / "worktrees"]
+    candidates = defaults + list(values or [])
+    roots: List[Path] = []
+    seen: Set[Path] = set()
+    for value in candidates:
+        root = value.expanduser().resolve()
+        if (not existing_only or root.is_dir()) and root not in seen:
+            roots.append(root)
+            seen.add(root)
+    return roots
+
+
+def local_git_worktrees(search_roots: Sequence[Path], max_depth: int) -> List[Dict[str, Any]]:
+    found: Dict[Path, Dict[str, Any]] = {}
+    excluded = EXCLUDED_DIRECTORY_NAMES | {"Applications", "Library", "Movies", "Music", "Pictures", "Public"}
+    for search_root in search_roots:
+        for current, directory_names, _ in os.walk(search_root, topdown=True, followlinks=False):
+            root = Path(current).resolve()
+            relative = root.relative_to(search_root)
+            depth = len(relative.parts)
+            if (root / ".git").exists() and root not in found:
+                try:
+                    repository = git_root(root)
+                    identity = repository_identity(repository)
+                    common_directory = git_common_directory(repository)
+                    found[root] = {
+                        "path": root,
+                        "common_directory": common_directory,
+                        "identity": identity,
+                        "default_branch": run_git(repository, ["symbolic-ref", "--quiet", "--short", "refs/remotes/origin/HEAD"], check=False).removeprefix("origin/"),
+                    }
+                except ToolkitError:
+                    pass
+            if depth >= max_depth:
+                directory_names[:] = []
+                continue
+            directory_names[:] = [
+                name
+                for name in sorted(directory_names)
+                if name not in excluded and not name.startswith(".") and not (root / name).is_symlink()
+            ]
+    return list(found.values())
+
+
+def remote_workspace_snapshots(toolkit_root: Path, locator: str) -> List[Dict[str, Any]]:
+    listed = subprocess.run(
+        ["git", "-C", str(toolkit_root), "ls-remote", "--heads", "--", locator, "refs/heads/workspace/*"],
+        check=False,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    if listed.returncode != 0:
+        raise ToolkitError("could not list workspace snapshot branches from the toolkit remote")
+    refs: List[str] = []
+    for line in listed.stdout.splitlines():
+        fields = line.split()
+        if len(fields) == 2 and fields[1].startswith("refs/heads/workspace/"):
+            refs.append(fields[1])
+    if not refs:
+        return []
+
+    with tempfile.TemporaryDirectory(prefix="portable-agent-toolkit-workspaces-") as temporary:
+        reader = Path(temporary) / "reader.git"
+        subprocess.run(["git", "init", "--quiet", "--bare", str(reader)], check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        subprocess.run(["git", "-C", str(reader), "remote", "add", "origin", locator], check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        fetched = subprocess.run(
+            ["git", "-C", str(reader), "fetch", "--quiet", "--no-tags", "--depth=1", "origin", "+refs/heads/workspace/*:refs/remotes/origin/workspace/*"],
+            check=False,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+        )
+        if fetched.returncode != 0:
+            raise ToolkitError("could not read workspace snapshot branches from the toolkit remote")
+        available = set(run_git(reader, ["for-each-ref", "--format=%(refname)", "refs/remotes/origin/workspace"]).splitlines())
+        readable: List[Tuple[str, str]] = []
+        for source_ref in sorted(refs):
+            branch = source_ref.removeprefix("refs/heads/")
+            local_ref = f"refs/remotes/origin/{branch}"
+            if local_ref in available:
+                readable.append((branch, local_ref))
+        return read_workspace_snapshots(reader, readable)
+
+
+def read_workspace_snapshots(repository: Path, refs: Sequence[Tuple[str, str]]) -> List[Dict[str, Any]]:
+    """Parse snapshot manifests from (workspace branch, readable ref) pairs."""
+    snapshots: List[Dict[str, Any]] = []
+    for branch, ref in refs:
+        result = subprocess.run(
+            ["git", "-C", str(repository), "show", f"{ref}:{SNAPSHOT_MANIFEST_PATH}"],
+            check=False,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+        )
+        if result.returncode != 0:
+            snapshots.append({"branch": branch, "status": "invalid", "reason": "missing snapshot manifest"})
+            continue
+        try:
+            manifest = json.loads(result.stdout.decode("utf-8"))
+        except (UnicodeDecodeError, json.JSONDecodeError):
+            snapshots.append({"branch": branch, "status": "invalid", "reason": "invalid snapshot manifest"})
+            continue
+        identity = manifest.get("repository") if isinstance(manifest, dict) else None
+        if (
+            not isinstance(identity, dict)
+            or any(not isinstance(identity.get(key), str) or not identity[key] for key in ("host", "owner", "name"))
+            or manifest.get("branch") != branch
+            or snapshot_branch(identity) != branch
+        ):
+            snapshots.append({"branch": branch, "status": "invalid", "reason": "snapshot identity does not match its branch"})
+            continue
+        snapshots.append({"branch": branch, "identity": {key: identity[key] for key in ("host", "owner", "name")}, "snapshot_repository": identity, "status": "discovered"})
+    return snapshots
+
+
+def local_workspace_snapshots(toolkit_root: Path) -> List[Dict[str, Any]]:
+    """Read the workspace registry from the toolkit's cached origin refs."""
+    refs = run_git(toolkit_root, ["for-each-ref", "--format=%(refname)", "refs/remotes/origin/workspace"]).splitlines()
+    return read_workspace_snapshots(
+        toolkit_root,
+        [(ref.removeprefix("refs/remotes/origin/"), ref) for ref in sorted(refs) if ref],
+    )
+
+
+def match_workspace_targets(
+    snapshots: Sequence[Dict[str, Any]],
+    repositories: Sequence[Dict[str, Any]],
+    excluded_common_directories: Set[Path],
+    checkout_preferences: Optional[Dict[str, str]] = None,
+) -> List[Dict[str, Any]]:
+    checkout_preferences = checkout_preferences or {}
+    by_identity: Dict[Tuple[str, str, str], List[Dict[str, Any]]] = {}
+    for repository in repositories:
+        if repository["common_directory"] in excluded_common_directories:
+            continue
+        identity = repository["identity"]
+        key = (str(identity["host"]), str(identity["owner"]), str(identity["name"]))
+        by_identity.setdefault(key, []).append(repository)
+
+    targets: List[Dict[str, Any]] = []
+    for snapshot in snapshots:
+        target = dict(snapshot)
+        if snapshot.get("status") != "discovered":
+            targets.append(target)
+            continue
+        identity = snapshot["identity"]
+        key = (identity["host"], identity["owner"], identity["name"])
+        candidates = by_identity.get(key, [])
+        preferred_path = checkout_preferences.get(str(snapshot["branch"]))
+        if preferred_path and not any(str(candidate["path"]) == preferred_path for candidate in candidates):
+            try:
+                preferred_root = git_root(Path(preferred_path))
+                preferred_identity = repository_identity(preferred_root)
+                preferred_key = tuple(str(preferred_identity.get(part, "")) for part in ("host", "owner", "name"))
+                preferred_common_directory = git_common_directory(preferred_root)
+                if preferred_key == key and preferred_common_directory not in excluded_common_directories:
+                    candidates = [
+                        *candidates,
+                        {
+                            "path": preferred_root,
+                            "common_directory": preferred_common_directory,
+                            "identity": preferred_identity,
+                            "default_branch": run_git(
+                                preferred_root,
+                                ["symbolic-ref", "--quiet", "--short", "refs/remotes/origin/HEAD"],
+                                check=False,
+                            ).removeprefix("origin/"),
+                        },
+                    ]
+            except ToolkitError:
+                pass
+        groups: Dict[Path, List[Dict[str, Any]]] = {}
+        for candidate in candidates:
+            groups.setdefault(candidate["common_directory"], []).append(candidate)
+        exact = [
+            candidate for candidate in candidates
+            if candidate["identity"].get("branch") == snapshot["snapshot_repository"].get("branch")
+            and candidate["identity"].get("head") == snapshot["snapshot_repository"].get("head")
+        ]
+        selected = None
+        if preferred_path:
+            preferred = [candidate for candidate in candidates if str(candidate["path"]) == preferred_path]
+            if len(preferred) == 1:
+                selected = preferred[0]
+            else:
+                target.update({
+                    "status": "missing",
+                    "local_paths": sorted(str(item["path"]) for item in candidates),
+                    "canonical_path": preferred_path,
+                    "reason": "configured canonical checkout is unavailable or does not match the target repository",
+                })
+        elif not groups:
+            target.update({"status": "missing", "local_paths": []})
+        elif len(groups) > 1:
+            if len(exact) == 1:
+                selected = exact[0]
+            else:
+                target.update({"status": "ambiguous", "local_paths": sorted(str(item["path"]) for item in candidates)})
+        else:
+            group = next(iter(groups.values()))
+            default = [item for item in group if item["identity"].get("branch") == item.get("default_branch")]
+            selected = exact[0] if len(exact) == 1 else (default[0] if len(default) == 1 else sorted(group, key=lambda item: (len(item["path"].parts), str(item["path"])))[0])
+        if selected is not None:
+            target.update({
+                "status": "ready",
+                "local_path": str(selected["path"]),
+                "default_branch": selected.get("default_branch"),
+                "linked_worktrees": sorted(str(item["path"]) for item in groups[selected["common_directory"]]),
+                "dirty": bool(run_git(selected["path"], ["status", "--porcelain"])),
+            })
+            secondary_paths = sorted(
+                str(candidate["path"])
+                for common_directory, group in groups.items()
+                if common_directory != selected["common_directory"]
+                for candidate in group
+            )
+            if secondary_paths:
+                target["other_clone_paths"] = secondary_paths
+        targets.append(target)
+    return targets
+
+
+def refresh_all_journal_path(source_commit: str) -> Path:
+    state_home = Path(os.environ.get("XDG_STATE_HOME", str(Path.home() / ".local" / "state"))).expanduser()
+    return state_home / "portable-agent-toolkit" / "refresh-all" / f"{source_commit}.json"
+
+
+def latest_incomplete_refresh_all_journal(toolkit_repository: Dict[str, Any], current_commit: str) -> Optional[Dict[str, Any]]:
+    directory = refresh_all_journal_path(current_commit).parent
+    candidates: List[Tuple[int, Dict[str, Any]]] = []
+    if not directory.is_dir():
+        return None
+    for path in directory.glob("*.json"):
+        if path.stem == current_commit:
+            continue
+        try:
+            journal = load_json(path)
+        except ToolkitError:
+            continue
+        source = journal.get("source") if isinstance(journal.get("source"), dict) else {}
+        repository = source.get("repository") if isinstance(source.get("repository"), dict) else {}
+        targets = journal.get("targets") if isinstance(journal.get("targets"), list) else []
+        if any(repository.get(key) != toolkit_repository.get(key) for key in ("host", "owner", "name")):
+            continue
+        if any(isinstance(target, dict) and target.get("status") != "complete" for target in targets):
+            candidates.append((path.stat().st_mtime_ns, journal))
+    return max(candidates, key=lambda item: item[0])[1] if candidates else None
+
+
+def rollout_exposure_roots(root: Path) -> List[Path]:
+    """Find parent harnesses whose instructions import files from this repo."""
+    resolved_root = root.resolve()
+    matches: List[Path] = []
+    for parent in root.parents:
+        candidates = [
+            parent / "AGENTS.md",
+            parent / "CLAUDE.md",
+            parent / ".agents" / "skills",
+            parent / CLAUDE_SKILLS_LINK,
+        ]
+        skill_root = parent / ".agents" / "skills"
+        if skill_root.is_dir() and not skill_root.is_symlink():
+            candidates.extend(path for path in skill_root.iterdir() if path.is_symlink())
+        for candidate in candidates:
+            if not candidate.is_symlink():
+                continue
+            try:
+                linked = candidate.resolve(strict=False)
+                if linked.is_relative_to(resolved_root):
+                    matches.append(parent.resolve())
+                    break
+            except (OSError, RuntimeError):
+                continue
+    return sorted(set(matches))
+
+
+def agent_configuration_path(relative: str) -> bool:
+    path = Path(relative)
+    if path.name in AGENT_INSTRUCTION_NAMES:
+        return True
+    if relative.startswith((".agents/skills/", f"{CLAUDE_SKILLS_LINK}/")) or relative == CLAUDE_SKILLS_LINK:
+        return True
+    return relative in {
+        f"{CONTROL_DIRECTORY}/state.json",
+        f"{CONTROL_DIRECTORY}/inventory.json",
+        f"{CONTROL_DIRECTORY}/bin/workspace_toolkit.py",
+    } or relative.startswith((f"{STAGING_DIRECTORY}/", f"{REFRESH_DIRECTORY}/")) or relative.startswith(f"{CONTROL_DIRECTORY}/staged/")
+
+
+def git_configuration_tree(root: Path, revision: str) -> Dict[str, Tuple[str, str, str]]:
+    result = subprocess.run(
+        ["git", "-C", str(root), "ls-tree", "-rz", "--full-tree", revision],
+        check=False,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+    )
+    if result.returncode != 0:
+        raise ToolkitError(f"cannot read agent configuration at {revision}")
+    files: Dict[str, Tuple[str, str, str]] = {}
+    for record in result.stdout.split(b"\0"):
+        if not record:
+            continue
+        metadata, raw_path = record.split(b"\t", 1)
+        mode, kind, object_id = metadata.decode("ascii").split()
+        path = raw_path.decode("utf-8", errors="surrogateescape")
+        if kind == "blob" and agent_configuration_path(path):
+            files[path] = (mode, object_id, kind)
+    return files
+
+
+def worktree_configuration_entry(root: Path, relative: str) -> Optional[Tuple[str, str, str]]:
+    path = root / relative
+    if path.is_symlink():
+        mode = "120000"
+        content = os.fsencode(os.readlink(path))
+    elif path.is_file():
+        mode = "100755" if os.access(path, os.X_OK) else "100644"
+        content = path.read_bytes()
+    else:
+        return None
+    result = subprocess.run(
+        ["git", "-C", str(root), "hash-object", "--stdin"],
+        check=False,
+        input=content,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+    )
+    if result.returncode != 0:
+        raise ToolkitError(f"cannot hash local agent configuration: {relative}")
+    return mode, result.stdout.decode("ascii").strip(), "blob"
+
+
+def sync_agent_configuration(source_path: Path, destination_path: Path, source_sha: str) -> Dict[str, Any]:
+    """Three-way sync only agent configuration, preserving application work."""
+    source_root = git_root(source_path)
+    destination_root = git_root(destination_path)
+    source_identity = repository_identity(source_root)
+    destination_identity = repository_identity(destination_root)
+    if any(source_identity.get(key) != destination_identity.get(key) for key in ("host", "owner", "name")):
+        raise ToolkitError(f"source and destination repository identities differ: {destination_root}")
+    if run_git(source_root, ["rev-parse", "HEAD"]) != source_sha:
+        raise ToolkitError(f"agent configuration source is not at the approved commit {source_sha}: {source_root}")
+    same_checkout = source_root == destination_root
+
+    if not same_checkout:
+        available = subprocess.run(
+            ["git", "-C", str(destination_root), "cat-file", "-e", f"{source_sha}^{{commit}}"],
+            check=False,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+        if available.returncode != 0:
+            fetched = subprocess.run(
+                ["git", "-C", str(destination_root), "fetch", "--quiet", "--no-tags", str(source_root), source_sha],
+                check=False,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+            )
+            if fetched.returncode != 0:
+                raise ToolkitError(f"cannot read approved agent configuration commit in {destination_root}")
+
+    destination_head = run_git(destination_root, ["rev-parse", "HEAD"])
+    if same_checkout:
+        base_sha = source_sha
+    else:
+        merge_base = subprocess.run(
+            ["git", "-C", str(destination_root), "merge-base", destination_head, source_sha],
+            check=False,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+        )
+        if merge_base.returncode != 0:
+            raise ToolkitError(f"cannot find common history for agent configuration sync: {destination_root}")
+        base_sha = merge_base.stdout.strip()
+
+    status = subprocess.run(
+        ["git", "-C", str(destination_root), "status", "--porcelain=v1", "-z", "--untracked-files=all"],
+        check=False,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+    )
+    if status.returncode != 0:
+        raise ToolkitError(f"cannot inspect destination worktree: {destination_root}")
+    dirty_configuration: List[str] = []
+    staged_configuration: List[str] = []
+    records = status.stdout.split(b"\0")
+    index = 0
+    while index < len(records):
+        record = records[index]
+        index += 1
+        if not record:
+            continue
+        path = record[3:].decode("utf-8", errors="surrogateescape")
+        paths = [path]
+        if record[:2].find(b"R") >= 0 or record[:2].find(b"C") >= 0:
+            if index < len(records) and records[index]:
+                paths.append(records[index].decode("utf-8", errors="surrogateescape"))
+            index += 1
+        for changed_path in paths:
+            if agent_configuration_path(changed_path):
+                dirty_configuration.append(changed_path)
+                if record[:1] not in {b" ", b"?"}:
+                    staged_configuration.append(changed_path)
+    base_tree = git_configuration_tree(destination_root, base_sha)
+    source_tree = git_configuration_tree(destination_root, source_sha)
+    local_tree = git_configuration_tree(destination_root, destination_head)
+    modified_configuration = [
+        path for path in sorted(set(dirty_configuration))
+        if worktree_configuration_entry(destination_root, path) != source_tree.get(path)
+    ]
+    if modified_configuration:
+        raise ToolkitError(f"agent configuration has uncommitted edits in {destination_root}: {', '.join(modified_configuration[:8])}")
+    modified_staged_configuration: List[str] = []
+    for path in sorted(set(staged_configuration)):
+        index_result = subprocess.run(
+            ["git", "-C", str(destination_root), "ls-files", "--stage", "-z", "--", path],
+            check=False,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+        )
+        if index_result.returncode != 0:
+            raise ToolkitError(f"cannot inspect staged agent configuration: {destination_root}")
+        entries = [record for record in index_result.stdout.split(b"\0") if record]
+        index_entry = None
+        if entries:
+            if len(entries) != 1:
+                modified_staged_configuration.append(path)
+                continue
+            metadata, _ = entries[0].split(b"\t", 1)
+            mode, object_id, stage = metadata.decode("ascii").split()
+            if stage != "0":
+                modified_staged_configuration.append(path)
+                continue
+            index_entry = (mode, object_id, "blob")
+        if index_entry != source_tree.get(path):
+            modified_staged_configuration.append(path)
+    if modified_staged_configuration:
+        raise ToolkitError(f"agent configuration has staged edits in {destination_root}: {', '.join(modified_staged_configuration[:8])}")
+    if same_checkout:
+        drifted = [
+            path for path, entry in source_tree.items()
+            if worktree_configuration_entry(destination_root, path) != entry
+        ]
+        if drifted:
+            raise ToolkitError(f"approved source has local agent configuration edits: {', '.join(drifted[:8])}")
+        return {"path": str(destination_root), "status": "passed", "source_sha": source_sha, "changed": []}
+    updates: Dict[str, Optional[Tuple[str, str, str]]] = {}
+    conflicts: List[str] = []
+    for path in sorted(set(base_tree) | set(source_tree) | set(local_tree)):
+        base_entry = base_tree.get(path)
+        source_entry = source_tree.get(path)
+        local_entry = local_tree.get(path)
+        if source_entry == base_entry or local_entry == source_entry:
+            continue
+        if local_entry != base_entry:
+            conflicts.append(path)
+        else:
+            updates[path] = source_entry
+    if conflicts:
+        raise ToolkitError(f"agent configuration changed on both branches in {destination_root}: {', '.join(conflicts[:8])}")
+
+    local_path_conflicts: List[str] = []
+    for relative, entry in updates.items():
+        destination = destination_root / relative
+        if destination.exists() and not (destination.is_file() or destination.is_dir() or destination.is_symlink()):
+            local_path_conflicts.append(relative)
+        if relative not in local_tree:
+            existing = worktree_configuration_entry(destination_root, relative)
+            if existing is not None and existing != entry:
+                local_path_conflicts.append(relative)
+        if destination.is_dir() and not destination.is_symlink():
+            try:
+                has_children = next(destination.iterdir(), None) is not None
+            except OSError:
+                has_children = True
+            if has_children:
+                local_path_conflicts.append(relative)
+        if entry is None:
+            continue
+        cursor = destination_root
+        for component in Path(relative).parts[:-1]:
+            cursor = cursor / component
+            if cursor.is_symlink() or (cursor.exists() and not cursor.is_dir()):
+                parent_relative = cursor.relative_to(destination_root).as_posix()
+                if updates.get(parent_relative, "not-an-update") is not None:
+                    local_path_conflicts.append(relative)
+                    break
+    if local_path_conflicts:
+        raise ToolkitError(f"untracked or structurally conflicting agent configuration in {destination_root}: {', '.join(sorted(set(local_path_conflicts))[:8])}")
+
+    applied: List[str] = []
+    for relative, entry in sorted(updates.items(), key=lambda item: (item[1] is not None, item[0])):
+        destination = destination_root / relative
+        cursor = destination_root
+        for component in Path(relative).parts[:-1]:
+            cursor = cursor / component
+            if cursor.is_symlink():
+                raise ToolkitError(f"refusing to write through symlinked configuration directory: {cursor}")
+        if entry is None:
+            if destination.is_symlink() or destination.is_file():
+                destination.unlink()
+            elif destination.is_dir():
+                destination.rmdir()
+            applied.append(relative)
+            continue
+        mode, object_id, _ = entry
+        content = subprocess.run(
+            ["git", "-C", str(destination_root), "cat-file", "blob", object_id],
+            check=False,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+        )
+        if content.returncode != 0:
+            raise ToolkitError(f"cannot read configuration file {relative} from approved commit")
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        if destination.is_dir() and not destination.is_symlink():
+            destination.rmdir()
+        temporary = destination.with_name(f".{destination.name}.{uuid.uuid4().hex}.tmp")
+        try:
+            if mode == "120000":
+                os.symlink(os.fsdecode(content.stdout), temporary)
+            else:
+                temporary.write_bytes(content.stdout)
+                if mode == "100755":
+                    temporary.chmod(0o755)
+            os.replace(temporary, destination)
+        finally:
+            if temporary.is_symlink() or temporary.exists():
+                temporary.unlink()
+        applied.append(relative)
+
+    return {"path": str(destination_root), "status": "passed", "source_sha": source_sha, "base_sha": base_sha, "head": destination_head, "changed": applied}
+
+
+def validated_workspace_adoption(root: Path, toolkit_source_commit: str) -> bool:
+    """Accept a validated workspace-specific config that already adopted this toolkit source."""
+    try:
+        root = git_root(root)
+        state = load_json(root / STATE_PATH)
+        source = state.get("source") if isinstance(state.get("source"), dict) else {}
+        if source.get("commit") != toolkit_source_commit:
+            return False
+        validation, valid = validate_repository(root)
+        if not valid or validation.get("lifecycle_status") != "ready":
+            return False
+        saved_inventory = load_json(root / INVENTORY_PATH)
+        current_inventory = inventory_repository(root)
+        return all(
+            saved_inventory.get(key) == current_inventory.get(key)
+            for key in ("instructions", "skills", "warnings")
+        )
+    except (OSError, ToolkitError, json.JSONDecodeError):
+        return False
+
+
+def validate_harness_exposure(root: Path, harness_root: Path) -> List[str]:
+    """Check a parent workspace exposes the target's canonical managed skills."""
+    errors: List[str] = []
+    root = root.resolve()
+    harness_root = harness_root.resolve()
+    try:
+        state = load_json(root / STATE_PATH)
+    except ToolkitError as exc:
+        return [f"{harness_root}: cannot read source workspace state ({exc})"]
+    skill_root = harness_root / ".agents" / "skills"
+    managed = [
+        item for item in state.get("managed", [])
+        if isinstance(item, dict) and item.get("kind") == "skill" and item.get("status") != "excluded"
+    ]
+    if not skill_root.is_dir():
+        return [f"{harness_root}: missing .agents/skills exposure"]
+    for item in managed:
+        name = item.get("name")
+        target = item.get("target")
+        if not isinstance(name, str) or not isinstance(target, str):
+            errors.append(f"{harness_root}: malformed managed skill exposure")
+            continue
+        canonical = (root / target).resolve()
+        exposed = skill_root / name
+        if not (exposed / "SKILL.md").is_file() or exposed.resolve() != canonical:
+            errors.append(f"{harness_root}: skill {name} is missing or points away from {canonical}")
+
+    agents_record = next((
+        item for item in state.get("managed", [])
+        if isinstance(item, dict) and item.get("kind") == "instruction" and item.get("target") == "AGENTS.md"
+    ), None)
+    if isinstance(agents_record, dict) and agents_record.get("status") != "excluded":
+        target = agents_record.get("target")
+        agents_file = harness_root / str(target)
+        if not isinstance(target, str):
+            errors.append(f"{harness_root}: malformed Codex AGENTS.md policy record")
+        else:
+            try:
+                if not agents_file.read_text(encoding="utf-8").strip():
+                    errors.append(f"{harness_root}: empty Codex AGENTS.md policy")
+            except (OSError, UnicodeError):
+                errors.append(f"{harness_root}: missing or unreadable Codex AGENTS.md policy")
+
+    claude_record = next((
+        item for item in state.get("managed", [])
+        if isinstance(item, dict) and item.get("kind") == "instruction" and item.get("target") == CLAUDE_INSTRUCTION
+    ), None)
+    claude_excluded = isinstance(claude_record, dict) and claude_record.get("status") == "excluded"
+    if claude_record and not claude_excluded:
+        link = harness_root / CLAUDE_SKILLS_LINK
+        if not link.is_symlink() or link.resolve() != skill_root.resolve():
+            errors.append(f"{harness_root}: .claude/skills does not resolve to the canonical .agents/skills tree")
+        claude_file = harness_root / CLAUDE_INSTRUCTION
+        if not claude_file.is_file() or not imports_root_agents(claude_file.read_text(encoding="utf-8", errors="replace")):
+            errors.append(f"{harness_root}: CLAUDE.md does not load its root AGENTS.md policy")
+    return errors
+
+
+def check_local_rollout(
+    target: Dict[str, Any],
+    target_sha: str,
+    toolkit_source_commit: Optional[str],
+    harness_roots: Sequence[Path],
+    sync_receipts: Optional[Sequence[Dict[str, Any]]] = None,
+    no_harnesses: bool = False,
+) -> Dict[str, Any]:
+    """Verify all inventoried checkouts and linked harnesses after local sync."""
+    expected_identity = target.get("identity") if isinstance(target.get("identity"), dict) else {}
+    path_values: List[str] = []
+    for key in ("local_path", "linked_worktrees", "other_clone_paths"):
+        value = target.get(key)
+        if isinstance(value, str):
+            path_values.append(value)
+        elif isinstance(value, list):
+            path_values.extend(item for item in value if isinstance(item, str))
+    checkout_paths = sorted({Path(value).expanduser().resolve() for value in path_values}, key=str)
+    errors: List[str] = []
+    receipts: List[Dict[str, Any]] = []
+    detected_harness_roots: Dict[Path, Path] = {}
+
+    if not checkout_paths:
+        errors.append("the run did not record any local checkout paths")
+    for checkout in checkout_paths:
+        if not checkout.is_dir():
+            errors.append(f"checkout is missing: {checkout}")
+            continue
+        try:
+            root = git_root(checkout)
+            identity = repository_identity(root)
+            if not repository_identity_matches(expected_identity, identity):
+                errors.append(f"repository identity changed: {checkout}")
+                continue
+            head = run_git(root, ["rev-parse", "HEAD"])
+            default_branch = target.get("default_branch") or run_git(root, ["symbolic-ref", "--quiet", "--short", "refs/remotes/origin/HEAD"], check=False).removeprefix("origin/")
+            current_branch = run_git(root, ["branch", "--show-current"])
+            if not default_branch:
+                errors.append(f"cannot determine default branch for checkout: {checkout}")
+            if current_branch and current_branch == default_branch:
+                ancestry = subprocess.run(
+                    ["git", "-C", str(root), "merge-base", "--is-ancestor", target_sha, head],
+                    check=False,
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                )
+                if ancestry.returncode != 0:
+                    errors.append(f"default checkout does not contain rollout commit {target_sha}: {checkout}")
+                    continue
+            state = load_json(root / STATE_PATH)
+            state_source = state.get("source") if isinstance(state.get("source"), dict) else {}
+            if toolkit_source_commit and state_source.get("commit") != toolkit_source_commit:
+                errors.append(f"checkout has not adopted toolkit source {toolkit_source_commit}: {checkout}")
+                continue
+            validation, valid = validate_repository(root)
+            if not valid or validation.get("lifecycle_status") != "ready":
+                reasons = [item.get("reason", "invalid workspace") for item in validation.get("errors", [])]
+                errors.append(f"checkout validation failed at {checkout}: {', '.join(reasons[:5])}")
+                continue
+            for harness_root in rollout_exposure_roots(root):
+                detected_harness_roots[harness_root] = root
+            receipts.append({
+                "path": str(checkout),
+                "repository_root": str(root),
+                "branch": current_branch or "detached",
+                "head": head,
+                "toolkit_source_commit": state_source.get("commit"),
+                "validation": "passed",
+                "worktree_status": "clean" if not run_git(root, ["status", "--porcelain", "--untracked-files=normal"]) else "contains local changes",
+            })
+        except (OSError, ToolkitError, json.JSONDecodeError) as exc:
+            errors.append(f"cannot verify checkout {checkout}: {exc}")
+
+    harness_receipts: List[Dict[str, str]] = []
+    canonical_root = None
+    if target.get("local_path"):
+        try:
+            canonical_root = git_root(Path(target["local_path"]))
+        except ToolkitError:
+            pass
+    if canonical_root is not None:
+        for harness_root in harness_roots:
+            detected_harness_roots.setdefault(harness_root.resolve(), canonical_root)
+    if no_harnesses and detected_harness_roots:
+        errors.append("harness exposures were found; remove --no-harnesses and validate each harness")
+    elif not detected_harness_roots and not no_harnesses:
+        errors.append("no harness roots were found; pass --harness-root for each harness or declare --no-harnesses")
+    for harness_root in sorted(detected_harness_roots, key=str):
+        exposure_root = detected_harness_roots[harness_root]
+        harness_errors = validate_harness_exposure(exposure_root, harness_root)
+        errors.extend(harness_errors)
+        agents_file = harness_root / "AGENTS.md"
+        agents_policy = str(agents_file.resolve(strict=False)) if agents_file.is_file() else "unavailable"
+        harness_receipts.append({
+            "path": str(harness_root),
+            "validation": "failed" if harness_errors else "passed",
+            "agents_policy": agents_policy,
+        })
+
+    return {
+        "status": "passed" if not errors and len(receipts) == len(checkout_paths) else "pending",
+        "target_sha": target_sha,
+        "toolkit_source_commit": toolkit_source_commit,
+        "checked_out_at": datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="seconds"),
+        "checkouts": receipts,
+        "agent_sync": list(sync_receipts or []),
+        "harnesses": harness_receipts,
+        "harness_inventory": "none" if no_harnesses and not detected_harness_roots else "discovered" if detected_harness_roots else "unresolved",
+        "errors": errors,
+    }
+
+
+def repository_identity_matches(expected: Dict[str, Any], actual: Dict[str, Any]) -> bool:
+    keys = ("host", "owner", "name")
+    return all(isinstance(expected.get(key), str) and expected[key] and expected[key] == actual.get(key) for key in keys)
+
+
+def rollout_checkout_is_selected(checkout_root: Path, source_root: Path, selected_checkouts: Set[Path]) -> bool:
+    """Allow the verified source checkout or a path explicitly selected after inspection."""
+    checkout = checkout_root.resolve()
+    return checkout == source_root.resolve() or checkout in selected_checkouts
+
+
+def fast_forward_default_checkout(checkout_root: Path, target_sha: str) -> subprocess.CompletedProcess:
+    """Advance a checkout without replacing ignored local files."""
+    return subprocess.run(
+        ["git", "-C", str(checkout_root), "merge", "--ff-only", "--no-overwrite-ignore", "--quiet", target_sha],
+        check=False,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+
+
+def local_rollout_check(
+    kind: str,
+    identifier: str,
+    workspace_branch: str,
+    target_sha: Optional[str],
+    source_path: Optional[Path],
+    harness_roots: Sequence[Path],
+    no_harnesses: bool = False,
+    allow_checkouts: Sequence[Path] = (),
+) -> Dict[str, Any]:
+    if no_harnesses and harness_roots:
+        raise ToolkitError("--no-harnesses cannot be combined with --harness-root")
+    if kind == "refresh-all":
+        if not re.fullmatch(r"[0-9a-fA-F]{40,64}", identifier):
+            raise ToolkitError("refresh rollout identifier must be a full toolkit source commit")
+        path = refresh_all_journal_path(identifier)
+        journal = load_json(path)
+        target = next((item for item in journal.get("targets", []) if item.get("branch") == workspace_branch), None)
+        if target is None:
+            raise ToolkitError("workspace branch is not part of this refresh run")
+        expected_sha = target_sha or target.get("merge_commit")
+        if not isinstance(expected_sha, str) or not re.fullmatch(r"[0-9a-fA-F]{40,64}", expected_sha):
+            raise ToolkitError("record the verified merged commit before checking local rollout")
+        toolkit_source = identifier
+    elif kind == "reconcile-all":
+        path = reconciliation_journal_path(identifier)
+        journal = load_json(path)
+        target = next((item for item in journal.get("targets", []) if item.get("branch") == workspace_branch), None)
+        if target is None:
+            raise ToolkitError("workspace branch is not part of this reconciliation run")
+        expected_sha = target_sha or target.get("target_sha")
+        if not isinstance(expected_sha, str) or not re.fullmatch(r"[0-9a-fA-F]{40,64}", expected_sha):
+            raise ToolkitError("record the verified default-branch target SHA before checking local rollout")
+        toolkit_source = None
+    else:
+        raise ToolkitError("local rollout run kind must be refresh-all or reconcile-all")
+
+    source_root = git_root(source_path) if source_path else git_root(Path(target["local_path"]))
+    expected_identity = target.get("identity") if isinstance(target.get("identity"), dict) else {}
+    if not repository_identity_matches(expected_identity, repository_identity(source_root)):
+        raise ToolkitError("local rollout source repository identity does not match the recorded target")
+    if run_git(source_root, ["rev-parse", "HEAD"]) != expected_sha:
+        raise ToolkitError(f"local rollout source must be checked out at verified target {expected_sha}")
+
+    checkout_values: List[str] = []
+    for key in ("local_path", "linked_worktrees", "other_clone_paths"):
+        value = target.get(key)
+        if isinstance(value, str):
+            checkout_values.append(value)
+        elif isinstance(value, list):
+            checkout_values.extend(item for item in value if isinstance(item, str))
+    sync_receipts: List[Dict[str, Any]] = []
+    sync_errors: List[str] = []
+    selected_checkouts = {path.expanduser().resolve() for path in allow_checkouts}
+    observed_checkouts: Set[Path] = set()
+    for value in sorted(set(checkout_values)):
+        try:
+            checkout_root = git_root(Path(value))
+            observed_checkouts.add(checkout_root.resolve())
+            if not repository_identity_matches(expected_identity, repository_identity(checkout_root)):
+                sync_errors.append(f"repository identity changed: {checkout_root}")
+                continue
+            if not rollout_checkout_is_selected(checkout_root, source_root, selected_checkouts):
+                sync_errors.append(f"checkout was not selected for update after inspection: {checkout_root}")
+                continue
+            current_branch = run_git(checkout_root, ["branch", "--show-current"])
+            default_branch = target.get("default_branch") or run_git(checkout_root, ["symbolic-ref", "--quiet", "--short", "refs/remotes/origin/HEAD"], check=False).removeprefix("origin/")
+            if not default_branch:
+                sync_errors.append(f"cannot determine default branch for checkout: {checkout_root}")
+            elif current_branch and current_branch == default_branch:
+                ancestry = subprocess.run(
+                    ["git", "-C", str(checkout_root), "merge-base", "--is-ancestor", expected_sha, "HEAD"],
+                    check=False,
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                )
+                if ancestry.returncode != 0:
+                    existing_changes = run_git(checkout_root, ["status", "--porcelain", "--untracked-files=all"])
+                    if existing_changes:
+                        sync_errors.append(f"default checkout has local changes and was not advanced: {checkout_root}")
+                    elif checkout_root != source_root:
+                        available = subprocess.run(
+                            ["git", "-C", str(checkout_root), "cat-file", "-e", f"{expected_sha}^{{commit}}"],
+                            check=False,
+                            stdout=subprocess.DEVNULL,
+                            stderr=subprocess.DEVNULL,
+                        )
+                        if available.returncode != 0:
+                            fetched = subprocess.run(
+                                ["git", "-C", str(checkout_root), "fetch", "--quiet", "--no-tags", str(source_root), expected_sha],
+                                check=False,
+                                stdout=subprocess.PIPE,
+                                stderr=subprocess.PIPE,
+                            )
+                            if fetched.returncode != 0:
+                                sync_errors.append(f"cannot fetch verified target commit into {checkout_root}")
+                        if not any(checkout_root.as_posix() in detail for detail in sync_errors):
+                            advanced = fast_forward_default_checkout(checkout_root, expected_sha)
+                            if advanced.returncode != 0:
+                                sync_errors.append(f"default checkout could not fast-forward to {expected_sha}: {checkout_root}")
+            if toolkit_source and validated_workspace_adoption(checkout_root, toolkit_source):
+                sync_receipts.append({
+                    "path": str(checkout_root),
+                    "status": "passed",
+                    "source_sha": expected_sha,
+                    "changed": [],
+                    "mode": "validated-workspace-adoption",
+                })
+            else:
+                sync_receipts.append(sync_agent_configuration(source_root, checkout_root, expected_sha))
+        except (OSError, ToolkitError) as exc:
+            sync_errors.append(str(exc))
+
+    for unobserved in sorted(selected_checkouts - observed_checkouts, key=str):
+        sync_errors.append(f"selected checkout was not in the recorded run inventory: {unobserved}")
+
+    receipt = check_local_rollout(target, expected_sha, toolkit_source, harness_roots, sync_receipts, no_harnesses)
+    if sync_errors:
+        receipt["errors"] = [*sync_errors, *receipt.get("errors", [])]
+        receipt["status"] = "pending"
+    target["local_rollout"] = receipt
+    target["target_sha"] = expected_sha
+    if receipt["status"] == "pending":
+        target["status"] = "local_sync_pending"
+        target["error"] = "; ".join(receipt["errors"][:5])
+    else:
+        target.pop("error", None)
+        target["status"] = "in_progress"
+    if kind == "reconcile-all":
+        journal["complete"] = all(item.get("status") == "complete" for item in journal.get("targets", []))
+    write_json(path, journal)
+    return {"run_id": identifier if kind == "reconcile-all" else None, "source_commit": identifier if kind == "refresh-all" else None, "workspace_branch": workspace_branch, "journal_path": str(path), "local_rollout": receipt}
+
+
+def pinned_toolkit_checkout(toolkit_root: Path, source_commit: str, create: bool) -> Optional[Path]:
+    current_commit = run_git(toolkit_root, ["rev-parse", "HEAD"])
+    if source_commit == current_commit:
+        return toolkit_root
+    if not re.fullmatch(r"[0-9a-fA-F]{40,64}", source_commit):
+        raise ToolkitError("pinned toolkit source is not a full Git commit id")
+    present = subprocess.run(
+        ["git", "-C", str(toolkit_root), "cat-file", "-e", f"{source_commit}^{{commit}}"],
+        check=False,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    if present.returncode != 0:
+        if not create:
+            return None
+        fetched = subprocess.run(
+            ["git", "-C", str(toolkit_root), "fetch", "--quiet", "origin", source_commit],
+            check=False,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+        )
+        if fetched.returncode != 0:
+            raise ToolkitError("the recorded toolkit commit is unavailable for resume")
+    cache = refresh_all_journal_path(source_commit).parent / "sources" / source_commit
+    if cache.exists():
+        try:
+            cached_root = git_root(cache)
+        except ToolkitError:
+            raise ToolkitError("the cached toolkit source checkout is invalid; preserve it for inspection")
+        if (
+            run_git(cached_root, ["rev-parse", "HEAD"]) != source_commit
+            or run_git(cached_root, ["branch", "--show-current"]) != "main"
+            or run_git(cached_root, ["status", "--porcelain"])
+        ):
+            raise ToolkitError("the cached toolkit source checkout changed; preserve it for inspection")
+        return cached_root
+    cache.parent.mkdir(parents=True, exist_ok=True)
+    clone = subprocess.run(
+        ["git", "clone", "--quiet", "--no-checkout", "--", str(toolkit_root), str(cache)],
+        check=False,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    if clone.returncode != 0:
+        raise ToolkitError("could not create a local checkout of the pinned toolkit source")
+    checked_out = subprocess.run(
+        ["git", "-C", str(cache), "checkout", "--quiet", "-B", "main", source_commit],
+        check=False,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    if checked_out.returncode != 0:
+        raise ToolkitError("could not check out the pinned toolkit source")
+    origin = run_git(toolkit_root, ["remote", "get-url", "origin"], check=False)
+    if origin and is_portable_repository_locator(origin):
+        updated_origin = subprocess.run(
+            ["git", "-C", str(cache), "remote", "set-url", "origin", sanitize_repository_locator(origin)],
+            check=False,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+        )
+        if updated_origin.returncode != 0:
+            raise ToolkitError("could not preserve the toolkit remote in its pinned source checkout")
+    return cache.resolve()
+
+
+def plan_all_refreshes(
+    toolkit_root: Path,
+    search_roots: Optional[Sequence[Path]],
+    replace_search_roots: bool,
+    max_depth: int,
+    dry_run: bool,
+    toolkit_repository: Optional[str],
+) -> Dict[str, Any]:
+    root = git_root(toolkit_root)
+    if run_git(root, ["branch", "--show-current"]) != "main":
+        raise ToolkitError("all-workspaces refresh must run from the toolkit main branch")
+    if run_git(root, ["status", "--porcelain"]):
+        raise ToolkitError("all-workspaces refresh requires a clean toolkit main checkout")
+    _, _, current_manifest = toolkit_configuration(root)
+    current_source = source_provenance(root, current_manifest)
+    previous_run = latest_incomplete_refresh_all_journal(current_source.get("repository", {}), str(current_source["commit"]))
+    source = previous_run.get("source") if previous_run and isinstance(previous_run.get("source"), dict) else current_source
+    source_commit = str(source.get("commit") or "")
+    candidate_root = pinned_toolkit_checkout(root, source_commit, create=not dry_run)
+    if candidate_root is not None:
+        _, _, manifest = toolkit_configuration(candidate_root)
+        verified_source = source_provenance(candidate_root, manifest)
+        if verified_source.get("commit") != source_commit or verified_source.get("repository") != current_source.get("repository"):
+            raise ToolkitError("the pinned toolkit source identity does not match this checkout")
+        source = verified_source
+    journal_path = refresh_all_journal_path(source_commit)
+    existing_journal = load_json(journal_path) if journal_path.is_file() else {}
+    existing_source = existing_journal.get("source") if isinstance(existing_journal.get("source"), dict) else {}
+    existing_locator = existing_journal.get("toolkit_repository") if existing_source.get("commit") == source_commit else None
+    resumed_locator = previous_run.get("toolkit_repository") if previous_run else None
+    pinned_locator = resumed_locator or existing_locator
+    requested_locator = sanitize_repository_locator(toolkit_repository) if toolkit_repository else None
+    if pinned_locator and requested_locator and requested_locator != pinned_locator:
+        raise ToolkitError("cannot change the toolkit repository while resuming an all-workspaces refresh")
+    locator = requested_locator or pinned_locator or source.get("repository_locator") or safe_repository_locator(root, current_manifest)
+    locator = sanitize_repository_locator(str(locator)) if locator else None
+    if not locator:
+        raise ToolkitError("toolkit source has no portable origin for workspace snapshot discovery")
+    snapshots = remote_workspace_snapshots(candidate_root or root, locator)
+    roots = workspace_search_roots(search_roots, replace_search_roots)
+    local_repositories = local_git_worktrees(roots, max_depth)
+    source_common_directories = {git_common_directory(root)}
+    if candidate_root is not None:
+        source_common_directories.add(git_common_directory(candidate_root))
+    targets = match_workspace_targets(
+        snapshots, local_repositories, source_common_directories, load_workspace_checkout_preferences(),
+    )
+
+    previous_targets: Dict[str, Dict[str, Any]] = {}
+    if existing_journal:
+        existing_targets = existing_journal.get("targets") if isinstance(existing_journal.get("targets"), list) else []
+        if existing_source.get("commit") == source.get("commit"):
+            previous_targets = {
+                str(item.get("branch")): item
+                for item in existing_targets
+                if isinstance(item, dict) and isinstance(item.get("branch"), str)
+            }
+    for target in targets:
+        previous_target = previous_targets.get(str(target.get("branch")))
+        if (
+            not dry_run
+            and previous_target
+            and previous_target.get("status") in {"in_progress", "pr_open", "merged", "snapshot_pending", "local_sync_pending", "complete", "blocked"}
+            and previous_target.get("identity") == target.get("identity")
+        ):
+            target.update({key: value for key, value in previous_target.items() if key not in {"branch", "identity", "snapshot_repository", "status", "local_path", "dirty", "linked_worktrees", "other_clone_paths"}})
+            if previous_target.get("status") == "complete" and not (
+                isinstance(previous_target.get("local_rollout"), dict)
+                and previous_target["local_rollout"].get("status") == "passed"
+                and previous_target["local_rollout"].get("target_sha") == previous_target.get("merge_commit")
+            ):
+                target["status"] = "local_sync_pending"
+                target["resume_status"] = "complete"
+                target["error"] = "previous completion predates local checkout and harness verification; resume at local rollout"
+            elif target.get("status") == "ready" or previous_target.get("status") == "complete":
+                target["status"] = previous_target["status"]
+            else:
+                target["resume_status"] = previous_target["status"]
+
+    result = {
+        "schema_version": SCHEMA_VERSION,
+        "source": source,
+        "targets": targets,
+        "toolkit_repository": locator,
+        "search_roots": [str(path) for path in roots],
+        "journal_path": str(journal_path),
+        "toolkit_checkout": str(candidate_root) if candidate_root is not None else None,
+        "resuming": bool(previous_run or previous_targets),
+        "dry_run": dry_run,
+    }
+    if not dry_run:
+        write_json(journal_path, result)
+    return result
+
+
+def update_refresh_all_journal(
+    source_commit: str,
+    branch: str,
+    status: str,
+    receipts: Dict[str, Optional[str]],
+    clear_error: bool,
+) -> Dict[str, Any]:
+    if not re.fullmatch(r"[0-9a-fA-F]{40,64}", source_commit):
+        raise ToolkitError("source commit must be a full Git commit id")
+    if status not in {"discovered", "in_progress", "pr_open", "merged", "snapshot_pending", "local_sync_pending", "complete", "blocked"}:
+        raise ToolkitError("invalid all-workspaces refresh status")
+    path = refresh_all_journal_path(source_commit)
+    journal = load_json(path)
+    target = next((item for item in journal.get("targets", []) if isinstance(item, dict) and item.get("branch") == branch), None)
+    if target is None:
+        raise ToolkitError("workspace branch is not part of this refresh run")
+    if status == "complete":
+        rollout = target.get("local_rollout") if isinstance(target.get("local_rollout"), dict) else {}
+        if not target.get("snapshot_commit") or rollout.get("status") != "passed" or rollout.get("target_sha") != target.get("merge_commit"):
+            raise ToolkitError("cannot complete a workspace before snapshot publication and verified local rollout")
+        harness_roots = [Path(item["path"]) for item in rollout.get("harnesses", []) if isinstance(item, dict) and isinstance(item.get("path"), str)]
+        current_rollout = check_local_rollout(
+            target,
+            str(target["merge_commit"]),
+            source_commit,
+            harness_roots,
+            no_harnesses=rollout.get("harness_inventory") == "none",
+        )
+        if current_rollout.get("status") != "passed":
+            target["local_rollout"] = current_rollout
+            target["status"] = "local_sync_pending"
+            target["error"] = "; ".join(current_rollout.get("errors", [])[:5])
+            write_json(path, journal)
+            raise ToolkitError("local rollout changed or no longer validates; preserve the workspace and resume local rollout")
+        target["local_rollout"] = current_rollout
+    target["status"] = status
+    for key, value in receipts.items():
+        if value:
+            target[key] = value
+    if clear_error:
+        target.pop("error", None)
+    write_json(path, journal)
+    return {"source_commit": source_commit, "branch": branch, "status": status, "journal_path": str(path), "target": target}
+
+
+def reconciliation_journal_path(run_id: str) -> Path:
+    if not re.fullmatch(r"[0-9a-f]{32}", run_id):
+        raise ToolkitError("reconciliation run id must be the 32-character id returned by reconcile-all")
+    state_home = Path(os.environ.get("XDG_STATE_HOME", str(Path.home() / ".local" / "state"))).expanduser()
+    return state_home / "portable-agent-toolkit" / "reconcile-all" / f"{run_id}.json"
+
+
+def archive_workspace_run(kind: str, identifier: str, reason: str) -> Dict[str, Any]:
+    if not reason.strip():
+        raise ToolkitError("archiving a workspace run requires a reason")
+    if kind == "refresh-all":
+        if not re.fullmatch(r"[0-9a-fA-F]{40,64}", identifier):
+            raise ToolkitError("refresh-all archive identifier must be a full Git commit id")
+        source = refresh_all_journal_path(identifier)
+    elif kind == "reconcile-all":
+        source = reconciliation_journal_path(identifier)
+    else:
+        raise ToolkitError("workspace run kind must be refresh-all or reconcile-all")
+
+    archive_directory = source.parent / "archive"
+    archive_directory.mkdir(parents=True, exist_ok=True)
+
+    def journal_matches(path: Path) -> bool:
+        if path.is_symlink():
+            return False
+        try:
+            journal = load_json(path)
+        except ToolkitError:
+            return False
+        if kind == "refresh-all":
+            source_record = journal.get("source") if isinstance(journal.get("source"), dict) else {}
+            return source_record.get("commit") == identifier
+        return journal.get("run_id") == identifier
+
+    def finish_archive(staging: Path) -> Dict[str, Any]:
+        source_sha = sha256_file(staging)
+        archived = archive_directory / source.name
+        if archived.is_symlink() or (archived.exists() and sha256_file(archived) != source_sha):
+            archived = archive_directory / f"{source.stem}.{source_sha}{source.suffix}"
+        if archived.is_symlink():
+            raise ToolkitError(f"archive destination is a symlink; journal remains staged: {archived}")
+        if archived.exists():
+            if sha256_file(archived) != source_sha:
+                # Keep the staged bytes intact if even the full-content name
+                # collides; preserving the journal is safer than replacing history.
+                raise ToolkitError(f"an archive with different contents already exists: {archived}")
+            staging.unlink()
+        else:
+            os.replace(staging, archived)
+        if sha256_file(archived) != source_sha:
+            raise ToolkitError(f"archived workspace run did not verify: {archived}")
+
+        receipt_path = archive_directory / f"{archived.name}.archive.json"
+        if receipt_path.exists():
+            receipt = load_json(receipt_path)
+            if (
+                receipt.get("sha256") != source_sha
+                or receipt.get("kind") != kind
+                or receipt.get("identifier") != identifier
+            ):
+                raise ToolkitError(f"archive receipt does not match workspace run: {receipt_path}")
+        else:
+            receipt = {
+                "schema_version": 1,
+                "kind": kind,
+                "identifier": identifier,
+                "original_path": str(source),
+                "archived_path": str(archived),
+                "sha256": source_sha,
+                "reason": reason.strip(),
+                "archived_at": datetime.datetime.now(datetime.timezone.utc).isoformat().replace("+00:00", "Z"),
+            }
+            write_json(receipt_path, receipt)
+        return receipt
+
+    def find_prior_archive() -> Optional[Dict[str, Any]]:
+        recovered: List[Dict[str, Any]] = []
+        pending_paths = sorted(archive_directory.glob(f".{source.name}.*.pending"))
+        for pending in pending_paths:
+            if journal_matches(pending):
+                recovered.append(finish_archive(pending))
+        if recovered:
+            return recovered[-1]
+
+        receipts = sorted(archive_directory.glob("*.archive.json"), key=lambda path: path.stat().st_mtime_ns, reverse=True)
+        for candidate_receipt in receipts:
+            try:
+                prior = load_json(candidate_receipt)
+                archived_path = Path(str(prior.get("archived_path") or ""))
+                if (
+                    prior.get("kind") == kind
+                    and prior.get("identifier") == identifier
+                    and not archived_path.is_symlink()
+                    and archived_path.is_file()
+                    and sha256_file(archived_path) == prior.get("sha256")
+                ):
+                    return prior
+            except (ToolkitError, OSError):
+                continue
+        candidates = [archive_directory / source.name]
+        candidates.extend(sorted(archive_directory.glob(f"{source.stem}.*{source.suffix}")))
+        for archived_path in candidates:
+            if not archived_path.is_file() or archived_path.name.endswith(".archive.json") or not journal_matches(archived_path):
+                continue
+            source_sha = sha256_file(archived_path)
+            receipt_path = archive_directory / f"{archived_path.name}.archive.json"
+            receipt = {
+                "schema_version": 1,
+                "kind": kind,
+                "identifier": identifier,
+                "original_path": str(source),
+                "archived_path": str(archived_path),
+                "sha256": source_sha,
+                "reason": reason.strip(),
+                "archived_at": datetime.datetime.now(datetime.timezone.utc).isoformat().replace("+00:00", "Z"),
+            }
+            write_json(receipt_path, receipt)
+            return receipt
+        return None
+
+    if source.is_symlink():
+        raise ToolkitError(f"refusing to archive a symlinked workspace run journal: {source}")
+    if not source.is_file():
+        prior = find_prior_archive()
+        if prior is None:
+            raise ToolkitError(f"workspace run journal not found: {source}")
+        return {"archived": True, "already_archived": True, **prior}
+
+    # Move the journal atomically before verifying or writing its receipt. A
+    # concurrent atomic journal update can then recreate `source`; it cannot
+    # be deleted by this archival operation after the move.
+    staging = archive_directory / f".{source.name}.{uuid.uuid4().hex}.pending"
+    try:
+        os.replace(source, staging)
+    except FileNotFoundError:
+        prior = find_prior_archive()
+        if prior is None:
+            raise ToolkitError(f"workspace run journal not found: {source}")
+        return {"archived": True, "already_archived": True, **prior}
+    if staging.is_symlink():
+        if not source.exists():
+            os.replace(staging, source)
+        raise ToolkitError(f"refusing to archive a symlinked workspace run journal: {source}")
+
+    receipt = finish_archive(staging)
+    return {
+        "archived": True,
+        "already_archived": False,
+        "active_journal_preserved": source.is_file(),
+        **receipt,
+    }
+
+
+def reconciliation_refs(root: Path, previous: Dict[str, Any]) -> Tuple[Dict[str, Any], bool]:
+    """Observe cached refs only; the agent verifies ownership before fetching."""
+    listing = run_git(root, ["for-each-ref", "--format=%(refname)\t%(objectname)\t%(symref)", "refs/heads", "refs/remotes"])
+    refs: Dict[str, Any] = {}
+    changed = False
+    for line in listing.splitlines():
+        ref, sha, *symbolic = line.split("\t")
+        if symbolic and symbolic[0]:
+            continue
+        old = previous.get(ref, {})
+        if old.get("observed_sha") == sha and old.get("present", True):
+            entry = dict(old)
+        else:
+            entry = {"observed_sha": sha, "status": "unreviewed"}
+            if old:
+                entry["history"] = [*old.get("history", []), {key: value for key, value in old.items() if key != "history"}]
+            changed = True
+        entry["present"] = True
+        refs[ref] = entry
+    for ref, old in previous.items():
+        if ref not in refs:
+            refs[ref] = {**old, "present": False}
+            if old.get("present", True) and old.get("status") != "cleaned":
+                refs[ref]["status"] = "unreviewed"
+                changed = True
+    return refs, changed
+
+
+def plan_all_reconciliations(
+    toolkit_root: Path,
+    search_roots: Optional[Sequence[Path]],
+    replace_search_roots: bool,
+    max_depth: int,
+    dry_run: bool,
+    toolkit_repository: Optional[str],
+    run_id: Optional[str],
+    new_run: bool,
+) -> Dict[str, Any]:
+    root = git_root(toolkit_root)
+    if run_git(root, ["branch", "--show-current"]) != "main" or run_git(root, ["status", "--porcelain"]):
+        raise ToolkitError("all-repositories reconciliation requires a clean toolkit main checkout")
+    _, _, manifest = toolkit_configuration(root)
+    locator = sanitize_repository_locator(toolkit_repository) if toolkit_repository else safe_repository_locator(root, manifest)
+    if not locator:
+        raise ToolkitError("toolkit source has no origin for workspace discovery")
+    roots = workspace_search_roots(search_roots, replace_search_roots, existing_only=False)
+    scope = {"toolkit_repository": locator, "search_roots": [str(path) for path in roots], "max_depth": max_depth}
+    previous: Dict[str, Any] = {}
+    if run_id:
+        previous = load_json(reconciliation_journal_path(run_id))
+        if previous.get("scope") != scope:
+            raise ToolkitError("cannot change the registry or search scope while resuming reconciliation")
+    elif not new_run:
+        directory = reconciliation_journal_path("0" * 32).parent
+        candidates = []
+        if directory.is_dir():
+            for path in directory.glob("*.json"):
+                if not re.fullmatch(r"[0-9a-f]{32}", path.stem):
+                    continue
+                try:
+                    journal = load_json(path)
+                except ToolkitError:
+                    continue
+                if journal.get("run_id") != path.stem:
+                    continue
+                if journal.get("scope") == scope and not journal.get("complete"):
+                    candidates.append((path.stat().st_mtime_ns, journal))
+        if candidates:
+            previous = max(candidates, key=lambda item: item[0])[1]
+    run_id = str(previous["run_id"]) if previous else uuid.uuid4().hex
+    journal_path = reconciliation_journal_path(run_id)
+    snapshots = remote_workspace_snapshots(root, locator)
+    targets = match_workspace_targets(
+        snapshots,
+        local_git_worktrees(roots, max_depth),
+        {git_common_directory(root)},
+        load_workspace_checkout_preferences(),
+    )
+    if previous:
+        current_targets = {target["branch"]: target for target in targets}
+        targets = []
+        for old in previous["targets"]:
+            current = current_targets.get(old["branch"])
+            if current is None or current.get("identity") != old.get("identity"):
+                current = {"branch": old["branch"], "identity": old.get("identity"), "status": "unregistered"}
+            targets.append(current)
+
+    old_targets = {target["branch"]: target for target in previous.get("targets", [])}
+    for target in targets:
+        old = old_targets.get(target["branch"], {})
+        target["discovery_status"] = target["status"]
+        target["branches"] = old.get("branches", {})
+        for key in ("pr_url", "merge_commit", "target_sha", "reason", "error"):
+            if key in old:
+                target.setdefault(key, old[key])
+        if target["status"] != "ready":
+            if old:
+                target["resume_status"] = old.get("status")
+            continue
+        try:
+            branches, changed = reconciliation_refs(Path(target["local_path"]), target["branches"])
+            target["branches"] = branches
+            restored = old.get("discovery_status") != "ready"
+            target["status"] = "ready" if changed or restored else old.get("status", "ready")
+            if target["status"] == "complete":
+                rollout = old.get("local_rollout") if isinstance(old.get("local_rollout"), dict) else {}
+                if not target.get("target_sha") or rollout.get("status") != "passed" or rollout.get("target_sha") != target.get("target_sha"):
+                    target["status"] = "local_sync_pending"
+                    target["error"] = "previous completion has no verified local rollout; resume local rollout"
+        except ToolkitError as error:
+            target.update({"status": "blocked", "error": str(error)})
+    result = {
+        "schema_version": SCHEMA_VERSION,
+        "run_id": run_id,
+        "scope": scope,
+        "toolkit_commit": previous.get("toolkit_commit") or run_git(root, ["rev-parse", "HEAD"]),
+        "targets": targets,
+        "journal_path": str(journal_path),
+        "resuming": bool(previous),
+        "dry_run": dry_run,
+        "complete": all(target["status"] == "complete" for target in targets),
+    }
+    if not dry_run:
+        write_json(journal_path, result)
+    return result
+
+
+def update_reconciliation_journal(
+    run_id: str,
+    workspace_branch: str,
+    status: str,
+    ref: Optional[str],
+    observed_sha: Optional[str],
+    receipts: Dict[str, Optional[str]],
+    clear_error: bool,
+) -> Dict[str, Any]:
+    path = reconciliation_journal_path(run_id)
+    journal = load_json(path)
+    target = next((item for item in journal["targets"] if item["branch"] == workspace_branch), None)
+    if target is None:
+        raise ToolkitError("workspace is not part of this reconciliation run")
+    entry = target
+    if ref:
+        entry = target["branches"].get(ref)
+        if entry is None or not observed_sha or entry.get("observed_sha") != observed_sha:
+            raise ToolkitError("ref or observed SHA does not match the inventory; re-observe before recording progress")
+        if status not in {"in_progress", "pr_open", "merged", "cleaned", "preserved", "blocked"}:
+            raise ToolkitError("invalid branch reconciliation status")
+        if status in {"preserved", "blocked"} and not (receipts.get("reason") or receipts.get("error")):
+            raise ToolkitError("preserved or blocked branches require a reason or error")
+    else:
+        if observed_sha or status not in {"in_progress", "local_sync_pending", "complete", "blocked"}:
+            raise ToolkitError("invalid workspace status or observed SHA without a ref")
+        if status == "complete" and (
+            target["discovery_status"] != "ready"
+            or any(item["status"] not in {"cleaned", "preserved"} for item in target["branches"].values())
+        ):
+            raise ToolkitError("cannot complete a workspace with unavailable discovery or unaccounted branches")
+        if status == "complete":
+            rollout = target.get("local_rollout") if isinstance(target.get("local_rollout"), dict) else {}
+            if not target.get("target_sha") or rollout.get("status") != "passed" or rollout.get("target_sha") != target.get("target_sha"):
+                raise ToolkitError("cannot complete a workspace before verified local rollout")
+            harness_roots = [Path(item["path"]) for item in rollout.get("harnesses", []) if isinstance(item, dict) and isinstance(item.get("path"), str)]
+            current_rollout = check_local_rollout(
+                target,
+                str(target["target_sha"]),
+                None,
+                harness_roots,
+                no_harnesses=rollout.get("harness_inventory") == "none",
+            )
+            if current_rollout.get("status") != "passed":
+                target["local_rollout"] = current_rollout
+                target["status"] = "blocked"
+                target["error"] = "; ".join(current_rollout.get("errors", [])[:5])
+                journal["complete"] = False
+                write_json(path, journal)
+                raise ToolkitError("local rollout changed or no longer validates; preserve the workspace and resume local rollout")
+            target["local_rollout"] = current_rollout
+    entry["status"] = status
+    for key, value in receipts.items():
+        if value:
+            entry[key] = value
+    if clear_error:
+        entry.pop("error", None)
+    if ref:
+        target["status"] = "in_progress"
+    journal["complete"] = all(item["status"] == "complete" for item in journal["targets"])
+    write_json(path, journal)
+    return {"run_id": run_id, "journal_path": str(path), "target": target}
+
+
 def resolve_snapshot_repository(root: Path, explicit: Optional[str]) -> str:
     if explicit:
         return sanitize_repository_locator(explicit)
@@ -2659,13 +4283,368 @@ def snapshot_repository(target: Path, toolkit_repository: Optional[str], push: b
         }
 
 
+UPSTREAM_DECISION_PREFIXES = ("adopt", "accept")
+UPSTREAM_DECISIONS = {"exclude", "remove-upstream"}
+
+
+def is_tailoring_decision(decision: str) -> bool:
+    """Workspaces record tailoring in free-form words; only adoption and removal follow upstream."""
+    return not decision.startswith(UPSTREAM_DECISION_PREFIXES) and decision not in UPSTREAM_DECISIONS
+
+
+@contextlib.contextmanager
+def read_only_git() -> Iterator[None]:
+    """Stop `git status` from refreshing index files while status inspects checkouts."""
+    previous = os.environ.get("GIT_OPTIONAL_LOCKS")
+    os.environ["GIT_OPTIONAL_LOCKS"] = "0"
+    try:
+        yield
+    finally:
+        if previous is None:
+            os.environ.pop("GIT_OPTIONAL_LOCKS", None)
+        else:
+            os.environ["GIT_OPTIONAL_LOCKS"] = previous
+
+
+def latest_refresh_all_journal(toolkit_repository: Dict[str, Any]) -> Optional[Tuple[Path, Dict[str, Any]]]:
+    """Return the most recently written refresh-all journal for this toolkit."""
+    directory = refresh_all_journal_path("0" * 40).parent
+    if not directory.is_dir():
+        return None
+    candidates: List[Tuple[int, Path, Dict[str, Any]]] = []
+    for path in directory.glob("*.json"):
+        if not re.fullmatch(r"[0-9a-fA-F]{40,64}", path.stem) or path.is_symlink():
+            continue
+        try:
+            journal = load_json(path)
+        except ToolkitError:
+            continue
+        source = journal.get("source") if isinstance(journal.get("source"), dict) else {}
+        repository = source.get("repository") if isinstance(source.get("repository"), dict) else {}
+        if not isinstance(journal.get("targets"), list):
+            continue
+        if any(repository.get(key) != toolkit_repository.get(key) for key in ("host", "owner", "name")):
+            continue
+        candidates.append((path.stat().st_mtime_ns, path, journal))
+    if not candidates:
+        return None
+    _, path, journal = max(candidates, key=lambda item: item[0])
+    return path, journal
+
+
+def toolkit_hashes_at(toolkit_root: Path, commit: str, cache: Dict[str, Optional[Dict[Tuple[str, str], str]]]) -> Optional[Dict[Tuple[str, str], str]]:
+    """Hash each managed toolkit component exactly as refresh does, at one commit."""
+    if commit not in cache:
+        try:
+            with tempfile.TemporaryDirectory(prefix="portable-agent-toolkit-status-") as temporary:
+                exported = Path(temporary) / "toolkit"
+                export_toolkit_revision(toolkit_root, commit, exported)
+                entries, _ = refresh_source_entries(exported)
+                cache[commit] = {key: str(entry["hash"]) for key, entry in entries.items()}
+        except (OSError, ToolkitError):
+            cache[commit] = None
+    return cache[commit]
+
+
+def recorded_tailoring_decision(
+    state: Dict[str, Any],
+    plan: Dict[str, Any],
+    kind: str,
+    name: str,
+    target: str,
+) -> Optional[Dict[str, Any]]:
+    """Find the latest decision recorded for one managed entry."""
+    lifecycle = state.get("lifecycle") if isinstance(state.get("lifecycle"), dict) else {}
+    records: List[Dict[str, Any]] = []
+    for field in ("decisions", "conflicts"):
+        values = lifecycle.get(field)
+        if isinstance(values, list):
+            records.extend(
+                item for item in values
+                if isinstance(item, dict) and (item.get("name") == name or item.get("target") == target)
+            )
+    source = state.get("source") if isinstance(state.get("source"), dict) else {}
+    candidate = plan.get("candidate_source") if isinstance(plan.get("candidate_source"), dict) else {}
+    # The refresh plan that produced the adopted commit holds its newest review decisions.
+    if candidate.get("commit") and candidate.get("commit") == source.get("commit") and isinstance(plan.get("entries"), list):
+        records.extend(
+            item for item in plan["entries"]
+            if isinstance(item, dict) and item.get("kind") == kind and item.get("name") == name
+        )
+    selected = None
+    for record in records:
+        if isinstance(record.get("decision"), str) and record["decision"].strip():
+            selected = record
+    if selected is None:
+        return None
+    decision = selected["decision"].strip()
+    return {"decision": decision, "tailoring": is_tailoring_decision(decision)}
+
+
+def workspace_local_changes(root: Path, state: Dict[str, Any], upstream: Dict[Tuple[str, str], str]) -> List[Dict[str, Any]]:
+    """List managed files that differ from the toolkit at the adopted commit."""
+    try:
+        plan = load_json(root / REFRESH_PLAN_PATH) if (root / REFRESH_PLAN_PATH).is_file() else {}
+    except ToolkitError:
+        plan = {}
+    changes: List[Dict[str, Any]] = []
+    managed = state.get("managed") if isinstance(state.get("managed"), list) else []
+    for item in managed:
+        if not isinstance(item, dict) or item.get("status") == "excluded" or item.get("source") == "workspace-local":
+            continue
+        kind, name, target = item.get("kind"), item.get("name"), item.get("target")
+        if not all(isinstance(value, str) for value in (kind, name, target)):
+            continue
+        upstream_hash = upstream.get((kind, name))
+        if upstream_hash is None:
+            continue
+        try:
+            live_hash = hash_materialized_entry(root, item)
+        except ToolkitError:
+            live_hash = None
+        if live_hash == upstream_hash:
+            continue
+        decision = recorded_tailoring_decision(state, plan, kind, name, target)
+        explained = bool(decision and decision["tailoring"])
+        changes.append({
+            "kind": kind,
+            "name": name,
+            "target": target,
+            "live_sha256": live_hash,
+            "upstream_sha256": upstream_hash,
+            "decision": decision["decision"] if decision else None,
+            "explained": explained,
+        })
+    return changes
+
+
+def changed_file_count(root: Path) -> int:
+    output = run_git(root, ["status", "--porcelain=v1", "--untracked-files=all"])
+    return len([line for line in output.splitlines() if line.strip()])
+
+
+def workspace_status(
+    toolkit_target: Path,
+    search_roots: Optional[Sequence[Path]],
+    replace_search_roots: bool,
+    max_depth: int,
+    fetch: bool,
+) -> Dict[str, Any]:
+    """Report how far each registered workspace is from toolkit main. Read-only unless fetch is set."""
+    root = git_root(toolkit_target)
+    toolkit_configuration(root)
+    toolkit_identity = repository_identity(root)
+    toolkit_repository = {key: toolkit_identity[key] for key in ("host", "owner", "name")}
+    if fetch:
+        fetched = subprocess.run(
+            [
+                "git", "-C", str(root), "fetch", "--quiet", "--no-tags", "--prune", "origin",
+                "+refs/heads/main:refs/remotes/origin/main",
+                "+refs/heads/workspace/*:refs/remotes/origin/workspace/*",
+            ],
+            check=False,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+        )
+        if fetched.returncode != 0:
+            raise ToolkitError("could not fetch toolkit main and workspace branches from origin")
+
+    with read_only_git():
+        main_ref = next(
+            (ref for ref in ("refs/remotes/origin/main", "refs/heads/main") if run_git(root, ["rev-parse", "--verify", "--quiet", ref], check=False)),
+            None,
+        )
+        if main_ref is None:
+            raise ToolkitError("toolkit has no main or origin/main ref")
+        main_commit = run_git(root, ["rev-parse", main_ref])
+        snapshots = local_workspace_snapshots(root)
+        roots = workspace_search_roots(search_roots, replace_search_roots)
+        targets = match_workspace_targets(
+            snapshots,
+            local_git_worktrees(roots, max_depth),
+            {git_common_directory(root)},
+            load_workspace_checkout_preferences(),
+        )
+        latest = latest_refresh_all_journal(toolkit_repository)
+        journal_path, journal = latest if latest else (None, {})
+        journal_targets = {
+            str(item["branch"]): item
+            for item in journal.get("targets", [])
+            if isinstance(item, dict) and isinstance(item.get("branch"), str)
+        }
+        registered = {str(item.get("branch")) for item in targets}
+        for branch, item in sorted(journal_targets.items()):
+            # A workspace the last batch run tracked stays visible even if its
+            # registry ref is not cached locally, so blocked work is not hidden.
+            if branch not in registered:
+                targets.append({
+                    "branch": branch,
+                    "identity": item.get("identity"),
+                    "status": "journal-only",
+                    "canonical_path": item.get("local_path"),
+                })
+
+        hash_cache: Dict[str, Optional[Dict[Tuple[str, str], str]]] = {}
+        workspaces: List[Dict[str, Any]] = []
+        for target in sorted(targets, key=lambda item: str(item.get("branch"))):
+            branch = str(target.get("branch"))
+            identity = target.get("identity") if isinstance(target.get("identity"), dict) else {}
+            journal_target = journal_targets.get(branch)
+            path_value = target.get("local_path") or target.get("canonical_path") or (journal_target or {}).get("local_path")
+            path = Path(str(path_value)) if path_value else None
+            row: Dict[str, Any] = {
+                "branch": branch,
+                "repository": "/".join(str(identity.get(key)) for key in ("owner", "name")) if identity else branch.removeprefix("workspace/"),
+                "registry": "journal-only" if target.get("status") == "journal-only" else ("invalid" if target.get("status") == "invalid" else "snapshot-branch"),
+                "match": target.get("status"),
+                "path": str(path) if path else None,
+                "exists": bool(path and path.is_dir()),
+                "adopted_commit": None,
+                "adopted_version": None,
+                "behind": None,
+                "journal": None,
+                "changed_files": None,
+                "local_changes": [],
+                "unexplained_changes": 0,
+                "notes": [],
+            }
+            if target.get("status") == "invalid":
+                row["notes"].append(str(target.get("reason", "invalid registry entry")))
+            if target.get("status") == "ambiguous":
+                row["notes"].append("ambiguous local checkouts: " + ", ".join(target.get("local_paths", [])) + "; choose one with checkout-path set")
+            if target.get("status") == "missing" and target.get("reason"):
+                row["notes"].append(str(target["reason"]))
+            if journal_target:
+                row["journal"] = {
+                    "source_commit": (journal.get("source") or {}).get("commit") if isinstance(journal.get("source"), dict) else None,
+                    "status": journal_target.get("status"),
+                    "error": journal_target.get("error"),
+                }
+            checkout = None
+            if row["exists"] and path is not None:
+                try:
+                    checkout = git_root(path)
+                    if repository_identity_matches(identity, repository_identity(checkout)) or not identity:
+                        row["changed_files"] = changed_file_count(checkout)
+                    else:
+                        row["notes"].append("checkout identity does not match the registered repository")
+                        checkout = None
+                except ToolkitError as exc:
+                    row["notes"].append(f"cannot read checkout: {exc}")
+                    checkout = None
+            if checkout is not None:
+                try:
+                    state = load_json(checkout / STATE_PATH)
+                except ToolkitError:
+                    state = {}
+                    row["notes"].append("no readable toolkit state; workspace is not onboarded here")
+                source = state.get("source") if isinstance(state.get("source"), dict) else {}
+                adopted = source.get("commit") if isinstance(source.get("commit"), str) else None
+                row["adopted_commit"] = adopted
+                row["adopted_version"] = source.get("version")
+                refresh_state = state.get("refresh") if isinstance(state.get("refresh"), dict) else {}
+                if refresh_state.get("status") == "needs-agent-review":
+                    row["notes"].append("a staged toolkit refresh is awaiting review")
+                if adopted and re.fullmatch(r"[0-9a-fA-F]{40,64}", adopted):
+                    present = subprocess.run(
+                        ["git", "-C", str(root), "cat-file", "-e", f"{adopted}^{{commit}}"],
+                        check=False,
+                        stdout=subprocess.DEVNULL,
+                        stderr=subprocess.DEVNULL,
+                    )
+                    if present.returncode == 0:
+                        row["behind"] = int(run_git(root, ["rev-list", "--count", f"{adopted}..{main_commit}"]))
+                        upstream = toolkit_hashes_at(root, adopted, hash_cache)
+                        if upstream is None:
+                            row["notes"].append("cannot reconstruct toolkit files at the adopted commit")
+                        else:
+                            row["local_changes"] = workspace_local_changes(checkout, state, upstream)
+                            row["unexplained_changes"] = sum(1 for item in row["local_changes"] if not item["explained"])
+                    else:
+                        row["notes"].append("adopted commit is not in the local toolkit clone; rerun with --fetch")
+            workspaces.append(row)
+
+    return {
+        "schema_version": SCHEMA_VERSION,
+        "toolkit": {
+            "path": str(root),
+            "repository": toolkit_repository,
+            "main_ref": main_ref,
+            "main_commit": main_commit,
+            "fetched": fetch,
+        },
+        "journal_path": str(journal_path) if journal_path else None,
+        "search_roots": [str(path) for path in roots],
+        "workspaces": workspaces,
+    }
+
+
+def run_label(journal: Dict[str, Any], adopted: Optional[str]) -> str:
+    """The latest refresh-all state, marked when that run targeted a different commit.
+
+    A workspace refreshed since that run (for example by a single-workspace refresh)
+    would otherwise read as blocked even though it is current.
+    """
+    status = journal.get("status")
+    if not status:
+        return "-"
+    source = journal.get("source_commit")
+    if source and adopted and not adopted.startswith(source[:7]) and not source.startswith(adopted[:7]):
+        return f"{status} @{source[:7]}"
+    return str(status)
+
+
+def format_workspace_status(report: Dict[str, Any]) -> str:
+    headers = ("WORKSPACE", "ADOPTED", "BEHIND", "RUN", "DIRTY", "NOT UPSTREAMED", "PATH")
+    rows: List[Tuple[str, ...]] = []
+    details: List[str] = []
+    for item in report["workspaces"]:
+        journal = item.get("journal") or {}
+        adopted = item.get("adopted_commit")
+        path = item.get("path") or "-"
+        if item.get("path") and not item.get("exists"):
+            path += " (missing)"
+        rows.append((
+            item["repository"],
+            adopted[:7] if adopted else "-",
+            str(item["behind"]) if item.get("behind") is not None else "-",
+            run_label(journal, adopted),
+            str(item["changed_files"]) if item.get("changed_files") is not None else "-",
+            str(item["unexplained_changes"]),
+            path,
+        ))
+        if journal.get("status") not in (None, "complete") and journal.get("error"):
+            details.append(f"{item['repository']}: {run_label(journal, adopted)}: {journal['error']}")
+        for change in item.get("local_changes", []):
+            if not change["explained"]:
+                decision = f"recorded decision {change['decision']}" if change.get("decision") else "no tailoring decision"
+                details.append(f"{item['repository']}: not upstreamed: {change['kind']} {change['target']} ({decision})")
+        for note in item.get("notes", []):
+            details.append(f"{item['repository']}: {note}")
+    widths = [max(len(header), *(len(row[index]) for row in rows)) if rows else len(header) for index, header in enumerate(headers)]
+    lines = ["  ".join(value.ljust(widths[index]) for index, value in enumerate(headers)).rstrip()]
+    lines.extend("  ".join(value.ljust(widths[index]) for index, value in enumerate(row)).rstrip() for row in rows)
+    toolkit = report["toolkit"]
+    lines.append("")
+    lines.append(
+        f"toolkit main {toolkit['main_commit'][:7]} ({toolkit['main_ref']}); registry read from local refs"
+        + ("" if toolkit["fetched"] else "; pass --fetch to update")
+    )
+    lines.append(f"latest refresh-all journal: {report['journal_path'] or 'none'}")
+    if details:
+        lines.append("")
+        lines.extend(details)
+    return "\n".join(lines) + "\n"
+
+
 def print_json(value: Dict[str, Any]) -> None:
     json.dump(value, sys.stdout, indent=2, sort_keys=True)
     sys.stdout.write("\n")
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description="Repository-scoped portable agent toolkit helper")
+    parser = argparse.ArgumentParser(description="Portable agent toolkit workspace helper")
     subparsers = parser.add_subparsers(dest="command", required=True)
 
     inventory_parser = subparsers.add_parser("inventory", help="inventory agent instructions and skills")
@@ -2675,6 +4654,17 @@ def build_parser() -> argparse.ArgumentParser:
     init_parser.add_argument("target", nargs="?", default=".")
     init_parser.add_argument("--toolkit-root", default=str(Path(__file__).resolve().parent.parent))
     init_parser.add_argument("--dry-run", action="store_true")
+
+    checkout_parser = subparsers.add_parser(
+        "checkout-path",
+        help="view or change the machine-local canonical checkout for a workspace",
+    )
+    checkout_modes = checkout_parser.add_subparsers(dest="checkout_action", required=True)
+    checkout_set = checkout_modes.add_parser("set", help="select a repository checkout as canonical")
+    checkout_set.add_argument("path", type=Path)
+    checkout_remove = checkout_modes.add_parser("remove", help="clear a canonical checkout preference")
+    checkout_remove.add_argument("workspace_branch")
+    checkout_modes.add_parser("list", help="show saved canonical checkout preferences")
 
     validate_parser = subparsers.add_parser("validate", help="validate initialized workspace topology")
     validate_parser.add_argument("target", nargs="?", default=".")
@@ -2690,6 +4680,92 @@ def build_parser() -> argparse.ArgumentParser:
     snapshot_parser.add_argument("target", nargs="?", default=".")
     snapshot_parser.add_argument("--toolkit-repo")
     snapshot_parser.add_argument("--push", action="store_true")
+
+    refresh_all_parser = subparsers.add_parser(
+        "refresh-all",
+        help="discover workspace snapshot branches and matching local repositories",
+    )
+    refresh_all_parser.add_argument("target", nargs="?", default=".")
+    refresh_all_parser.add_argument("--search-root", action="append", type=Path, help="add a local repository discovery root; may be repeated")
+    refresh_all_parser.add_argument("--replace-search-roots", action="store_true", help="search only roots supplied with --search-root")
+    refresh_all_parser.add_argument("--toolkit-repo", help="select the toolkit repository for workspace discovery and snapshot publication")
+    refresh_all_parser.add_argument("--max-depth", type=int, default=8, help="maximum directory depth under each search root")
+    refresh_all_parser.add_argument("--dry-run", action="store_true", help="discover targets without writing the local run journal")
+
+    status_parser = subparsers.add_parser(
+        "status",
+        help="show how far each registered workspace is behind toolkit main without changing anything",
+    )
+    status_parser.add_argument("target", nargs="?", default=".", help="toolkit checkout")
+    status_parser.add_argument("--fetch", action="store_true", help="fetch toolkit main and workspace branches from origin first")
+    status_parser.add_argument("--json", action="store_true", help="print the full report as JSON")
+    status_parser.add_argument("--search-root", action="append", type=Path, help="add a local repository discovery root; may be repeated")
+    status_parser.add_argument("--replace-search-roots", action="store_true", help="search only roots supplied with --search-root")
+    status_parser.add_argument("--max-depth", type=int, default=8, help="maximum directory depth under each search root")
+
+    refresh_all_mark_parser = subparsers.add_parser(
+        "refresh-all-mark",
+        help="record progress and receipts for one workspace in an all-workspaces refresh",
+    )
+    refresh_all_mark_parser.add_argument("source_commit")
+    refresh_all_mark_parser.add_argument("workspace_branch")
+    refresh_all_mark_parser.add_argument("status", choices=("discovered", "in_progress", "pr_open", "merged", "snapshot_pending", "local_sync_pending", "complete", "blocked"))
+    refresh_all_mark_parser.add_argument("--pr-branch")
+    refresh_all_mark_parser.add_argument("--pr-url")
+    refresh_all_mark_parser.add_argument("--merge-commit")
+    refresh_all_mark_parser.add_argument("--snapshot-branch")
+    refresh_all_mark_parser.add_argument("--snapshot-commit")
+    refresh_all_mark_parser.add_argument("--error")
+    refresh_all_mark_parser.add_argument("--clear-error", action="store_true")
+
+    rollout_parser = subparsers.add_parser(
+        "local-rollout-check",
+        help="verify every discovered local checkout and linked harness after a merge",
+    )
+    rollout_parser.add_argument("kind", choices=("refresh-all", "reconcile-all"))
+    rollout_parser.add_argument("identifier", help="toolkit source commit or reconciliation run id")
+    rollout_parser.add_argument("workspace_branch")
+    rollout_parser.add_argument("--target-sha", help="verified default-branch commit for reconciliation runs")
+    rollout_parser.add_argument("--source-root", type=Path, help="checkout at the verified merged/default-branch commit")
+    rollout_parser.add_argument("--allow-checkout", action="append", type=Path, default=[],
+                                help="checkout explicitly inspected and selected for update; may be repeated")
+    harness_inventory = rollout_parser.add_mutually_exclusive_group()
+    harness_inventory.add_argument("--harness-root", action="append", type=Path, default=[], help="linked harness root to verify; may be repeated")
+    harness_inventory.add_argument("--no-harnesses", action="store_true", help="confirm that no separate parent harness applies")
+
+    reconcile_parser = subparsers.add_parser("reconcile-all", help="inventory registered repos and create or resume branch reconciliation receipts")
+    reconcile_parser.add_argument("target", nargs="?", default=".")
+    reconcile_parser.add_argument("--toolkit-repo")
+    reconcile_parser.add_argument("--search-root", action="append", type=Path)
+    reconcile_parser.add_argument("--replace-search-roots", action="store_true")
+    reconcile_parser.add_argument("--max-depth", type=int, default=8)
+    reconcile_parser.add_argument("--dry-run", action="store_true")
+    reconcile_mode = reconcile_parser.add_mutually_exclusive_group()
+    reconcile_mode.add_argument("--run-id", help="resume the named run with the same registry and search scope")
+    reconcile_mode.add_argument("--new-run", action="store_true", help="start a fresh inventory instead of resuming an incomplete run")
+
+    reconcile_mark = subparsers.add_parser("reconcile-all-mark", help="record workspace or branch progress in a reconciliation run")
+    reconcile_mark.add_argument("run_id")
+    reconcile_mark.add_argument("workspace_branch")
+    reconcile_mark.add_argument("status", choices=("in_progress", "local_sync_pending", "pr_open", "merged", "cleaned", "preserved", "blocked", "complete"))
+    reconcile_mark.add_argument("--ref", help="full inventory ref; omit to mark the workspace")
+    reconcile_mark.add_argument("--observed-sha", help="required with --ref; must match the current journal observation")
+    for receipt in ("pr-url", "merge-commit", "target-sha", "reason", "error"):
+        reconcile_mark.add_argument(f"--{receipt}")
+    reconcile_mark.add_argument("--clear-error", action="store_true")
+
+    archive_run = subparsers.add_parser("archive-run", help="preserve a superseded batch journal outside automatic resume")
+    archive_run.add_argument("kind", choices=("refresh-all", "reconcile-all"))
+    archive_run.add_argument("identifier", help="source commit for refresh-all or run id for reconcile-all")
+    archive_run.add_argument("--reason", required=True)
+
+    sync_parser = subparsers.add_parser(
+        "sync-agent-config",
+        help="copy approved agent configuration into a checkout without merging application changes",
+    )
+    sync_parser.add_argument("source", type=Path, help="checkout at the approved source commit")
+    sync_parser.add_argument("destination", type=Path, help="checkout whose agent setup should be synchronized")
+    sync_parser.add_argument("--source-sha", help="approved source commit; defaults to source HEAD")
 
     doctor_x_parser = subparsers.add_parser(
         "doctor-x",
@@ -2711,6 +4787,24 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     parser = build_parser()
     arguments = parser.parse_args(argv)
     try:
+        if arguments.command == "archive-run":
+            print_json(archive_workspace_run(arguments.kind, arguments.identifier, arguments.reason))
+            return 0
+        if arguments.command == "sync-agent-config":
+            source = git_root(arguments.source)
+            print_json(sync_agent_configuration(source, arguments.destination, arguments.source_sha or run_git(source, ["rev-parse", "HEAD"])))
+            return 0
+        if arguments.command == "checkout-path":
+            if arguments.checkout_action == "set":
+                print_json(set_workspace_checkout_preference(arguments.path))
+            elif arguments.checkout_action == "remove":
+                print_json(remove_workspace_checkout_preference(arguments.workspace_branch))
+            else:
+                print_json({
+                    "path": str(workspace_checkout_preferences_path()),
+                    "checkouts": load_workspace_checkout_preferences(),
+                })
+            return 0
         if arguments.command == "inventory":
             print_json(inventory_repository(Path(arguments.target)))
             return 0
@@ -2732,6 +4826,69 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             return 0
         if arguments.command == "snapshot":
             print_json(snapshot_repository(Path(arguments.target), arguments.toolkit_repo, arguments.push))
+            return 0
+        if arguments.command == "refresh-all":
+            if arguments.max_depth < 1 or arguments.max_depth > 32:
+                raise ToolkitError("all-workspaces search depth must be between 1 and 32")
+            print_json(plan_all_refreshes(Path(arguments.target), arguments.search_root, arguments.replace_search_roots, arguments.max_depth, arguments.dry_run, arguments.toolkit_repo))
+            return 0
+        if arguments.command == "status":
+            if arguments.max_depth < 1 or arguments.max_depth > 32:
+                raise ToolkitError("status search depth must be between 1 and 32")
+            report = workspace_status(
+                Path(arguments.target), arguments.search_root, arguments.replace_search_roots,
+                arguments.max_depth, arguments.fetch,
+            )
+            if arguments.json:
+                print_json(report)
+            else:
+                sys.stdout.write(format_workspace_status(report))
+            return 0
+        if arguments.command == "refresh-all-mark":
+            receipts = {
+                "pr_branch": arguments.pr_branch,
+                "pr_url": arguments.pr_url,
+                "merge_commit": arguments.merge_commit,
+                "snapshot_branch": arguments.snapshot_branch,
+                "snapshot_commit": arguments.snapshot_commit,
+                "error": arguments.error,
+            }
+            result = update_refresh_all_journal(
+                arguments.source_commit,
+                arguments.workspace_branch,
+                arguments.status,
+                receipts,
+                arguments.clear_error,
+            )
+            print_json(result)
+            return 0
+        if arguments.command == "local-rollout-check":
+            result = local_rollout_check(
+                arguments.kind,
+                arguments.identifier,
+                arguments.workspace_branch,
+                arguments.target_sha,
+                arguments.source_root,
+                arguments.harness_root,
+                arguments.no_harnesses,
+                arguments.allow_checkout,
+            )
+            print_json(result)
+            return 0 if result["local_rollout"]["status"] == "passed" else 1
+        if arguments.command == "reconcile-all":
+            if arguments.max_depth < 1 or arguments.max_depth > 32:
+                raise ToolkitError("all-repositories search depth must be between 1 and 32")
+            print_json(plan_all_reconciliations(
+                Path(arguments.target), arguments.search_root, arguments.replace_search_roots,
+                arguments.max_depth, arguments.dry_run, arguments.toolkit_repo, arguments.run_id, arguments.new_run,
+            ))
+            return 0
+        if arguments.command == "reconcile-all-mark":
+            receipts = {key: getattr(arguments, key) for key in ("pr_url", "merge_commit", "target_sha", "reason", "error")}
+            print_json(update_reconciliation_journal(
+                arguments.run_id, arguments.workspace_branch, arguments.status,
+                arguments.ref, arguments.observed_sha, receipts, arguments.clear_error,
+            ))
             return 0
         if arguments.command == "doctor-x":
             result = doctor_x()

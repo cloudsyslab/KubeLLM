@@ -1,4 +1,4 @@
-# Technical editor and humanizer
+# Technical editor
 
 ## Contents
 
@@ -9,15 +9,15 @@
 5. [Genre boundaries](#genre-boundaries)
 6. [Preservation contract](#preservation-contract)
 7. [Editing workflow](#editing-workflow)
-8. [Humanization patterns](#humanization-patterns)
+8. [Prose style](#prose-style)
 9. [Authority and proposals](#authority-and-proposals)
 10. [Output and verification](#output-and-verification)
 
 ## Editorial objective
 
-Make the document sound like it was written and revised by a technically credible human who understands the product, architecture, evidence, and consequences. Improve more than surface fluency: strengthen context, causal reasoning, significance, transitions, evidence placement, and expert readability.
+Make the document clear to readers who need its product, architecture, evidence, and consequences. Improve context, causal reasoning, significance, transitions, evidence placement, and technical readability.
 
-Do not “humanize” by making the artifact casual, simplistic, chatty, or less exact. Do not rewrite merely to create activity. A clear, intentional sentence may remain unchanged.
+Keep the artifact exact and appropriately formal. Do not rewrite merely to create activity. Prose that already follows the style and technical requirements may remain unchanged.
 
 A full pass must still earn its name. When the artifact already contains concrete facts that can replace a vague summary or significance claim, synthesize those facts into the prose. Do not leave “important,” “key component,” “robust,” “reliable at scale,” or similar filler merely because replacing it requires reading across sections. If the artifact provides no defensible basis, remove the claim or make the missing rationale a substantive proposal.
 
@@ -230,7 +230,7 @@ Keep current, in-flight, proposed, deferred, approved, shipped, and unknown stat
 
 ### Pass 1: Snapshot
 
-Record the protected ledger and the document’s genre, intended audience, decision spine, source-of-truth boundaries, and authorial stance. Note deliberate quirks that should remain, including intentional punctuation.
+Record the protected ledger and the document’s genre, intended audience, decision spine, source-of-truth boundaries, and authorial stance. Note deliberate wording and tone that carry meaning.
 
 ### Pass 2: Diagnose
 
@@ -271,46 +271,9 @@ python3 "/absolute/path/to/writing-session/scripts/check_preservation.py" before
 
 The checker flags BCP-14 sentences, ordinary logical-scope lines, fenced/inline code, links, identifiers, numeric values/units, headings, ordered lists, and table structure. Exit `1` means drift needs review, not that the edit is automatically wrong. Never auto-revert from this signal.
 
-## Humanization patterns
+## Prose style
 
-Humanization should make the writing more natural and authored while preserving expert density.
-
-### Prefer
-
-- specific nouns and verbs over abstract management language;
-- known actors and real actions over nominalizations;
-- varied sentence and paragraph length driven by the argument;
-- natural transitions that name the relationship between ideas;
-- concrete examples after an exact rule, not instead of it;
-- a clear point of view supported by reasons;
-- occasional intentional emphasis or punctuation when it fits the author;
-- compact tables/lists where comparison or referenceability matters;
-- prose where rationale and consequence need a causal thread.
-
-### Repair
-
-- generic openings that delay the actual problem;
-- “serves to provide an overview,” “it should be noted,” “is important,” “key component,” “robust,” “scalable,” “reliable,” and similar claims when the nearby mechanism or measurement is absent;
-- paraphrases that preserve the aura of an unsupported claim—such as changing “scalable” to “as demand grows”—instead of removing it or defining the evidence needed;
-- repeated conclusion-first summaries with no new function;
-- stock transitions such as “Additionally,” “Furthermore,” or “It is important to note” when the logical relationship can be named;
-- AI-shaped symmetry: identical paragraph lengths, obligatory three-item lists, repeated “not only…but also,” or a conclusion that restates every heading;
-- claims of significance that do not say who or what is affected;
-- strings of terse bullets that name mechanisms but omit criteria or consequence;
-- jargon clusters that hide ownership or behavior;
-- meta-prose about what the section “will discuss.”
-
-### Never impose
-
-- a universal active-voice rule;
-- mandatory second person;
-- sentence- or paragraph-length quotas;
-- a target percentage reduction;
-- a ban on em dashes, semicolons, parentheses, or other intentional punctuation;
-- automatic list-to-prose conversion;
-- artificial anecdotes, opinions, emotion, or personality;
-- a generic “human voice” that displaces the author’s voice;
-- simplification that removes caveats, evidence, or technical detail.
+Apply [`$unslop`](../../unslop/SKILL.md) and its [numbered rules](../../unslop/references/rules.md) while drafting and editing prose. This guide owns technical reasoning, source integrity, semantic preservation, and artifact structure. Keep those contracts intact as the prose follows the user's default style.
 
 ## Authority and proposals
 

@@ -1,13 +1,13 @@
 ---
 name: build-from-plan
-description: "Execute an understood plan in an isolated feature worktree, validate it, create coherent commits, and publish a draft pull request. Use after planning when the user asks to build or carry out the work. After grilling, require a fresh explicit $build-from-plan invocation."
+description: "Execute an understood plan in an isolated feature worktree, validate and commit it, publish a draft pull request, then reconcile that workline through eligible merge and cleanup. Use after planning when the user asks to build or carry out the work. After grilling, require a fresh explicit $build-from-plan invocation."
 ---
 
 # Build From Plan
 
 ## Purpose
 
-Turn an understood plan into a complete, reviewable feature branch and draft pull request. Own the workline from isolation through implementation, validation, coherent commits, and publication. Re-enter collaborative reasoning only when continuing would materially change the shared product or engineering story.
+Turn an understood plan into a complete, reviewable feature workline and carry it through eligible integration. Own the workline from isolation through implementation, validation, coherent commits, draft-PR publication, focused reconciliation, and safe cleanup. Re-enter collaborative reasoning only when continuing would materially change the shared product or engineering story.
 
 Treat this as the post-plan stage of the workflow:
 
@@ -61,7 +61,9 @@ Do not turn readiness into a fresh planning interview. If the supplied plan is m
 - After validation, push the feature branch to the verified personal repository or fork and create or update a draft pull request against the intended base. Give it a concrete title and a reviewer-ready description with meaningful validation, limits, and links. A fresh invocation authorizes these scoped publication steps. Honor explicit delivery modes: text-only stops before Git mutations, local-only skips push and PR, and commit-only omits the PR.
 - Attach a created or updated PR to the current chat when the app supports it. Report commit hashes and subjects, remote and branch, PR link, check results and limits, and excluded or pending work. Distinguish a successful local commit from a successful push and PR creation.
 - If a push is rejected, inspect the reason and preserve local commits. Retry a transient failure at most once after verifying state; stop if it repeats or requires a destination or history change.
-- Do not merge into the default branch here. Hand the published pull request to `$reconcile-branches` for integration, independent regression review, and merge.
+- After publishing a normal build PR, continue directly into `$reconcile-branches` in focused build-handoff mode. The initial fresh build invocation authorizes reconciliation of this PR and its explicit dependency PRs, including independent regression review, required checks, marking an eligible draft ready, merge, and safe cleanup. Do not ask for another `$reconcile-branches` invocation or approval for these steps. A direct `$reconcile-branches` invocation without a build handoff retains its repository-wide scope.
+- Keep reconciliation active through material findings that can be fixed within the accepted plan: return the fix to its owning feature workline, make coherent commits, update the PR, and repeat the required checks and independent review before merging. Keep it active through a provider-reported branch-cleanup retry time and verify the retry before finishing. If cleanup still fails or has no safe retry time, finish with an explicit `merged, cleanup blocked` result and the branch, error, and recovery step. If intent, ownership, destination, or a repository rule requires a user decision, or an external check or human review is still pending or failing, report the precise gate and wait for that blocker to clear without requesting fresh authorization for the same workflow.
+- In build-handoff mode, clean up only completed branches and worktrees associated with the merged build PR and its included dependencies. Preserve unrelated, unfinished, or explicitly excluded work. Report the build as complete only after cleanup succeeds or with the explicit `merged, cleanup blocked` status and recovery details. Explicit text-only, local-only, and commit-only delivery modes end before reconciliation because they do not publish a mergeable PR.
 - If the user asks to formalize already-completed work, use this same validation and publication path as a publication-only pass. Existing useful changes are the input; implementation is optional.
 
 ## Recognize Semantic Blockers

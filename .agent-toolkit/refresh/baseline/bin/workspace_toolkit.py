@@ -55,7 +55,6 @@ X_REQUIRED_OVERLAY_PATHS = (
 FALLBACK_SKILLS = (
     "build-from-plan",
     "browser-workflow",
-    "commit-pr",
     "reconcile-branches",
     "publish-github",
     "discovery",

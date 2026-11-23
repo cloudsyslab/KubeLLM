@@ -5,7 +5,7 @@ Use this reference for preview setup, a browser failure, and implementation veri
 ## Establish an observable preview
 
 1. Use [Browser Workflow](../../browser-workflow/SKILL.md) and the Codex sidebar `@Browser` for rendered inspection. Read its runtime documentation, verify the selected in-app tab, and use only documented controls. Do not assume viewport, screenshot, console, or evaluation capabilities.
-2. Inspect the project's actual preview command and existing server. Start the appropriate app or a static HTTP server rooted only in the exploration artifact folder, using an available port and loopback binding where appropriate. Keep the process available while the user is reviewing.
+2. Inspect the project's actual preview command and existing server. Start the appropriate app (for an in-product options room, the product's own preview command in the room worktree) or a static HTTP server rooted only in the standalone room or exploration artifact folder, using an available port and loopback binding where appropriate. Keep the process available while the user is reviewing.
 3. Verify the intended URL responds and returns the expected page content. A server's startup message is insufficient. A local environment may isolate shell loopback access from the browser, so a failed `curl` alone does not establish that the server is down. Confirm through an available permitted health check or supported browser, then inspect server logs if readiness still fails.
 4. Open the HTTP preview through the supported browser route. Check the rendered state, not just navigation success. Distinguish shell reachability from browser-provider reachability.
 
