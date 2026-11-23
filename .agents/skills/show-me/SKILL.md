@@ -135,7 +135,7 @@ When a concept needs to be touched, read end to end, or played, an HTML artifact
 
 Before building, read [building.md](references/building.md) and the chosen form's guide completely. Do not load the other guides.
 
-Offer before building. In-chat sketches need no offer, but propose every HTML artifact in one line ("want an interactive version of this?" or "want to play this as a game?") and build it only on a yes. Skip the offer when the user already asked for the artifact, or when the calling workflow requires one at that moment, as a learning session does. Games and experiences cost the most, so offer them only when intuition or practice is the goal.
+Offer before building. In-chat sketches need no offer, but propose every HTML artifact in one line ("want an interactive version of this?" or "want to play this as a game?") and build it only on a yes. Skip the offer when the user already asked for the artifact, or when the calling workflow requires one at that moment, as a learning session, a grilling question that must be seen, or a website-design question does. Games and experiences cost the most, so offer them only when intuition or practice is the goal.
 
 For a product's own UI, layout, or state, match that product's colors, type, spacing, and components, and use its real labels and data. Everything else uses the house style.
 

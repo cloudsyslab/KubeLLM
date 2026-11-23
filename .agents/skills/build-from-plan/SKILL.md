@@ -1,13 +1,13 @@
 ---
 name: build-from-plan
-description: "Execute an understood plan in an isolated feature worktree, validate it, create coherent commits, and publish a draft pull request. Use after planning when the user asks to build or carry out the work. After grilling, require a fresh explicit $build-from-plan invocation."
+description: "Execute an understood plan in an isolated feature worktree, validate and commit it, publish a draft pull request, then reconcile that workline through eligible merge and cleanup. Use after planning when the user asks to build or carry out the work. After grilling, require a fresh explicit $build-from-plan invocation."
 ---
 
 # Build From Plan
 
 ## Purpose
 
-Turn an understood plan into a complete, reviewable feature branch and draft pull request. Own the workline from isolation through implementation, validation, coherent commits, and publication. Re-enter collaborative reasoning only when continuing would materially change the shared product or engineering story.
+Turn an understood plan into a complete, reviewable feature workline and carry it through eligible integration. Own the workline from isolation through implementation, validation, coherent commits, draft-PR publication, focused reconciliation, and safe cleanup. Re-enter collaborative reasoning only when continuing would materially change the shared product or engineering story.
 
 Treat this as the post-plan stage of the workflow:
 
@@ -41,7 +41,7 @@ Do not turn readiness into a fresh planning interview. If the supplied plan is m
 - Before setup, inspect repository ownership, remotes, default branch, status, current worktrees, and local instructions. Reuse the same branch/worktree when continuing that workline. If the branch is checked out elsewhere, attach to or continue that worktree instead of creating a second checkout of the branch.
 - Preserve dirty files, staged changes, untracked files, ignored state, local commits, and unrelated branches. Do not switch or move existing user work to manufacture a clean starting point. If the intended work cannot be separated safely, stop and explain the concrete conflict.
 - A publication-only pass can adopt work already completed on its feature branch/worktree. Do not invent implementation changes or another branch for that pass. If completed work exists only on the default branch or its ownership is unclear, preserve it and ask for the smallest decision needed to isolate it safely.
-- Keep the ordinary build local to the user's personal repository or their fork. Inspect the authenticated repository owner and remotes before publishing; never push to an unrelated upstream, workplace, or third-party repository. Never commit or push directly to the default branch.
+- Verify the authenticated owner and remote before publishing. In `cloudsyslab/KubeLLM`, the repository's `AGENTS.md` requires an explicit request to push the branch or open the PR. Never commit or push directly to the default branch. For unrelated repositories, use only the user's verified personal repository or fork.
 
 ## Execute With Elastic Autonomy
 
@@ -58,10 +58,12 @@ Do not turn readiness into a fresh planning interview. If the supplied plan is m
 - Partition the finished work into coherent, self-contained commits by purpose and dependency. Keep related implementation, tests, and documentation together. Write useful commit subjects and bodies that explain the trigger, resulting behavior, and material choices. Do not ask the user to approve a commit proposal separately.
 - Record the starting HEAD and staged, unstaged, untracked, and ignored state before committing. Stage only changes owned by this workline; use patch staging or a temporary index when unrelated edits share files. Inspect each exact staged diff and confirm excluded edits retain their staged/unstaged assignment. Never commit secrets, temporary proposal files, or unrelated changes.
 - Preserve authorship and required hooks. Do not amend, squash, reorder, rebase, reset, force-push, or rewrite published history. A hook or check failure is evidence to inspect, not permission to bypass a gate. If a push is rejected, preserve commits and stop when resolution would change destination or history.
-- After validation, push the feature branch to the verified personal repository or fork and create or update a draft pull request against the intended base. Give it a concrete title and a reviewer-ready description with meaningful validation, limits, and links. A fresh invocation authorizes these scoped publication steps. Honor explicit delivery modes: text-only stops before Git mutations, local-only skips push and PR, and commit-only omits the PR.
+- After validation, use the authorized destination to push the feature branch and create or update a draft pull request against the intended base. Give it a concrete title and a reviewer-ready description with meaningful validation, limits, and links. For KubeLLM, preserve the local commits when publication has not been requested. In a verified personal repository or fork, a fresh invocation authorizes scoped publication. Honor explicit delivery modes. Text-only stops before Git mutations. Local-only skips push and PR. Commit-only omits the PR.
 - Attach a created or updated PR to the current chat when the app supports it. Report commit hashes and subjects, remote and branch, PR link, check results and limits, and excluded or pending work. Distinguish a successful local commit from a successful push and PR creation.
 - If a push is rejected, inspect the reason and preserve local commits. Retry a transient failure at most once after verifying state; stop if it repeats or requires a destination or history change.
-- Do not merge into the default branch here. Hand the published pull request to `$reconcile-branches` for integration, independent regression review, and merge.
+- After publishing a normal build PR, continue directly into `$reconcile-branches` in focused build-handoff mode. Run checks and independent regression review for the build PR and its explicit dependency PRs. In KubeLLM, get the user's explicit approval of the exact PRs before merging into `main`. A direct `$reconcile-branches` invocation retains repository-wide scope when the user names no worklines.
+- Keep reconciliation active through material findings that can be fixed within the accepted plan: return the fix to its owning feature workline, make coherent commits, update the PR, and repeat the required checks and independent review before merging. Keep it active through a provider-reported branch-cleanup retry time and verify the retry before finishing. If cleanup still fails or has no safe retry time, finish with an explicit `merged, cleanup blocked` result and the branch, error, and recovery step. If intent, ownership, destination, or a repository rule requires a user decision, or an external check or human review is still pending or failing, report the precise gate and wait for that blocker to clear without requesting fresh authorization for the same workflow.
+- In build-handoff mode, clean up only completed branches and worktrees associated with the merged build PR and its included dependencies. Preserve unrelated, unfinished, or explicitly excluded work. Report the build as complete only after cleanup succeeds or with the explicit `merged, cleanup blocked` status and recovery details. Explicit text-only, local-only, and commit-only delivery modes end before reconciliation because they do not publish a mergeable PR.
 - If the user asks to formalize already-completed work, use this same validation and publication path as a publication-only pass. Existing useful changes are the input; implementation is optional.
 
 ## Recognize Semantic Blockers

@@ -1,6 +1,6 @@
 ---
 name: grilling
-description: Relentless one-question-at-a-time alignment interviewing for plans, designs, specs, and implementation intentions, with factual discovery routed through the discovery skill when evidence is needed. Stay in grilling until the user freshly invokes $build-from-plan to execute the current plan. Use when the user asks to be grilled, stress-tested, interviewed, aligned before action, or uses trigger phrases such as "grill me", "grill this plan", "stress-test this", "interview me", "blind spot pass", "unknown unknowns", "what am I missing", "before you build", "before you act", or "make sure you understand my intent".
+description: Relentless one-question-at-a-time alignment interviewing for plans, designs, specs, and implementation intentions, with factual discovery routed through the discovery skill when evidence is needed. Shows visual, vague, or complex decisions as rendered artifacts instead of prose. Stay in grilling until the user freshly invokes $build-from-plan to execute the current plan. Use when the user asks to be grilled, stress-tested, interviewed, aligned before action, or uses trigger phrases such as "grill me", "grill this plan", "stress-test this", "interview me", "blind spot pass", "unknown unknowns", "what am I missing", "before you build", "before you act", or "make sure you understand my intent".
 ---
 
 # Grilling
@@ -15,6 +15,7 @@ The user owns decisions. Codex owns discovery: if a fact can be found by reading
 
 - Do not enact the plan, build, modify files, or make irreversible decisions while grilling is active. Only the user's fresh, explicit `$build-from-plan` invocation permits the transition to execution; apply the Execution Gate below.
 - Keep discovery read-only. Do not install dependencies, provision or start runtimes, create implementation artifacts, or run implementation smoke tests as interview preparation.
+- Visual aids are not implementation artifacts. Throwaway boards, mockups, and single-file interactive visuals or workbench builds that convey a question (see [Show the question](#show-the-question)) are interview aids. Write them to scratch outside the repository, never into product code, a branch, or the default-branch checkout. Building or checking one may start a temporary local preview server, stopped afterward, and a workbench build may use `$show-me`'s one-time workbench install once the user approves it. Nothing else is installed or started for a visual aid.
 - Keep Git setup read-only too. Record the repository, intended outcome, and any known existing workline; do not create a branch, worktree, commit, or pull request during grilling. `$build-from-plan` creates or resumes the workline after its fresh invocation.
 - Ask one question per assistant turn, then wait for the user's answer.
 - For every question, include Codex's recommended answer.
@@ -41,16 +42,26 @@ Track four kinds of unknowns:
 Use pre-action patterns as needed:
 
 - **Blind spot pass**: Identify likely gaps, hidden constraints, prior art, edge cases, and what "good" might mean.
-- **Brainstorm/prototype optioning**: When the user may know it when they see it, propose distinct directions, in-chat sketches, or existing examples before asking for commitment. Keep these within read-only discovery.
+- **Brainstorm/prototype optioning**: When the user may know it when they see it, show distinct directions as rendered options, or point to real existing examples, before asking for commitment. Keep new aids outside the repository.
 - **References**: Use existing code, docs, examples, screenshots, logs, tickets, and external references when they materially reduce ambiguity.
 - **Implementation plan**: Only after major decisions are resolved, produce a plan that preserves open decisions and validation points.
+
+## Show the question
+
+When a decision is hard to decode as text, show it instead of describing it. `$show-me` owns how artifacts are made, including their forms, house style, and checks; this skill decides when one is needed and what it must make clear.
+
+- Build the artifact as part of asking, without offering it first, when the decision is about how something looks or is laid out; when it is a tradeoff with several interacting parts; when it involves a flow, architecture, or state model with more than a few moving pieces; when an idea is vague enough that text keeps missing it; or when the user signals confusion. Grilling is a calling workflow that requires the artifact at that moment.
+- Make the artifact convey impact and aesthetic: side-by-side options, a mockup in the product's or candidate's own style, real screenshots, or a single-file interactive visual, which can hold a small playable widget. Do not stand in for something that must be seen with ASCII sketches or prose descriptions. A rendered diagram such as Mermaid is enough for a flow or architecture when it carries the point; in-chat code-shape sketches fit only when the question is about the shape of code.
+- Keep plain text for simple, crisp choices that text already settles. If nothing can be rendered, say so, show the closest real evidence, and narrow the question.
+- Offer workbench builds (games, multi-step experiences, or anything with several screens or real state) in one line and build them only on a yes, because `$show-me`'s workbench installs once per machine with the user's approval.
+- Put the question and recommended answer next to the artifact, and have the recommendation name the option it points to.
 
 ## Interview Loop
 
 1. Parse the user's plan into an internal decision tree.
 2. Discover facts first. Inspect the codebase or supplied artifacts before asking about things Codex can determine; invoke `$discovery` for source-routed evidence beyond local context.
 3. Select the next unresolved decision with the highest downstream impact.
-4. Ask exactly one question using this shape:
+4. Ask exactly one question, with its artifact when [Show the question](#show-the-question) applies, using this shape:
 
 ```markdown
 **Question:** <one concrete decision question>

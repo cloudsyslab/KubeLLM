@@ -13,6 +13,8 @@ Where those files name a Codex-only mechanism, read it as:
 - **`$skill` invocations:** `/skill` or `$skill` both count, including the
   fresh `$build-from-plan` and `$website-design-build` invocations that open
   their gates.
+- **Managed worktrees:** use the host's managed worktree tool when available;
+  otherwise use `git worktree` with the same branch and preservation rules.
 - **Discovery's `gpt-6-luna` worker at `xhigh`:** a read-only Claude subagent
   given the same narrow lane, mutation limits, evidence packet, and stopping
   condition. If that subagent cannot be dispatched, stop and report it; do not

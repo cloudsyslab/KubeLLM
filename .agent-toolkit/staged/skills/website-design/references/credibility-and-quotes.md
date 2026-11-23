@@ -7,7 +7,7 @@ Use company proof and human voices to support the site's promise where real evid
 - Use supplied or approved quotes with the speaker's name, role, company, and source or approval context. Keep attribution attached to the quote during every state change. Favor a specific workflow, experience, or outcome over generic praise; do not turn a speaker's words into a stronger claim.
 - Keep customer testimonials, team perspectives, employer experience, education, and partner/customer logos distinguishable. A previous employer logo does not establish endorsement or customer status.
 - Preserve supplied company logo colors and proportions. Choose a compatible surface when a logo needs contrast instead of automatically applying grayscale or inversion. Use alternate official artwork only when appropriate.
-- When real quotes are unavailable, prepare clearly marked quote slots in the design room. Use a neutral avatar or initials slot and explicit labels such as “Approved quote goes here” and “Name · role · company.” Do not invent a testimonial, person, headshot, or customer relationship. Carry the missing content into the handoff; do not publish placeholders as social proof.
+- When real quotes are unavailable, prepare clearly marked quote slots in the options room. Use a neutral avatar or initials slot and explicit labels such as “Approved quote goes here” and “Name · role · company.” Do not invent a testimonial, person, headshot, or customer relationship. Carry the missing content into the handoff; do not publish placeholders as social proof.
 
 ## Visual treatment
 

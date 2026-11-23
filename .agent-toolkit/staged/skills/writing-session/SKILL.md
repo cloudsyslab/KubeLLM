@@ -1,17 +1,17 @@
 ---
 name: writing-session
-description: Route and run source-grounded PRD, technical specification, functional specification, RFC, and design-document work. Use for drafting, revising, auditing, reconciling, polishing, humanizing, reviewing, PRD-to-spec handoff, or a general writing session. Loads the PRD or specification subskill reference only when relevant, preserves product and engineering intent, runs the technical-editor pass after substantial writing, and guides author review while learning only approved recurring preferences.
+description: Route and run source-grounded PRD, technical specification, functional specification, RFC, and design-document work. Use for drafting, revising, auditing, reconciling, polishing, reviewing, PRD-to-spec handoff, or a general writing session. Applies the default prose style through $unslop, preserves product and engineering intent, runs the technical-editor pass after substantial writing, and guides author review while learning only approved recurring preferences.
 ---
 
 # Writing Session
 
 ## Purpose
 
-Turn raw notes, product intent, existing documents, source systems, and implementation evidence into a rigorous PRD or technical specification, then make it read like thoughtful expert writing without weakening its substance.
+Turn raw notes, product intent, existing documents, source systems, and implementation evidence into a rigorous PRD or technical specification, then make it read like clear expert writing without weakening its substance. Apply `$unslop` as the prose style while drafting and editing.
 
 Treat drafting, technical editing, and author review as one workflow:
 
-`route → ingest → discover → draft/revise → genre quality gate → technical editor → guided author review → preference proposal`
+`route → ingest → discover → draft/revise with unslop → genre quality gate → technical editor → guided author review → preference proposal`
 
 The technical-editor stage is mandatory after a full draft or substantial rewrite. It is not a cosmetic spell-check and must make material improvements where causal explanation, significance, evidence, structure, or prose quality is weak.
 
@@ -19,7 +19,7 @@ The technical-editor stage is mandatory after a full draft or substantial rewrit
 
 Read only the references needed for the task, but read each selected file completely.
 
-- Before substantial drafting or editing, read [technical-editor.md](references/technical-editor.md) and [author-preferences.md](references/author-preferences.md).
+- Before substantial drafting or editing, read [technical-editor.md](references/technical-editor.md) and [author-preferences.md](references/author-preferences.md). Use [`$unslop`](../unslop/SKILL.md) as the default prose style throughout the session.
 - For PRD work, read the complete [PRD subskill](references/prd-guidance.md).
 - For technical/functional specs, RFCs, design documents, or implementation reconciliation, read the complete [specification subskill](references/spec-guidance.md).
 - For a narrow audit, load the relevant genre guide and the audit portions of the editor guide. Do not silently rewrite an artifact the user asked only to review.
@@ -90,7 +90,7 @@ After every full draft or substantial rewrite, run the complete workflow in [tec
 2. Diagnose causal, evidentiary, structural, and prose defects.
 3. Verify or flag source-dependent context.
 4. Apply the technical-writing quality floor and approved personal overlay.
-5. Humanize the prose through specificity, natural rhythm, direct transitions, concrete actors where known, and credible explanation.
+5. Apply `$unslop` through specificity, natural rhythm, direct transitions, concrete actors where known, and credible explanation.
 6. Audit the revision for semantic and artifact preservation.
 
 For a file-backed Markdown rewrite, retain an ephemeral before-version and run `scripts/check_preservation.py` against the before/after files. Treat every finding as a manual-review flag; a clean result does not prove semantic equivalence.
