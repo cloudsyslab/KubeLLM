@@ -121,12 +121,18 @@ class Helpers(unittest.TestCase):
                         'args=sys.argv[1:]\nimage=os.environ.get("STUB_IMAGE","ready")\n'
                         'if args[:1]==["kill"]:\n'
                         '    Path(os.environ["STUB_KILLS"]).write_text(args[1]);sys.exit(0)\n'
+                        'if args[:1]==["inspect"]:\n'
+                        '    label=Path(os.environ["STUB_CONTAINER_LABEL"])\n'
+                        '    print(label.read_text() if label.exists() else os.environ.get("STUB_EXISTING_LABEL","foreign"));sys.exit(0)\n'
                         'if args[:2]==["image","inspect"]:\n'
                         '    if image=="missing": print("Error: No such image: x",file=sys.stderr);sys.exit(1)\n'
                         '    if image=="daemon": print("Cannot connect to the Docker daemon",file=sys.stderr);sys.exit(1)\n'
                         '    print(json.dumps(["webrecorder/browsertrix-crawler@sha256:"+"a"*64]));sys.exit(0)\n'
                         'Path(os.environ["STUB_ARGS"]).write_text(json.dumps(args))\n'
                         'mode=os.environ.get("STUB_MODE","success")\n'
+                        'if mode=="collision": print("Conflict. The container name is already in use",file=sys.stderr);sys.exit(125)\n'
+                        'label=args[args.index("--label")+1].split("=",1)[1]\n'
+                        'Path(os.environ["STUB_CONTAINER_LABEL"]).write_text(label)\n'
                         'if mode=="fail": print("Seed Page Load Failed, failing crawl",file=sys.stderr);sys.exit(1)\n'
                         'if mode=="hang":\n    import time;time.sleep(5)\n'
                         'if mode=="unshared": print("docker: Error response from daemon: invalid mount config for type '
@@ -146,7 +152,9 @@ class Helpers(unittest.TestCase):
         return subprocess.run(args, cwd=self.root, text=True, capture_output=True, timeout=20,
                               env={**os.environ, 'STUB_MODE': mode, 'STUB_IMAGE': image, 'STUB_WACZ': str(source),
                                    'STUB_ARGS': str(self.root / 'docker-args.json'),
-                                   'STUB_KILLS': str(self.root / 'docker-kills.txt')})
+                                   'STUB_KILLS': str(self.root / 'docker-kills.txt'),
+                                   'STUB_CONTAINER_LABEL': str(self.root / 'container-label.txt'),
+                                   'STUB_EXISTING_LABEL': 'another-capture'})
 
     def test_crawl_route_imports_wacz_and_screenshots(self):
         result = self.run_crawl()
@@ -171,6 +179,36 @@ class Helpers(unittest.TestCase):
         self.assertEqual(meta['original_archive']['index_files'], ['indexes/index.cdxj'])
         self.assertEqual(len(meta['original_archive']['warc_files']), 2)
         self.assertFalse(list(site.glob('.crawl-*')))
+
+    def test_crawl_rejects_symlinked_screenshot_directory(self):
+        site = self.root / 'references/sites/example-com-product'
+        clone = site / 'clone'
+        clone.mkdir(parents=True)
+        outside = self.root / 'outside-shots'
+        outside.mkdir()
+        stale = outside / 'crawl-stale.png'
+        stale.write_bytes(b'keep this file')
+        (clone / 'shots').symlink_to(outside, target_is_directory=True)
+
+        result = self.run_crawl()
+
+        self.assertEqual(result.returncode, 2, result.stderr)
+        self.assertIn('clone/shots must not be a symlink', result.stderr)
+        self.assertEqual(stale.read_bytes(), b'keep this file')
+        self.assertFalse((clone / 'original.wacz').exists())
+        self.assertFalse((site / 'meta.json').exists())
+
+    def test_wacz_screenshot_scan_limits_expansion_and_time(self):
+        source = self.make_crawl_wacz(self.root / 'bounded-scan.wacz')
+        spec = importlib.util.spec_from_file_location('capture_budget_test', CAPTURE)
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        with patch.object(module, 'MAX_WARC_SCAN_BYTES', 128):
+            with self.assertRaisesRegex(ValueError, 'expanded-data limit'):
+                module.wacz_screenshots(source, 'https://example.com/product')
+        with patch.object(module, 'MAX_WARC_SCAN_SECONDS', 0):
+            with self.assertRaisesRegex(ValueError, 'time limit'):
+                module.wacz_screenshots(source, 'https://example.com/product')
 
     def test_replay_reimport_of_crawled_pack_keeps_crawl_evidence(self):
         self.assertEqual(self.run_crawl().returncode, 0)
@@ -200,8 +238,16 @@ class Helpers(unittest.TestCase):
         args = json.loads((self.root / 'docker-args.json').read_text())
         name = args[args.index('--name') + 1]
         self.assertTrue(name.startswith('site-reference-crawl-'))
+        label = args[args.index('--label') + 1]
+        self.assertTrue(label.startswith('io.kubellm.site-reference.capture-id='))
         self.assertEqual((self.root / 'docker-kills.txt').read_text(), name)
         self.assertFalse(list((self.root / 'references/sites/example-com-product').glob('.crawl-*')))
+
+    def test_crawl_name_collision_does_not_stop_another_container(self):
+        result = self.run_crawl(mode='collision')
+        self.assertEqual(result.returncode, 1, result.stderr)
+        self.assertIn('container name is already in use', result.stderr)
+        self.assertFalse((self.root / 'docker-kills.txt').exists())
 
     def test_bad_screenshot_record_fails_before_replacing_pack(self):
         self.assertEqual(self.run_crawl().returncode, 0)
@@ -245,6 +291,28 @@ class Helpers(unittest.TestCase):
             self.assertEqual(result.returncode, 127, result.stderr)
             self.assertIn(hint, result.stderr)
         self.assertFalse((self.root / 'references').exists())
+
+    def test_authenticated_crawl_requires_ignored_profile_and_output(self):
+        subprocess.run(['git', 'init', '--quiet'], cwd=self.root, check=True)
+        profile = self.root / 'login.tar.gz'
+        profile.write_bytes(b'profile')
+        result = self.run_crawl(['--profile', str(profile)])
+        self.assertEqual(result.returncode, 2, result.stderr)
+        self.assertIn('authenticated capture output must be outside Git or under an ignored path', result.stderr)
+        self.assertFalse((self.root / 'references').exists())
+        self.assertFalse((self.root / 'docker-args.json').exists())
+
+    def test_authenticated_crawl_accepts_ignored_local_root_and_profile(self):
+        subprocess.run(['git', 'init', '--quiet'], cwd=self.root, check=True)
+        (self.root / '.gitignore').write_text('/.local/\n')
+        profile = self.root / '.local/login.tar.gz'
+        profile.parent.mkdir()
+        profile.write_bytes(b'profile')
+        output = self.root / '.local/site-reference'
+        output.mkdir()
+        result = self.run_crawl(['--root', str(output), '--profile', str(profile)])
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertTrue((output / 'references/sites/example-com-product/clone/original.wacz').is_file())
 
     def test_crawl_failures_preserve_previous_pack(self):
         self.assertEqual(self.run_crawl().returncode, 0)

@@ -3363,6 +3363,23 @@ def repository_identity_matches(expected: Dict[str, Any], actual: Dict[str, Any]
     return all(isinstance(expected.get(key), str) and expected[key] and expected[key] == actual.get(key) for key in keys)
 
 
+def rollout_checkout_is_selected(checkout_root: Path, source_root: Path, selected_checkouts: Set[Path]) -> bool:
+    """Allow the verified source checkout or a path explicitly selected after inspection."""
+    checkout = checkout_root.resolve()
+    return checkout == source_root.resolve() or checkout in selected_checkouts
+
+
+def fast_forward_default_checkout(checkout_root: Path, target_sha: str) -> subprocess.CompletedProcess:
+    """Advance a checkout without replacing ignored local files."""
+    return subprocess.run(
+        ["git", "-C", str(checkout_root), "merge", "--ff-only", "--no-overwrite-ignore", "--quiet", target_sha],
+        check=False,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+
+
 def local_rollout_check(
     kind: str,
     identifier: str,
@@ -3371,6 +3388,7 @@ def local_rollout_check(
     source_path: Optional[Path],
     harness_roots: Sequence[Path],
     no_harnesses: bool = False,
+    allow_checkouts: Sequence[Path] = (),
 ) -> Dict[str, Any]:
     if no_harnesses and harness_roots:
         raise ToolkitError("--no-harnesses cannot be combined with --harness-root")
@@ -3415,11 +3433,17 @@ def local_rollout_check(
             checkout_values.extend(item for item in value if isinstance(item, str))
     sync_receipts: List[Dict[str, Any]] = []
     sync_errors: List[str] = []
+    selected_checkouts = {path.expanduser().resolve() for path in allow_checkouts}
+    observed_checkouts: Set[Path] = set()
     for value in sorted(set(checkout_values)):
         try:
             checkout_root = git_root(Path(value))
+            observed_checkouts.add(checkout_root.resolve())
             if not repository_identity_matches(expected_identity, repository_identity(checkout_root)):
                 sync_errors.append(f"repository identity changed: {checkout_root}")
+                continue
+            if not rollout_checkout_is_selected(checkout_root, source_root, selected_checkouts):
+                sync_errors.append(f"checkout was not selected for update after inspection: {checkout_root}")
                 continue
             current_branch = run_git(checkout_root, ["branch", "--show-current"])
             default_branch = target.get("default_branch") or run_git(checkout_root, ["symbolic-ref", "--quiet", "--short", "refs/remotes/origin/HEAD"], check=False).removeprefix("origin/")
@@ -3453,13 +3477,7 @@ def local_rollout_check(
                             if fetched.returncode != 0:
                                 sync_errors.append(f"cannot fetch verified target commit into {checkout_root}")
                         if not any(checkout_root.as_posix() in detail for detail in sync_errors):
-                            advanced = subprocess.run(
-                                ["git", "-C", str(checkout_root), "merge", "--ff-only", "--quiet", expected_sha],
-                                check=False,
-                                stdout=subprocess.PIPE,
-                                stderr=subprocess.PIPE,
-                                text=True,
-                            )
+                            advanced = fast_forward_default_checkout(checkout_root, expected_sha)
                             if advanced.returncode != 0:
                                 sync_errors.append(f"default checkout could not fast-forward to {expected_sha}: {checkout_root}")
             if toolkit_source and validated_workspace_adoption(checkout_root, toolkit_source):
@@ -3474,6 +3492,9 @@ def local_rollout_check(
                 sync_receipts.append(sync_agent_configuration(source_root, checkout_root, expected_sha))
         except (OSError, ToolkitError) as exc:
             sync_errors.append(str(exc))
+
+    for unobserved in sorted(selected_checkouts - observed_checkouts, key=str):
+        sync_errors.append(f"selected checkout was not in the recorded run inventory: {unobserved}")
 
     receipt = check_local_rollout(target, expected_sha, toolkit_source, harness_roots, sync_receipts, no_harnesses)
     if sync_errors:
@@ -4706,6 +4727,8 @@ def build_parser() -> argparse.ArgumentParser:
     rollout_parser.add_argument("workspace_branch")
     rollout_parser.add_argument("--target-sha", help="verified default-branch commit for reconciliation runs")
     rollout_parser.add_argument("--source-root", type=Path, help="checkout at the verified merged/default-branch commit")
+    rollout_parser.add_argument("--allow-checkout", action="append", type=Path, default=[],
+                                help="checkout explicitly inspected and selected for update; may be repeated")
     harness_inventory = rollout_parser.add_mutually_exclusive_group()
     harness_inventory.add_argument("--harness-root", action="append", type=Path, default=[], help="linked harness root to verify; may be repeated")
     harness_inventory.add_argument("--no-harnesses", action="store_true", help="confirm that no separate parent harness applies")
@@ -4848,6 +4871,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
                 arguments.source_root,
                 arguments.harness_root,
                 arguments.no_harnesses,
+                arguments.allow_checkout,
             )
             print_json(result)
             return 0 if result["local_rollout"]["status"] == "passed" else 1

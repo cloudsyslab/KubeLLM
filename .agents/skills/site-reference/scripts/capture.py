@@ -32,6 +32,9 @@ SCREENSHOT_TYPES = {"image/png": ".png", "image/jpeg": ".jpg", "image/webp": ".w
 MAX_SCREENSHOT_BYTES = 50 * 1024 * 1024
 MAX_INDEX_LINE = 1024 * 1024
 MAX_UNCOMPRESSED = 5 * 1024**3
+MAX_WARC_SCAN_BYTES = 1024**3
+MAX_WARC_SCAN_SECONDS = 120
+CONTAINER_OWNER_LABEL = "io.kubellm.site-reference.capture-id"
 
 
 def executable(value: str | Path | None) -> str | None:
@@ -224,6 +227,8 @@ def has_screenshot_evidence(clone: Path, metadata: dict) -> bool:
     if metadata.get("live_visuals") or metadata.get("screenshots"):
         return True
     shots = clone / "shots"
+    if shots.is_symlink():
+        return False
     return shots.is_dir() and any(path.is_file() and not path.name.startswith("crawl-") and path.suffix.lower() in
                                   {".png", ".jpg", ".jpeg", ".webp"} for path in shots.iterdir())
 
@@ -427,13 +432,15 @@ def import_wacz(source: Path, clone: Path, site: Path, url: str, slug: str,
         temporary.unlink(missing_ok=True)
 
 
-def read_exact(stream, length: int, keep: bool = True) -> bytes:
+def read_exact(stream, length: int, keep: bool = True, on_read=None) -> bytes:
     """Read or skip one WARC record body in bounded chunks."""
     chunks, remaining = [], length
     while remaining > 0:
         chunk = stream.read(min(remaining, 1024 * 1024))
         if not chunk:
             raise ValueError("WARC record ended early")
+        if on_read is not None:
+            on_read(len(chunk))
         if keep:
             chunks.append(chunk)
         remaining -= len(chunk)
@@ -447,6 +454,23 @@ def wacz_screenshots(path: Path, url: str) -> dict[str, tuple[str, bytes]]:
     except ValueError:
         return {}
     found: dict[str, tuple[str, bytes]] = {}
+    scanned_bytes = 0
+    started = time.monotonic()
+
+    def charge(size: int) -> None:
+        nonlocal scanned_bytes
+        scanned_bytes += size
+        if scanned_bytes > MAX_WARC_SCAN_BYTES:
+            raise ValueError(f"WARC screenshot scan exceeded its {MAX_WARC_SCAN_BYTES}-byte expanded-data limit")
+        if time.monotonic() - started > MAX_WARC_SCAN_SECONDS:
+            raise ValueError(f"WARC screenshot scan exceeded its {MAX_WARC_SCAN_SECONDS}-second time limit")
+
+    def read_line(stream) -> bytes:
+        remaining = MAX_WARC_SCAN_BYTES - scanned_bytes
+        line = stream.readline(min(MAX_INDEX_LINE, max(1, remaining + 1)))
+        charge(len(line))
+        return line
+
     try:
         with zipfile.ZipFile(path) as archive:
             for name in archive.namelist():
@@ -455,14 +479,14 @@ def wacz_screenshots(path: Path, url: str) -> dict[str, tuple[str, bytes]]:
                 with archive.open(name) as member:
                     stream = gzip.GzipFile(fileobj=member) if name.endswith(".gz") else member
                     while True:
-                        line = stream.readline(MAX_INDEX_LINE)
+                        line = read_line(stream)
                         if not line:
                             break
                         if not line.startswith(b"WARC/"):
                             continue
                         headers: dict[str, str] = {}
                         while True:
-                            header = stream.readline(MAX_INDEX_LINE)
+                            header = read_line(stream)
                             if header in (b"\r\n", b"\n", b""):
                                 break
                             key, _, value = header.decode("utf-8", "replace").partition(":")
@@ -481,7 +505,7 @@ def wacz_screenshots(path: Path, url: str) -> dict[str, tuple[str, bytes]]:
                             same_page = False
                         keep = (headers.get("warc-type") == "resource" and kind in SCREENSHOT_KINDS and same_page
                                 and mime in SCREENSHOT_TYPES and 0 < length <= MAX_SCREENSHOT_BYTES)
-                        body = read_exact(stream, length, keep)
+                        body = read_exact(stream, length, keep, on_read=charge)
                         if keep:
                             found[kind] = (mime, body)
     except (OSError, EOFError, zlib.error, zipfile.BadZipFile) as error:
@@ -489,8 +513,26 @@ def wacz_screenshots(path: Path, url: str) -> dict[str, tuple[str, bytes]]:
     return found
 
 
+def checked_crawl_shots_directory(clone: Path) -> Path:
+    """Reject a screenshot path that can make crawler writes leave the clone."""
+    shots = clone / "shots"
+    if shots.is_symlink():
+        raise ValueError("clone/shots must not be a symlink")
+    try:
+        clone_root = clone.resolve()
+        shots_root = shots.resolve()
+    except OSError as error:
+        raise ValueError(f"could not resolve clone/shots: {error}") from error
+    if not shots_root.is_relative_to(clone_root):
+        raise ValueError("clone/shots resolves outside its clone")
+    if shots.exists() and not shots.is_dir():
+        raise ValueError("clone/shots exists but is not a directory")
+    return shots
+
+
 def install_crawl_shots(found: dict[str, tuple[str, bytes]], shots: Path) -> list[dict]:
     """Replace earlier crawler stills in clone/shots with this capture's stills."""
+    shots = checked_crawl_shots_directory(shots.parent)
     if shots.is_dir():
         for old in shots.glob("crawl-*"):
             if old.is_file():
@@ -513,18 +555,28 @@ def install_crawl_shots(found: dict[str, tuple[str, bytes]], shots: Path) -> lis
     return saved
 
 
-def stop_container(docker: str, name: str) -> None:
-    """Stop a crawler container the docker client may have left behind."""
+def stop_container(docker: str, name: str, owner_token: str) -> bool:
+    """Stop only a crawler container whose per-run ownership label still matches."""
     try:
-        subprocess.run([docker, "kill", name], capture_output=True, timeout=20)
+        inspected = subprocess.run(
+            [docker, "inspect", "--format", '{{ index .Config.Labels "io.kubellm.site-reference.capture-id" }}', name],
+            capture_output=True, text=True, timeout=10,
+        )
+        if inspected.returncode != 0 or inspected.stdout.strip() != owner_token:
+            return False
+        killed = subprocess.run([docker, "kill", name], capture_output=True, timeout=20)
+        return killed.returncode == 0
     except (OSError, subprocess.TimeoutExpired):
-        pass
+        return False
+    return False
 
 
-def crawl_diagnostic(output: str, result: int) -> str:
+def crawl_diagnostic(output: str, result: int, container_stopped: bool = False) -> str:
     lowered = output.lower()
     if result == 124:
-        return "The crawl timed out; the crawler container was stopped."
+        if container_stopped:
+            return "The crawl timed out; its owned crawler container was stopped."
+        return "The crawl timed out; container ownership could not be verified, so no container was stopped."
     if any(phrase in lowered for phrase in ("bind source path does not exist", "mounts denied",
                                             "is not shared from the host")):
         return ("Docker's VM cannot see the project folder. Share it with the VM (Colima, Docker Desktop, "
@@ -540,6 +592,11 @@ def crawl_diagnostic(output: str, result: int) -> str:
 
 def run_crawl(args: argparse.Namespace, site: Path, clone: Path, docker: str | None) -> int:
     """Capture one page with browsertrix-crawler in Docker, then import and validate its WACZ."""
+    try:
+        shots_directory = checked_crawl_shots_directory(clone)
+    except ValueError as error:
+        print(f"ERROR: unsafe crawler screenshot directory: {error}", file=sys.stderr)
+        return 2
     image = args.crawl_image
     status, detail = docker_status(docker, image)
     if status != "ready":
@@ -564,10 +621,12 @@ def run_crawl(args: argparse.Namespace, site: Path, clone: Path, docker: str | N
         return 2
     site.mkdir(parents=True, exist_ok=True)
     work = Path(tempfile.mkdtemp(prefix=".crawl-", dir=site))
-    container = f"site-reference-crawl-{secrets.token_hex(4)}"
+    owner_token = secrets.token_hex(16)
+    container = f"site-reference-crawl-{owner_token}"
     imported: dict | None = None
     try:
         command = [docker, "run", "--rm", "--pull", "never", "--name", container,
+                   "--label", f"{CONTAINER_OWNER_LABEL}={owner_token}",
                    "--mount", f"type=bind,source={work},target=/crawls", *profile_mount,
                    image, "crawl", "--url", args.url, "--scopeType", "page", "--generateWACZ",
                    # The crawler's view screenshot forces a 1920x1080 window, so phone captures take full-page only.
@@ -578,8 +637,8 @@ def run_crawl(args: argparse.Namespace, site: Path, clone: Path, docker: str | N
             command += ["--mobileDevice", args.mobile_device]
         result, output = run_capture(command, work, args.capture_timeout)
         if result != 0:
-            stop_container(docker, container)
-            print(f"ERROR: crawl failed (exit {result}). {crawl_diagnostic(output, result)} "
+            stopped = stop_container(docker, container, owner_token)
+            print(f"ERROR: crawl failed (exit {result}). {crawl_diagnostic(output, result, stopped)} "
                   "The previous pack is preserved.", file=sys.stderr)
             print(output, file=sys.stderr)
             return 1
@@ -591,9 +650,10 @@ def run_crawl(args: argparse.Namespace, site: Path, clone: Path, docker: str | N
             return 1
         viewport = args.viewport or (f"crawler mobileDevice {args.mobile_device}" if args.mobile_device
                                      else "crawler default desktop window")
+        validate_wacz(wacz, args.url)
         found = wacz_screenshots(wacz, args.url)
         imported = import_wacz(wacz, clone, site, args.url, args.slug, False, [], viewport, [], None)
-        shots = install_crawl_shots(found, clone / "shots")
+        shots = install_crawl_shots(found, shots_directory)
         metadata_path = site / "meta.json"
         metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
         metadata["crawl"] = {
@@ -676,6 +736,34 @@ def check_existing_source(site: Path, url: str) -> None:
         raise ValueError("existing archive has no source metadata; inspect it or choose a new slug")
 
 
+def private_path_error(path: Path, label: str) -> str | None:
+    """Require authenticated inputs and outputs to stay outside Git or under an ignored path."""
+    candidate = path.expanduser().resolve()
+    probe = candidate
+    while not probe.exists() and probe.parent != probe:
+        probe = probe.parent
+    repository = subprocess.run(
+        ["git", "-C", str(probe), "rev-parse", "--show-toplevel"],
+        check=False, capture_output=True, text=True,
+    )
+    if repository.returncode != 0:
+        return None
+    repository_root = Path(repository.stdout.strip()).resolve()
+    try:
+        relative = candidate.relative_to(repository_root)
+    except ValueError:
+        return None
+    relative_name = relative.as_posix() or "."
+    ignored = subprocess.run(
+        ["git", "-C", str(repository_root), "check-ignore", "--quiet", "--no-index", "--", relative_name],
+        check=False, capture_output=True,
+    )
+    if ignored.returncode == 0:
+        return None
+    return (f"{label} must be outside Git or under an ignored path when --profile is used; "
+            "use an external path or --root .local/site-reference")
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--root", type=Path, default=Path.cwd(), help="Project root (default: current directory)")
@@ -733,6 +821,12 @@ def main() -> int:
                                "--doctor. Do not switch to a partial route only because a tool is not installed yet.")
         print(json.dumps(inventory, indent=2))
         return 0
+    if args.crawl and args.profile:
+        for private_path, label in ((root, "authenticated capture output"),
+                                    (args.profile, "login profile")):
+            error = private_path_error(private_path, label)
+            if error:
+                parser.error(error)
     if not args.url or not args.slug:
         parser.error("--url and --slug are required unless --doctor is used")
     if not args.url or not args.slug:
