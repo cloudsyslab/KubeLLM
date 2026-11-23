@@ -11,7 +11,7 @@ In ArchiveWeb, capture a single source page at the viewport and states of intere
 Import the archive with:
 
 ```bash
-python3 "<skill-path>/scripts/capture.py" --root "<project-directory>" \
+python3 "<skill-path>/scripts/capture.py" --root .local/site-reference \
   --url https://example.com/page --slug example-com-page \
   --import-wacz /absolute/path/original.wacz \
   --replay-validated --viewport "1440x900 CSS px; desktop" \
@@ -20,6 +20,15 @@ python3 "<skill-path>/scripts/capture.py" --root "<project-directory>" \
 ```
 
 The importer checks ZIP CRCs, safe member paths, WACZ datapackage profile and digest, each declared resource SHA-256 and byte count, and a captured-page URL match. It installs `clone/original.wacz` after validation and records its SHA-256 plus resource/index summary and capture session in `meta.json`. `--action` records live capture actions; `--tested-state` records only interactions actually observed during offline replay. Keep those claims separate. Archive integrity is not proof of complete coverage or visual similarity. A failed or mismatched WACZ import leaves a previous successful pack untouched.
+
+Use an ignored `.local/site-reference` root by default because an ArchiveWeb export can contain session cookies and private content. The helper rejects tracked output paths, including paths force-added under an ignored directory. For a non-sensitive archive that the user explicitly approves storing in this repository, pass `--allow-versioned-wacz`.
+
+Make sure `.local/site-reference` exists and is covered by the repository's ignore rules before importing:
+
+```bash
+mkdir -p .local/site-reference
+git check-ignore .local/site-reference
+```
 
 Save view evidence separately in `clone/shots/`. A screenshot, frame, or video documents only the state and timing shown. Include viewport and interactions; when timing matters, record several checkpoints or a short screen recording. Keep exact gaps visible near the relevant evidence. If an observed WARC response contains an original video/audio asset that will help a storyboard, you may extract the exact response body to `clone/shots/` and record its MIME type, byte count, hash, source state, and any options-room copy in `meta.json`. Keep the WACZ as the page source: an isolated resource does not include its original layout, controls, trigger, or response context. CSS, canvas, and WebGL effects should remain testable in the original replay instead of being represented by an extracted still.
 

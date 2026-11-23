@@ -314,6 +314,39 @@ class Helpers(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertTrue((output / 'references/sites/example-com-product/clone/original.wacz').is_file())
 
+    def test_authenticated_crawl_rejects_force_tracked_ignored_profile_and_output(self):
+        profile_repo = self.root / 'profile-repo'
+        profile_repo.mkdir()
+        subprocess.run(['git', 'init', '--quiet'], cwd=profile_repo, check=True)
+        (profile_repo / '.gitignore').write_text('/.local/\n')
+        profile = profile_repo / '.local/login.tar.gz'
+        profile.parent.mkdir()
+        profile.write_bytes(b'profile')
+        subprocess.run(['git', 'add', '.gitignore'], cwd=profile_repo, check=True)
+        subprocess.run(['git', 'add', '-f', '.local/login.tar.gz'], cwd=profile_repo, check=True)
+        external_output = self.root / 'external-output'
+        external_output.mkdir()
+        result = self.run_crawl(['--root', str(external_output), '--profile', str(profile)])
+        self.assertEqual(result.returncode, 2, result.stderr)
+        self.assertIn('login profile is tracked in Git', result.stderr)
+        self.assertFalse((self.root / 'docker-args.json').exists())
+
+        output_repo = self.root / 'output-repo'
+        output_repo.mkdir()
+        subprocess.run(['git', 'init', '--quiet'], cwd=output_repo, check=True)
+        (output_repo / '.gitignore').write_text('/.local/\n')
+        tracked_output = output_repo / '.local/site-reference/tracked.wacz'
+        tracked_output.parent.mkdir(parents=True)
+        tracked_output.write_bytes(b'archive')
+        subprocess.run(['git', 'add', '.gitignore'], cwd=output_repo, check=True)
+        subprocess.run(['git', 'add', '-f', '.local/site-reference/tracked.wacz'], cwd=output_repo, check=True)
+        external_profile = self.root / 'external-profile.tar.gz'
+        external_profile.write_bytes(b'profile')
+        result = self.run_crawl(['--root', str(tracked_output.parent), '--profile', str(external_profile)])
+        self.assertEqual(result.returncode, 2, result.stderr)
+        self.assertIn('authenticated capture output is tracked in Git', result.stderr)
+        self.assertFalse((self.root / 'docker-args.json').exists())
+
     def test_crawl_failures_preserve_previous_pack(self):
         self.assertEqual(self.run_crawl().returncode, 0)
         site = self.root / 'references/sites/example-com-product'
@@ -340,8 +373,29 @@ class Helpers(unittest.TestCase):
                                       slug='other-pack')
             self.assertEqual(result.returncode, 1, result.stderr)
 
-    def import_wacz(self, path, url='https://example.com/product#hero', slug='example-com-product', extra=()):
-        args = [sys.executable, str(CAPTURE), '--root', str(self.root), '--url', url,
+    def test_wacz_import_requires_private_output_unless_user_approved_versioning(self):
+        subprocess.run(['git', 'init', '--quiet'], cwd=self.root, check=True)
+        (self.root / '.gitignore').write_text('/.local/\n')
+        subprocess.run(['git', 'add', '.gitignore'], cwd=self.root, check=True)
+        source = self.make_crawl_wacz(self.root / 'import-source.wacz')
+
+        unignored_root = self.root / 'unignored-output'
+        unignored_root.mkdir()
+        rejected = self.import_wacz(source, root=unignored_root)
+        self.assertEqual(rejected.returncode, 2, rejected.stderr)
+        self.assertIn('WACZ import output must be outside Git or under an ignored path', rejected.stderr)
+
+        private_root = self.root / '.local/site-reference'
+        private_root.mkdir(parents=True)
+        accepted_private = self.import_wacz(source, root=private_root, slug='private-example')
+        self.assertEqual(accepted_private.returncode, 0, accepted_private.stderr)
+
+        accepted_versioned = self.import_wacz(source, slug='versioned-example',
+                                              extra=('--allow-versioned-wacz',))
+        self.assertEqual(accepted_versioned.returncode, 0, accepted_versioned.stderr)
+
+    def import_wacz(self, path, url='https://example.com/product#hero', slug='example-com-product', extra=(), root=None):
+        args = [sys.executable, str(CAPTURE), '--root', str(root or self.root), '--url', url,
                 '--slug', slug, '--import-wacz', str(path), *extra]
         return subprocess.run(args, cwd=self.root, text=True, capture_output=True, timeout=10)
 

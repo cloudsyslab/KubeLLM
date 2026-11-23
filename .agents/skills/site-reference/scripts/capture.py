@@ -737,9 +737,9 @@ def check_existing_source(site: Path, url: str) -> None:
 
 
 def private_path_error(path: Path, label: str) -> str | None:
-    """Require authenticated inputs and outputs to stay outside Git or under an ignored path."""
+    """Require protected capture inputs and outputs to stay outside Git or under an ignored path."""
     candidate = path.expanduser().resolve()
-    probe = candidate
+    probe = candidate if candidate.is_dir() else candidate.parent
     while not probe.exists() and probe.parent != probe:
         probe = probe.parent
     repository = subprocess.run(
@@ -754,13 +754,21 @@ def private_path_error(path: Path, label: str) -> str | None:
     except ValueError:
         return None
     relative_name = relative.as_posix() or "."
+    tracked = subprocess.run(
+        ["git", "-C", str(repository_root), "ls-files", "--", f":(top,literal){relative_name}"],
+        check=False, capture_output=True, text=True,
+    )
+    if tracked.returncode != 0:
+        return f"could not check whether {label} is tracked in Git"
+    if tracked.stdout.strip():
+        return f"{label} is tracked in Git; move it outside the repository or remove it from the index"
     ignored = subprocess.run(
         ["git", "-C", str(repository_root), "check-ignore", "--quiet", "--no-index", "--", relative_name],
         check=False, capture_output=True,
     )
     if ignored.returncode == 0:
         return None
-    return (f"{label} must be outside Git or under an ignored path when --profile is used; "
+    return (f"{label} must be outside Git or under an ignored path; "
             "use an external path or --root .local/site-reference")
 
 
@@ -772,6 +780,8 @@ def main() -> int:
     parser.add_argument("--url", type=validate_url)
     parser.add_argument("--slug", help="Lowercase pack name, letters/digits and single hyphens")
     parser.add_argument("--import-wacz", type=Path, help="Validate and import a WACZ exported by ArchiveWeb.page")
+    parser.add_argument("--allow-versioned-wacz", action="store_true",
+                        help="Allow importing a non-sensitive WACZ into tracked repository paths after user approval")
     parser.add_argument("--replay-validated", action="store_true", help="Record only after testing the archive in ReplayWeb.page")
     parser.add_argument("--tested-state", action="append", default=[], help="An interaction/state actually tested in original replay; repeatable")
     parser.add_argument("--viewport", help="Observed capture viewport; distinguish screenshot pixels from CSS pixels")
@@ -827,6 +837,12 @@ def main() -> int:
             error = private_path_error(private_path, label)
             if error:
                 parser.error(error)
+    if args.allow_versioned_wacz and not args.import_wacz:
+        parser.error("--allow-versioned-wacz applies only when importing a WACZ")
+    if args.import_wacz and not args.allow_versioned_wacz:
+        error = private_path_error(root, "WACZ import output")
+        if error:
+            parser.error(error)
     if not args.url or not args.slug:
         parser.error("--url and --slug are required unless --doctor is used")
     if not args.url or not args.slug:
